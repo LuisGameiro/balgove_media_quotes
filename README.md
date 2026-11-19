@@ -126,6 +126,12 @@ success with coverage gaps · `3` config/T0-gate error. Re-runs are idempotent.
 local gate; the full live orchestration contract is specified in
 [`docs/02`](docs/02-stack-and-architecture.md) §5.
 
+**Windows / PowerShell:** `make` is not available by default. Run the same gate with
+`powershell -ExecutionPolicy Bypass -File scripts/check.ps1`, or install the one-time `check`
+function with `powershell -ExecutionPolicy Bypass -File scripts/install_check_profile.ps1`
+(adds it to both Windows PowerShell and PowerShell 7 profiles) and then just run `check` from
+the project root (or `check C:\path\to\balgoveinnovations` from anywhere).
+
 ## Dates
 
 `BACKFILL_START=2026-10-01`; `REPORT_DATE` defaults to today; `REPORT_WINDOW_DAYS=14`.
