@@ -87,8 +87,10 @@ remain offline-safe; no live provider/Postgres backend is yet required.
 
 **F progress:** prompt-injection guard + strict LLM boundary (CHK-18), rights/limits guard
 (CHK-19) and offline restore-drill/retention-readiness helpers (CHK-17 groundwork) landed.
-Live load tests, real backfill budget metrics and production verification evidence remain
-open; RSK-07/08/11 stay accepted until those gates pass.
+Operator commands (`mq review`, `mq retention`, `mq restore-drill`) and Postgres-backed
+`mq eval` results close the offline CLI surface. Live load tests, real backfill budget metrics
+and production verification evidence remain open; RSK-07/08/11 stay accepted until those
+gates pass.
 
 | Step | Work | Exit check |
 |---|---|---|

@@ -100,6 +100,7 @@ Dagster asset scheduling, external LLM provider calls, and production database c
 | `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id` |
 | `mq eval --gold-set <version>` | Deterministic metrics + κ-calibrated judge |
 | `mq sources`, `mq version` | Registry + rights status at a glance; version manifest |
+| `mq review`, `mq retention`, `mq restore-drill` | Review queue, retention plan, export integrity drill |
 | `mq backfill`, `mq digest`, `mq export`, `mq dashboard` | Backfill, regenerate MD, derived JSONL, Streamlit UI |
 
 Shared flags: `--offline` (VCR replay), `--dry-run`, `--date`, `--run-id`/`--trace-id`,

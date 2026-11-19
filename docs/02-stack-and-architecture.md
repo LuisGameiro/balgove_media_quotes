@@ -233,6 +233,9 @@ error resumes from the last successful step and never overwrites append-only row
 | `mq sources [--tier N] [--rights-status …]` | List the registry (mirrored from `sources.csv`) with rights status, access mode and coverage summary — the T0 state at a glance. |
 | `mq version` | Print the version manifest (app/CLI, schema hash, prompt version, pinned model snapshot, `gold_set_version`). |
 | `mq dashboard` | Launch Streamlit dashboard. |
+| `mq review --action list/decide [--quote-id …]` | Obsolescence review queue: list pending flags or record a human verdict (CHK-15). |
+| `mq retention [--dry-run]` | Print retention/lock readiness plan; no DDL/rows touched (CHK-17 groundwork). |
+| `mq restore-drill [--reference PATH]` | Compare derived exports by quote id + content hash (CHK-17/F2). |
 | `make audit`, `make logs`, `make run` | Thin wrappers for non-Python users. |
 
 `media_quotes.validation` is wired into the implemented `mq doctor`/`mq validate` commands and
