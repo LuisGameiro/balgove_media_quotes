@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from media_quotes.evaluation import AcceptanceThresholds, evaluate_metrics
+from media_quotes.evaluation import AcceptanceThresholds, evaluate_metrics, obsolete_precision
 
 PERFECT = {
     "article_recall": 1.0,
@@ -38,6 +38,12 @@ def test_failing_metrics_list_checks() -> None:
     result = evaluate_metrics(metrics, AcceptanceThresholds())
     assert result["pass"] is False
     assert result["failed_checks"] == ["article_recall", "false_quote_rate"]
+
+
+def test_obsolete_precision_against_held_out_labels() -> None:
+    assert obsolete_precision(["Q1", "Q2"], ["Q1"]) == 0.5
+    assert obsolete_precision(["Q1"], ["Q1", "Q2"]) == 1.0
+    assert obsolete_precision([], ["Q1"]) == 0.0
 
 
 def test_thresholds_strict_mode_rejects_coercion() -> None:

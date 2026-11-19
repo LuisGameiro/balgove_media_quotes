@@ -68,7 +68,7 @@ before rendering) are implemented with offline tests.
 |---|---|---|
 | PD1 | Live OpenAI boundary with pinned snapshot, strict structured output (preserving native `quote_text` + generating English `quote_text_en` translation), provider response id, refusal/incomplete logging, and Postgres `decision_cache` lookup before call | CHK-02 |
 | PD2 | Batch API path for backfills using `custom_id`; wire `risk_controls.budget_gate` + `--max-cost` on `mq backfill` to Postgres `pipeline_runs` | CHK-16 |
-| PD3 | Section assignment from 16-slug allow-list, cross-outlet quote deduplication (14-day window), and obsolescence rule with evidence bundle + `risk_controls.ReviewQueue` (24h `provisional_hold` `[Under Review]` badge) | CHK-15 |
+| PD3 | Section assignment from the 6-slug allow-list in `data/sections.csv`, cross-outlet quote deduplication (14-day window), and obsolescence rule with evidence bundle + `risk_controls.ReviewQueue` (24h `provisional_hold` `[Under Review]` badge) | CHK-15 |
 | PD4 | Held-out eval: obsolete precision ≥ 0.90 and drift guard (`obsoletion_allowed`) persisted in Postgres | CHK-03 |
 
 ## 5. Phase E — T6/T9 presentation and operator UX (1–2 sessions)

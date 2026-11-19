@@ -6,7 +6,7 @@ were computed. `mq eval` persists the result; a future Postgres eval run reuses 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +30,17 @@ class AcceptanceThresholds(BaseModel):
 
     def as_dict(self) -> dict[str, float]:
         return self.model_dump()
+
+
+def obsolete_precision(
+    confirmed_obsolete: Sequence[str], labelled_obsolete: Sequence[str]
+) -> float:
+    """Precision of human-confirmed obsolescence against the held-out gold labels."""
+    labelled = set(labelled_obsolete)
+    if not confirmed_obsolete:
+        return 0.0
+    correct = sum(1 for quote_id in confirmed_obsolete if quote_id in labelled)
+    return round(correct / len(confirmed_obsolete), 4)
 
 
 def evaluate_metrics(
