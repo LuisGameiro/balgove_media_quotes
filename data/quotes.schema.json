@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/quotes.schema.json",
+  "title": "Quote record",
+  "description": "One derived export record per extracted quote. PostgreSQL is the system of record; quotes.jsonl is generated from it, one JSON object per line. Verbatim quote text must be an exact substring of the article webpage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "quote_id",
+    "quote_text_original",
+    "source_id",
+    "source_name",
+    "source_tier",
+    "source_country_region",
+    "source_type",
+    "rights_status",
+    "access_mode",
+    "claim_only",
+    "original_reporting_flag",
+    "source_language",
+    "publication_date",
+    "article_name",
+    "article_url",
+    "extraction_date",
+    "section_id",
+    "is_obsolete",
+    "content_hash",
+    "verification"
+  ],
+  "properties": {
+    "quote_id": {
+      "type": "string",
+      "pattern": "^Q-[0-9]{8}-[0-9]{4}$",
+      "description": "Deterministic ID: Q-YYYYMMDD-NNNN, where the date is the publication date and NNNN is a sequence within that day."
+    },
+    "quote_text_original": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Verbatim quote text exactly as published, including original punctuation and typography. No cleanup beyond removing page furniture that is not part of the quote."
+    },
+    "quote_html": {
+      "type": "string",
+      "description": "Optional original HTML fragment of the quote, preserving emphasis and formatting structure."
+    },
+    "quote_text_en": {
+      "type": "string",
+      "description": "English translation, required when source_language is not en. Empty string when the original is already English. Never replaces quote_text_original."
+    },
+    "source_id": {
+      "type": "string",
+      "description": "Foreign key to source_id in sources.csv."
+    },
+    "source_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "publication_name": {
+      "type": "string",
+      "description": "Optional publication/imprint name when it differs from source_name."
+    },
+    "source_tier": {
+      "type": "integer",
+      "enum": [1, 2, 3, 4]
+    },
+    "source_country_region": {
+      "type": "string"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["independent", "publicly funded", "state-affiliated", "state-controlled", "aggregator"]
+    },
+    "rights_status": {
+      "type": "string",
+      "enum": ["license_held", "api_permitted", "pending_counsel_review", "blocked"],
+      "description": "T0 gate snapshot. Only license_held or api_permitted allow a source to be enabled and ingested."
+    },
+    "access_mode": {
+      "type": "string",
+      "enum": ["licensed_database", "official_api", "public_rss_permitted", "pending_review", "scraped_prohibited"],
+      "description": "Approved route for retrieving content. Feeds are not an exemption from the rights check."
+    },
+    "license_reference": {
+      "type": "string",
+      "description": "Licence or consent ID proving T0 approval; empty until approved."
+    },
+    "discovery_method": {
+      "type": "string",
+      "enum": ["sitemap", "rss", "api", "gdelt", "web", "licensed_database"]
+    },
+    "claim_only": {
+      "type": "boolean",
+      "description": "If true, the quote may be shown only as an attributed claim or perspective, never as an established fact in the daily report."
+    },
+    "original_reporting_flag": {
+      "type": "string",
+      "enum": ["first-hand", "relayed wire copy", "unknown"],
+      "description": "Result of the per-article original-reporting check from section 1.1 of the spec."
+    },
+    "source_language": {
+      "type": "string",
+      "pattern": "^[a-z]{2}$",
+      "description": "ISO 639-1 code of the article language."
+    },
+    "publication_date": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date (YYYY-MM-DD)."
+    },
+    "article_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "article_author": {
+      "type": "string",
+      "description": "Byline as published; empty string if absent."
+    },
+    "article_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Stable canonical URL of the source article."
+    },
+    "extraction_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp in UTC when the quote was extracted."
+    },
+    "section_id": {
+      "type": "string",
+      "description": "Foreign key to section_id in sections.csv.",
+      "enum": ["war_intensity", "international_support", "peace_initiatives", "sanctions", "resources", "other"]
+    },
+    "is_obsolete": {
+      "type": "boolean",
+      "description": "True when the factual content of the quote has been superseded by newer known facts; such quotes are excluded from the daily report."
+    },
+    "obsolete_reason": {
+      "type": "string",
+      "description": "Required in practice when is_obsolete is true: which later fact supersedes this quote."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of quote_text_original plus article_url; used for deterministic deduplication and tamper checks."
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verbatim_match", "metadata_verified", "method", "verified_at"],
+      "properties": {
+        "verbatim_match": {
+          "type": "boolean",
+          "description": "True only if the stored quote text is an exact substring of the fetched article."
+        },
+        "metadata_verified": {
+          "type": "boolean",
+          "description": "True only if source, date, title, author and URL were read from the page itself."
+        },
+        "method": {
+          "type": "string",
+          "description": "Deterministic verification method, for example sha256_substring_match_v1."
+        },
+        "verified_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Audit notes, for example a correction or a reason a record was re-issued."
+    }
+  }
+}

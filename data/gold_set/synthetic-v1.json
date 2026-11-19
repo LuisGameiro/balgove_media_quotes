@@ -1,0 +1,86 @@
+{
+  "version": "synthetic-v1",
+  "notice": "SYNTHETIC GOLD SET: all labels were written by hand against synthetic fixtures. Not real reporting and not a licensed corpus.",
+  "split": "dev+test (small deterministic smoke sample)",
+  "articles": [
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-18.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "The pace of the offensive has accelerated in the east, and we expect further pressure on supply lines over the coming weeks,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "A durable ceasefire needs monitoring on the ground and guarantees that cannot be withdrawn unilaterally,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-17.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ammunition production has risen but shortages of trained personnel remain the binding constraint for both sides,",
+          "section_id": "resources",
+          "human_label": true
+        },
+        {
+          "quote_text": "New restrictions on dual-use components are beginning to change procurement timelines across the industry,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-18.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "European partners have agreed another package of air defence systems, but delivery schedules remain uneven,",
+          "section_id": "international_support",
+          "human_label": true
+        },
+        {
+          "quote_text": "Reporting from the front line suggests shelling has intensified around the transport corridor this week,",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-16.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Negotiations can only resume when the parties accept a verifiable basis for a temporary halt in strikes,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        },
+        {
+          "quote_text": "Sanctions enforcement has tightened around shipping networks, though exemptions still leave gaps,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    }
+  ],
+  "negative_candidates": [
+    {
+      "quote_text": "Advertisement | Page 4 | Subscribe now | all rights reserved",
+      "human_label": false,
+      "reason": "boilerplate and table symbols, must be rejected by the junk filter"
+    }
+  ]
+}

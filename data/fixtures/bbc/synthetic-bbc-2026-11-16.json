@@ -1,0 +1,31 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for offline replay of the blocked BBC route. Not real reporting.",
+  "source_id": "bbc",
+  "canonical_url": "https://www.bbc.co.uk/fixture/synthetic-2026-11-16-talks/",
+  "publication_date": "2026-11-16",
+  "title": "SYNTHETIC FIXTURE - Talks and enforcement",
+  "byline": "Fixture Policy Unit",
+  "publication_name": "BBC News (synthetic fixture)",
+  "article_text": "Synthetic fixture for BBC API-style replay. “Negotiations can only resume when the parties accept a verifiable basis for a temporary halt in strikes,” said Fixture Envoy Five, a synthetic negotiator. “Sanctions enforcement has tightened around shipping networks, though exemptions still leave gaps,” said Fixture Trade Expert Six, a synthetic analyst.",
+  "quote_spans": [
+    {
+      "quote_text": "Negotiations can only resume when the parties accept a verifiable basis for a temporary halt in strikes,",
+      "char_start": 45,
+      "char_end": 149,
+      "speaker": "Fixture Envoy Five",
+      "attribution_span": "said Fixture Envoy Five, a synthetic negotiator",
+      "section_id": "peace_initiatives",
+      "dom_path": "json/quote_spans/0"
+    },
+    {
+      "quote_text": "Sanctions enforcement has tightened around shipping networks, though exemptions still leave gaps,",
+      "char_start": 201,
+      "char_end": 298,
+      "speaker": "Fixture Trade Expert Six",
+      "attribution_span": "said Fixture Trade Expert Six, a synthetic analyst",
+      "section_id": "sanctions",
+      "dom_path": "json/quote_spans/1"
+    }
+  ]
+}
