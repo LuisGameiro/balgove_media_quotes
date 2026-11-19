@@ -59,6 +59,11 @@ never written without exact offsets from the verifier.
 
 ## 4. Phase D — T4/T5 reasoning and obsolescence (2–3 sessions)
 
+**D progress:** `llm_live.py` (pinned model, cache-first, strict JSON schema, refusal/incomplete,
+injected client), `batch.py` (deterministic `custom_id` + Batch JSONL), `curation.py` (section
+allow-list, cross-outlet dedup, `[Under Review]` badges) and `rights_guard.py` (DEC-10 limits
+before rendering) are implemented with offline tests.
+
 | Step | Work | Exit check |
 |---|---|---|
 | PD1 | Live OpenAI boundary with pinned snapshot, strict structured output (preserving native `quote_text` + generating English `quote_text_en` translation), provider response id, refusal/incomplete logging, and Postgres `decision_cache` lookup before call | CHK-02 |
@@ -68,6 +73,10 @@ never written without exact offsets from the verifier.
 
 ## 5. Phase E — T6/T9 presentation and operator UX (1–2 sessions)
 
+**E progress:** dashboard gains per-source coverage and obsolescence review views read from
+the latest audit report; audit reports now carry a `review_queue` key. Existing CLI commands
+remain offline-safe; no live provider/Postgres backend is yet required.
+
 | Step | Work | Exit check |
 |---|---|---|
 | E1 | Jinja2 digest from `digests/` template with verbatim quotes (`quote_text` + `quote_text_en`), DEC-10 limits, `[Under Review]` provisional-hold badges and snapshots | CHK-04 |
@@ -75,6 +84,11 @@ never written without exact offsets from the verifier.
 | E3 | Cut over all 12 CLI commands (`audit`, `logs`, `eval`, `run`, `sources`, `version`, `backfill`, `digest`, `export`, `dashboard`, `doctor`, `validate`) to live Postgres/Dagster backends with exit codes 0–3 | CHK-01/02/06 |
 
 ## 6. Phase F — T8 quality gate & closure (continuous, final)
+
+**F progress:** prompt-injection guard + strict LLM boundary (CHK-18), rights/limits guard
+(CHK-19) and offline restore-drill/retention-readiness helpers (CHK-17 groundwork) landed.
+Live load tests, real backfill budget metrics and production verification evidence remain
+open; RSK-07/08/11 stay accepted until those gates pass.
 
 | Step | Work | Exit check |
 |---|---|---|

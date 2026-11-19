@@ -6,8 +6,10 @@ Applied: evidence bundle + triage, review-queue state machine (add/decide/overdu
 drift guard, cost estimate + budget gate + canonical cache-key builder, retention policy +
 partition/retention planner. Design decisions (DEC-17/18/19) and policy closures are indexed
 in [08](08-traceability.md) §8; runtime integration exit criteria (fixture runs, three real
-backfills, load test, restore drill) are enforced as T1–T10 land. RSK-01/RSK-02 are deliberately
-**not** here: they depend on a signed licence, not engineering.
+backfills, load test, restore drill) are enforced as T1–T10 land. Phase D added the pinned LLM
+boundary, Batch API planner, curation/dedup and the offline restore-drill/retention helpers
+(`restore_drill.py`); live Postgres/provider gates still have to pass before closure.
+RSK-01/RSK-02 are deliberately **not** here: they depend on a signed licence, not engineering.
 
 **Notation:** \"T0 gate\" = the rights gate in brief §1; task `T0` = the first task in
 [03](03-work-breakdown.md). Owner of all mitigations: **Balgove Innovations**.
