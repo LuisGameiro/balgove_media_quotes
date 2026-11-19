@@ -66,6 +66,19 @@ quotes_table = Table(
     Column("quote_metadata", JSON, nullable=False, default=dict),
 )
 
+eval_runs_table = Table(
+    "eval_runs",
+    metadata,
+    Column("eval_id", String, primary_key=True),
+    Column("gold_set_version", String, nullable=False),
+    Column("run_id", String, nullable=False),
+    Column("report_date", Date, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("thresholds", JSON, nullable=False),
+    Column("passed", Boolean, nullable=False),
+    Column("trace_id", String, nullable=True),
+)
+
 pipeline_runs_table = Table(
     "pipeline_runs",
     metadata,

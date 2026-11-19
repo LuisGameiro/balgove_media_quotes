@@ -14,6 +14,7 @@ from .tables import (
     articles_table,
     audit_events_table,
     decision_cache_table,
+    eval_runs_table,
     pipeline_runs_table,
     quotes_table,
     sources_table,
@@ -22,6 +23,34 @@ from .tables import (
 if TYPE_CHECKING:
     from ..models import ExportQuoteRecord
     from ..registry import SourceRegistryRow
+
+
+def record_eval_run(
+    session: Session,
+    *,
+    gold_set_version: str,
+    report_date: date,
+    metrics: dict[str, Any],
+    thresholds: dict[str, Any],
+    passed: bool,
+    trace_id: str | None = None,
+) -> str:
+    """Append one evaluation result; eval ids are stable per gold set + date."""
+    eval_id = _run_uuid(f"eval:{gold_set_version}:{report_date.isoformat()}")
+    statement = pg_insert(eval_runs_table).values(
+        eval_id=eval_id,
+        gold_set_version=gold_set_version,
+        run_id=f"eval-{gold_set_version}",
+        report_date=report_date,
+        metrics=metrics,
+        thresholds=thresholds,
+        passed=passed,
+        trace_id=trace_id,
+    )
+    statement = statement.on_conflict_do_nothing(index_elements=["eval_id"])
+    session.execute(statement)
+    session.commit()
+    return eval_id
 
 
 def persist_articles_and_quotes(

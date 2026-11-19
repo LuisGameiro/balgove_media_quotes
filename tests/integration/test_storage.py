@@ -18,6 +18,7 @@ from media_quotes.db.repository import (
     append_audit_events,
     finish_pipeline_run,
     persist_articles_and_quotes,
+    record_eval_run,
     start_pipeline_run,
     sync_sources,
     upsert_decision_cache,
@@ -71,6 +72,29 @@ def test_sources_table_definition() -> None:
     assert "source_id" in names
     assert "created_at" not in names
     assert "updated_at" not in names
+
+
+def test_record_eval_run_is_idempotent() -> None:
+    session = MagicMock()
+    first = record_eval_run(
+        session,
+        gold_set_version="synthetic-v1",
+        report_date=date(2026, 11, 19),
+        metrics={"pass": True},
+        thresholds={"article_recall": 0.9},
+        passed=True,
+    )
+    second = record_eval_run(
+        session,
+        gold_set_version="synthetic-v1",
+        report_date=date(2026, 11, 19),
+        metrics={"pass": True},
+        thresholds={"article_recall": 0.9},
+        passed=True,
+    )
+    assert first == second and len(first) == 36
+    assert session.execute.call_count == 2
+    assert session.commit.call_count == 2
 
 
 def test_persist_articles_and_quotes_skips_missing_offsets() -> None:

@@ -138,5 +138,19 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
     }
     metrics = evaluate_metrics(metrics, AcceptanceThresholds())
     _write_json(settings.audit_dir / f"eval-{gold_set}.json", metrics)
+    if settings.persist_to_postgres:
+        from ..db.engine import create_db_engine, make_session_factory
+        from ..db.repository import record_eval_run
+
+        engine = create_db_engine(settings)
+        with make_session_factory(engine)() as session:
+            record_eval_run(
+                session,
+                gold_set_version=gold_set,
+                report_date=report_date,
+                metrics=metrics,
+                thresholds=metrics["thresholds"],
+                passed=bool(metrics["pass"]),
+            )
     print(json.dumps(metrics, ensure_ascii=False, sort_keys=True, indent=2))
     return EXIT_OK if metrics["pass"] else EXIT_FAILURE
