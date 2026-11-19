@@ -1,0 +1,52 @@
+"""D2 — deterministic Batch API request planning (offline)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from media_quotes.batch import build_batch_requests, custom_id, write_batch_file
+from media_quotes.llm_live import LLMRequest
+
+
+def req(cache_key: str) -> LLMRequest:
+    return LLMRequest(
+        decision_type="section_inference",
+        cache_key=cache_key,
+        input_hash="i",
+        model_snapshot="gpt-4o-2024-11-20",
+        prompt_version="p1",
+        schema_hash="s1",
+        system_prompt="Return JSON only",
+        user_prompt="<quote>data</quote>",
+    )
+
+
+def test_custom_id_is_stable_and_safe() -> None:
+    assert custom_id("k1") == custom_id("k1")
+    assert custom_id("k1") != custom_id("k2")
+    assert custom_id("k1").startswith("decision-")
+
+
+def test_batch_requests_use_custom_id_and_strict_schema() -> None:
+    requests = build_batch_requests([req("k1"), req("k2")])
+    assert [item.custom_id for item in requests] == [custom_id("k1"), custom_id("k2")]
+    body = requests[0].body
+    assert body["text"]["format"]["strict"] is True
+    assert body["model"] == "gpt-4o-2024-11-20"
+
+
+def test_duplicate_custom_id_rejected() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        build_batch_requests([req("k1"), req("k1")])
+
+
+def test_write_batch_file_is_jsonl(tmp_path: Path) -> None:
+    path = tmp_path / "batch.jsonl"
+    count = write_batch_file(build_batch_requests([req("k1")]), path)
+    assert count == 1
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["custom_id"] == custom_id("k1")
