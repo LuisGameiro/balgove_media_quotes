@@ -1,0 +1,61 @@
+name: CI
+
+# CHK-10..13 enforcement (docs/02 §7). One gate: `make check`.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: make check (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.9"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync locked environment (CHK-11)
+        run: uv sync --frozen --all-extras --dev --python ${{ matrix.python-version }}
+
+      - name: Verify lockfile freshness (CHK-11)
+        run: uv lock --check
+
+      - name: Single quality gate (CHK-08, CHK-10, CHK-12, CHK-13)
+        run: uv run --frozen make check
+
+  secret-scan:
+    name: Secret scan (CHK-13)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
