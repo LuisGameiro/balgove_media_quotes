@@ -34,7 +34,7 @@ def build_definitions() -> dg.Definitions:
         # Imported inside the asset to keep CLI-helper tests independent of Dagster.
         from .cli.run import _collect
 
-        records, coverage, gaps, events, rejected = _collect(
+        records, coverage, gaps, events, rejected, _offsets = _collect(
             settings, run_id=f"run-dagster-{report_date.isoformat()}", report_date=report_date
         )
         status = "partial" if gaps else "succeeded"

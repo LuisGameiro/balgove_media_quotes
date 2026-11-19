@@ -44,13 +44,19 @@ def _process_source(  # pragma: no cover
     report_date: date,
     counters: dict[str, int],
 ) -> tuple[
-    list[ExportQuoteRecord], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], int
+    list[ExportQuoteRecord],
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    dict[str, dict[str, Any]],
 ]:
     """Process one source through discovery, fixture fetch, verification and metadata."""
     replay = _fixture_mode(row, settings)
     events: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
     records: list[ExportQuoteRecord] = []
+    offsets: dict[str, dict[str, Any]] = {}
     rejected = 0
 
     if not row.usable and not replay:
@@ -84,6 +90,7 @@ def _process_source(  # pragma: no cover
             gaps,
             events,
             rejected,
+            offsets,
         )
 
     if not row.usable:
@@ -186,6 +193,14 @@ def _process_source(  # pragma: no cover
             index = counters.get(publication_date, 0) + 1
             counters[publication_date] = index
             quote_id = f"Q-{publication_date.replace('-', '')}-{index:04d}"
+            offsets[quote_id] = {
+                "char_start": candidate.char_start,
+                "char_end": candidate.char_end,
+                "dom_path": candidate.dom_path,
+                "speaker": candidate.speaker,
+                "attribution_span": candidate.attribution_span,
+                "content_hash": raw_hash,
+            }
             section_id = str(span.get("section_id") or found.get("section_id") or "other")
             records.append(
                 quote_record(
@@ -254,13 +269,18 @@ def _process_source(  # pragma: no cover
         "gap_reason": "rights_blocked" if replay else "",
         "mandatory": row.source_id in _MANDATORY,
     }
-    return records, coverage, gaps, events, rejected
+    return records, coverage, gaps, events, rejected, offsets
 
 
 def _collect(  # pragma: no cover
     settings: Settings, *, run_id: str, report_date: date
 ) -> tuple[
-    list[ExportQuoteRecord], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int
+    list[ExportQuoteRecord],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    dict[str, dict[str, Any]],
 ]:
     window_start, _ = _window(report_date, settings)
     records: list[ExportQuoteRecord] = []
@@ -269,8 +289,9 @@ def _collect(  # pragma: no cover
     events: list[dict[str, Any]] = []
     rejected = 0
     counters: dict[str, int] = {}
+    offsets: dict[str, dict[str, Any]] = {}
     for row in _load_registry(settings):
-        found, cov, row_gaps, row_events, row_rejected = _process_source(
+        found, cov, row_gaps, row_events, row_rejected, row_offsets = _process_source(
             row,
             settings=settings,
             run_id=run_id,
@@ -283,8 +304,9 @@ def _collect(  # pragma: no cover
         gaps.extend(row_gaps)
         events.extend(row_events)
         rejected += row_rejected
+        offsets.update(row_offsets)
     records.sort(key=lambda item: (item.publication_date, item.quote_id))
-    return records, coverage, gaps, events, rejected
+    return records, coverage, gaps, events, rejected, offsets
 
 
 def _do_run(  # pragma: no cover
@@ -296,7 +318,7 @@ def _do_run(  # pragma: no cover
     verbose: bool,
 ) -> int:
     actual_run_id = run_id or _run_id(report_date, settings)
-    records, coverage, gaps, events, rejected = _collect(
+    records, coverage, gaps, events, rejected, offsets = _collect(
         settings, run_id=actual_run_id, report_date=report_date
     )
     if dry_run:
@@ -340,6 +362,38 @@ def _do_run(  # pragma: no cover
     )
     _write_audit(settings, report)
     _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
+    if settings.persist_to_postgres:
+        from ..db.engine import create_db_engine, make_session_factory
+        from ..db.repository import (
+            append_audit_events,
+            finish_pipeline_run,
+            persist_articles_and_quotes,
+            start_pipeline_run,
+        )
+
+        engine = create_db_engine(settings)
+        with make_session_factory(engine)() as session:
+            start_pipeline_run(
+                session,
+                run_id=actual_run_id,
+                pipeline="mq-run",
+                partition_date=report_date,
+            )
+            articles_n, quotes_n = persist_articles_and_quotes(session, records, offsets)
+            append_audit_events(session, events + coverage)
+            finish_pipeline_run(
+                session,
+                run_id=actual_run_id,
+                status="partial" if gaps else "succeeded",
+                stats={
+                    "quotes": len(records),
+                    "articles": articles_n,
+                    "stored_quotes": quotes_n,
+                    "rejected": rejected,
+                    "gaps": len(gaps),
+                },
+            )
+        print(f"Postgres: {articles_n} article(s), {quotes_n} quote(s) persisted")
     print(
         f"Run {actual_run_id}: {len(records)} verified fixture quote(s), "
         f"{rejected} rejected, {len(gaps)} coverage gap(s)."

@@ -51,10 +51,11 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 `ExtractionParams`, fail-closed quality gate, trafilatura Document/dict wrapper, injectable
 fallback hook, `find_span()` for exact offsets), `verification_stages.py` (Stage 1 pre-LLM
 junk/word-limit/duplicate filter + Stage 2 existing `verify_quote`, publishable-only output),
-repository run/audit persistence and `orchestration.py` (Dagster daily partitions, code
-version, opt-in Postgres writes via `MQ_PERSIST_TO_POSTGRES`) are implemented with offline
-tests. No source is activated. Quote-row persistence and CLI `mq run` DB cutover remain
-follow-ups; the existing offline `mq run` already emits explicit mandatory-source gaps.
+repository run/audit/quote persistence and `orchestration.py` (Dagster daily partitions, code
+version) are implemented with offline tests. `mq run` persists run, article, quote and audit
+rows when `MQ_PERSIST_TO_POSTGRES=true`; otherwise it stays file-based. No source is
+activated; every run emits explicit mandatory-source coverage gaps. Persisted quote rows are
+never written without exact offsets from the verifier.
 
 ## 4. Phase D — T4/T5 reasoning and obsolescence (2–3 sessions)
 

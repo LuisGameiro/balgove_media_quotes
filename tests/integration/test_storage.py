@@ -9,12 +9,15 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
+from media_quotes.cli.common import _parse_report_date
+from media_quotes.cli.run import _collect
 from media_quotes.config import Settings
 from media_quotes.db import engine as db_engine
 from media_quotes.db.repository import (
     DecisionCacheEntry,
     append_audit_events,
     finish_pipeline_run,
+    persist_articles_and_quotes,
     start_pipeline_run,
     sync_sources,
     upsert_decision_cache,
@@ -70,15 +73,38 @@ def test_sources_table_definition() -> None:
     assert "updated_at" not in names
 
 
+def test_persist_articles_and_quotes_skips_missing_offsets() -> None:
+    settings = Settings(_env_file=None)
+    date_value = _parse_report_date(None, settings)
+    records, _cov, _gaps, _events, _rejected, offsets = _collect(
+        settings, run_id="run-persist-test", report_date=date_value
+    )
+    assert records and offsets
+    session = MagicMock()
+    session.execute.return_value.rowcount = len(records)
+    articles, quotes = persist_articles_and_quotes(session, records, offsets)
+    assert articles >= 1
+    assert quotes == len(records)
+    assert session.execute.call_count == 2
+    session.commit.assert_called_once()
+
+    session2 = MagicMock()
+    assert persist_articles_and_quotes(session2, records, {}) == (0, 0)
+    session2.execute.assert_not_called()
+
+
 def test_pipeline_run_lifecycle_uses_stable_uuid() -> None:
     session = MagicMock()
     uuid = start_pipeline_run(
         session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
     )
     assert len(uuid) == 36
-    assert start_pipeline_run(
-        session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
-    ) == uuid
+    assert (
+        start_pipeline_run(
+            session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
+        )
+        == uuid
+    )
     finish_pipeline_run(session, run_id="run-abc123", status="partial", stats={"quotes": 2})
     with pytest.raises(ValueError):
         finish_pipeline_run(session, run_id="run-abc123", status="running", stats={})

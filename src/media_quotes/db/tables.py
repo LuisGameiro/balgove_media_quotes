@@ -32,6 +32,40 @@ sources_table = Table(
     Column("notes", String, nullable=False, default=""),
 )
 
+articles_table = Table(
+    "articles",
+    metadata,
+    Column("article_id", String, primary_key=True),
+    Column("source_id", String, nullable=False),
+    Column("canonical_url", String, nullable=False),
+    Column("title", String, nullable=True),
+    Column("publication_date", Date, nullable=True),
+    Column("language", String, nullable=True),
+    Column("content_hash", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("extractor_version", String, nullable=True),
+)
+
+quotes_table = Table(
+    "quotes",
+    metadata,
+    Column("quote_id", String, primary_key=True),
+    Column("canonical_quote_id", String, nullable=False),
+    Column("article_id", String, nullable=False),
+    Column("quote_text_raw", String, nullable=False),
+    Column("quote_text_normalised", String, nullable=False),
+    Column("char_start", Integer, nullable=False),
+    Column("char_end", Integer, nullable=False),
+    Column("dom_path", String, nullable=True),
+    Column("speaker", String, nullable=True),
+    Column("attribution_span", String, nullable=True),
+    Column("extraction_method", String, nullable=False),
+    Column("extractor_version", String, nullable=False),
+    Column("verification_status", String, nullable=False),
+    Column("verification_details", JSON, nullable=False, default=dict),
+    Column("quote_metadata", JSON, nullable=False, default=dict),
+)
+
 pipeline_runs_table = Table(
     "pipeline_runs",
     metadata,
