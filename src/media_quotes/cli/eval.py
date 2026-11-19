@@ -10,6 +10,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import FixtureSource, build_adapter
 from ..config import Settings
+from ..evaluation import AcceptanceThresholds, evaluate_metrics
 from ..models import QuoteCandidate
 from ..text_utils import normalise_text
 from ..verification import verify_quote
@@ -135,20 +136,7 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
         "judge_kappa": 1.0,
         "judge_note": "deterministic stand-in: all synthetic labels agree; no judge model called",
     }
-    thresholds = {
-        "article_recall": 0.90,
-        "quote_recall": 0.90,
-        "span_exact_match": 0.95,
-        "metadata_accuracy": 0.95,
-        "section_accuracy": 0.90,
-        "false_quote_rate": 0.0,
-        "obsolete_precision": 0.90,
-        "judge_kappa": 0.70,
-    }
-    metrics["thresholds"] = thresholds
-    metrics["pass"] = all(
-        metrics[name] >= value for name, value in thresholds.items() if name in metrics
-    )
+    metrics = evaluate_metrics(metrics, AcceptanceThresholds())
     _write_json(settings.audit_dir / f"eval-{gold_set}.json", metrics)
     print(json.dumps(metrics, ensure_ascii=False, sort_keys=True, indent=2))
     return EXIT_OK if metrics["pass"] else EXIT_FAILURE
