@@ -47,6 +47,11 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 | C3 | Two-stage verifier persisted to Postgres: Stage 1 pre-LLM candidate filter (drops zero-quote boilerplate before LLM spend) + Stage 2 post-LLM exact-span, speaker, metadata and first-hand evidence gate; `unverified` never published | CHK-02 |
 | C4 | Cut over `mq run --offline` and Dagster daily partitioned assets (`DEC-04`) from file-only stand-ins to Postgres-persisted runs producing a degraded digest that explicitly lists blocked Tier 1 sources (Reuters/BBC) as coverage gaps | CHK-01/02 |
 
+**C1/C2 progress:** `fetch.py` (rights-gated async httpx) and `extraction.py` (strict
+`ExtractionParams`, fail-closed quality gate, trafilatura Document/dict wrapper, injectable
+fallback hook, `find_span()` for exact offsets) are implemented with offline tests. No source
+is activated; wiring into `mq run` remains C4.
+
 ## 4. Phase D — T4/T5 reasoning and obsolescence (2–3 sessions)
 
 | Step | Work | Exit check |
