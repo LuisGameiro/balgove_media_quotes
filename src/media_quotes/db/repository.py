@@ -2,15 +2,41 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from .tables import sources_table
+from .tables import decision_cache_table, sources_table
 
 if TYPE_CHECKING:
     from ..registry import SourceRegistryRow
+
+
+class DecisionCacheEntry(BaseModel):
+    """Immutable result of one cached LLM decision (DEC-05/B2)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    cache_key: str = Field(min_length=1)
+    model_snapshot: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)
+    schema_hash: str = Field(min_length=1)
+    input_hash: str = Field(min_length=1)
+    output: dict[str, Any]
+    trace_id: str | None = None
+
+
+def upsert_decision_cache(session: Session, entry: DecisionCacheEntry) -> bool:
+    """Idempotent insert: an existing cache key is never overwritten (returns False)."""
+    values = entry.model_dump(mode="json")
+    statement = pg_insert(decision_cache_table).values(values)
+    statement = statement.on_conflict_do_nothing(index_elements=["cache_key"])
+    result = session.execute(statement)
+    session.commit()
+    rowcount = getattr(result, "rowcount", 0) or 0
+    return rowcount > 0
 
 
 def sync_sources(session: Session, rows: list[SourceRegistryRow]) -> int:

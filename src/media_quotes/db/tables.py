@@ -4,7 +4,7 @@ The authoritative DDL lives in db/schema.sql; these definitions exist only so SQ
 can build INSERT statements for the registry.
 """
 
-from sqlalchemy import Boolean, Column, Date, Integer, MetaData, String, Table
+from sqlalchemy import JSON, Boolean, Column, Date, Integer, MetaData, String, Table
 
 metadata = MetaData()
 
@@ -30,4 +30,16 @@ sources_table = Table(
     Column("archive_start_date", Date, nullable=False),
     Column("enabled", Boolean, nullable=False, default=False),
     Column("notes", String, nullable=False, default=""),
+)
+
+decision_cache_table = Table(
+    "decision_cache",
+    metadata,
+    Column("cache_key", String, primary_key=True),
+    Column("model_snapshot", String, nullable=False),
+    Column("prompt_version", String, nullable=False),
+    Column("schema_hash", String, nullable=False),
+    Column("input_hash", String, nullable=False),
+    Column("output", JSON, nullable=False),
+    Column("trace_id", String, nullable=True),
 )

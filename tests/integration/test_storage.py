@@ -5,9 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+from pydantic import ValidationError
+
 from media_quotes.config import Settings
 from media_quotes.db import engine as db_engine
-from media_quotes.db.repository import sync_sources
+from media_quotes.db.repository import DecisionCacheEntry, sync_sources, upsert_decision_cache
 from media_quotes.db.tables import sources_table
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
 
@@ -57,6 +60,49 @@ def test_sources_table_definition() -> None:
     assert "source_id" in names
     assert "created_at" not in names
     assert "updated_at" not in names
+
+
+def test_decision_cache_entry_strict_model() -> None:
+    entry = DecisionCacheEntry(
+        cache_key="k",
+        model_snapshot="snap",
+        prompt_version="p1",
+        schema_hash="s1",
+        input_hash="i1",
+        output={"quote_text": "x"},
+    )
+    assert entry.trace_id is None
+    with pytest.raises(ValidationError):
+        DecisionCacheEntry(
+            cache_key="k",
+            model_snapshot="snap",
+            prompt_version="p1",
+            schema_hash="s1",
+            input_hash="i1",
+            output="not-a-dict",
+        )
+
+
+def test_upsert_decision_cache_is_idempotent_without_overwrite() -> None:
+    entry = DecisionCacheEntry(
+        cache_key="k",
+        model_snapshot="snap",
+        prompt_version="p1",
+        schema_hash="s1",
+        input_hash="i1",
+        output={"ok": True},
+    )
+    session = MagicMock()
+    session.execute.return_value.rowcount = 1
+    assert upsert_decision_cache(session, entry) is True
+    statement = session.execute.call_args.args[0]
+    # Idempotency is enforced at SQL level by ON CONFLICT DO NOTHING (no overwrite).
+    assert "ON CONFLICT" in str(statement)
+    session.commit.assert_called_once()
+
+    session2 = MagicMock()
+    session2.execute.return_value.rowcount = 0
+    assert upsert_decision_cache(session2, entry) is False
 
 
 def test_sync_sources_with_empty_rows() -> None:
