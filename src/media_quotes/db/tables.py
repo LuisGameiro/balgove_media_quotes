@@ -32,6 +32,29 @@ sources_table = Table(
     Column("notes", String, nullable=False, default=""),
 )
 
+pipeline_runs_table = Table(
+    "pipeline_runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("pipeline", String, nullable=False),
+    Column("partition_date", Date, nullable=True),
+    Column("status", String, nullable=False),
+    Column("stats", JSON, nullable=False, default=dict),
+)
+
+audit_events_table = Table(
+    "audit_events",
+    metadata,
+    Column("event_id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", String, nullable=True),
+    Column("trace_id", String, nullable=True),
+    Column("step", String, nullable=False),
+    Column("entity_type", String, nullable=True),
+    Column("entity_id", String, nullable=True),
+    Column("status", String, nullable=False),
+    Column("details", JSON, nullable=False, default=dict),
+)
+
 decision_cache_table = Table(
     "decision_cache",
     metadata,

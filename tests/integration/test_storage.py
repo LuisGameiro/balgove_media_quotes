@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -10,7 +11,14 @@ from pydantic import ValidationError
 
 from media_quotes.config import Settings
 from media_quotes.db import engine as db_engine
-from media_quotes.db.repository import DecisionCacheEntry, sync_sources, upsert_decision_cache
+from media_quotes.db.repository import (
+    DecisionCacheEntry,
+    append_audit_events,
+    finish_pipeline_run,
+    start_pipeline_run,
+    sync_sources,
+    upsert_decision_cache,
+)
 from media_quotes.db.tables import sources_table
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
 
@@ -60,6 +68,39 @@ def test_sources_table_definition() -> None:
     assert "source_id" in names
     assert "created_at" not in names
     assert "updated_at" not in names
+
+
+def test_pipeline_run_lifecycle_uses_stable_uuid() -> None:
+    session = MagicMock()
+    uuid = start_pipeline_run(
+        session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
+    )
+    assert len(uuid) == 36
+    assert start_pipeline_run(
+        session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
+    ) == uuid
+    finish_pipeline_run(session, run_id="run-abc123", status="partial", stats={"quotes": 2})
+    with pytest.raises(ValueError):
+        finish_pipeline_run(session, run_id="run-abc123", status="running", stats={})
+
+
+def test_append_audit_events_is_append_only() -> None:
+    session = MagicMock()
+    events = [
+        {
+            "run_id": "run-abc123",
+            "trace_id": "t1",
+            "step": "discover",
+            "status": "fixture_replay",
+            "source_id": "reuters",
+        },
+        {"step": "coverage", "status": "blocked", "source_id": "bbc"},
+    ]
+    assert append_audit_events(session, events) == 2
+    statement = session.execute.call_args.args[0]
+    assert "INSERT INTO audit_events" in str(statement)
+    assert append_audit_events(session, []) == 0
+    session.commit.assert_called_once()
 
 
 def test_decision_cache_entry_strict_model() -> None:
