@@ -21,6 +21,11 @@ BACKFILL_START: Final = date(2026, 10, 1)
 REPORT_WINDOW_DAYS: Final = 14
 GOLD_SET_VERSION: Final = "synthetic-v1"
 
+# DEC-10 licence-limit policy — enforced by the renderer, never by the frozen schema.
+MAX_QUOTE_WORDS: Final = 30
+ATTRIBUTION_FORMAT: Final = "Outlet — Named person (role), Article, YYYY-MM-DD, URL"
+LICENCE_TERRITORY: Final = "internal worldwide"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -55,6 +60,12 @@ class Settings(BaseSettings):
     backfill_start: date = BACKFILL_START
     report_window_days: int = REPORT_WINDOW_DAYS
     gold_set_version: str = GOLD_SET_VERSION
+
+    # DEC-10 (docs/04): renderer-enforced rights limits; no change to quotes.schema.json.
+    max_quote_words: int = Field(default=MAX_QUOTE_WORDS, gt=0)
+    attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
+    licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)
+    external_publication: bool = False  # DEC-02: internal-only by default
 
     # T4 will pin these; kept here so provenance columns have a value from day one.
     llm_model_snapshot: str = "unset"
@@ -100,6 +111,22 @@ class Settings(BaseSettings):
     @property
     def GOLD_SET_VERSION(self) -> str:
         return self.gold_set_version
+
+    @property
+    def MAX_QUOTE_WORDS(self) -> int:
+        return self.max_quote_words
+
+    @property
+    def ATTRIBUTION_FORMAT(self) -> str:
+        return self.attribution_format
+
+    @property
+    def LICENCE_TERRITORY(self) -> str:
+        return self.licence_territory
+
+    def quote_within_limits(self, quote_text: str) -> bool:
+        """DEC-10 word-count gate; strict counting on Unicode whitespace."""
+        return len(quote_text.split()) <= self.max_quote_words
 
 
 @lru_cache
