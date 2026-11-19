@@ -40,16 +40,7 @@ src/media_quotes/
 ├── __main__.py                       # python -m media_quotes entry point
 ├── adapters.py                       # permission-gated source adapter; T0 fail-closed
 ├── bootstrap.py                      # Alembic upgrade head + source registry sync
-├── cli/                              # mq package: app, shared helpers and command modules
-│   ├── __init__.py                   # stable public API (main, render_errors, ...)
-│   ├── __main__.py                   # python -m media_quotes.cli
-│   ├── app.py                        # parser/dispatch and exit-code boundary
-│   ├── common.py                     # constants and shared helpers
-│   ├── run.py                        # offline blocked/degraded pipeline run
-│   ├── audit.py                      # audit report generation and rendering
-│   ├── logs.py                       # run/trace log viewer
-│   ├── eval.py                       # synthetic gold-set evaluation
-│   └── ops.py                        # backfill, sources, digest, export, dashboard commands
+├── cli.py                            # mq command-line interface (12 subcommands)
 ├── config.py                         # Settings, PROJECT_ROOT, SecretStr DB URL, date defaults
 ├── coverage.py                       # per-source coverage counters
 ├── dashboard.py                      # dashboard projection scaffold
@@ -62,20 +53,10 @@ src/media_quotes/
 ├── observability.py                  # structlog JSON logging, redaction, optional OTLP
 ├── py.typed                          # PEP 561 marker for downstream type checking
 ├── registry.py                       # sources.csv -> SourceRegistryRow and T0 policy
-├── risk_controls/                    # RSK-07/08/11 policy package with flat re-exports
-│   ├── __init__.py                   # stable public API for existing callers
-│   ├── models.py                     # strict policy models and value objects
-│   ├── obsolescence.py               # review queue and obsolete-flag policy
-│   ├── budget.py                     # backfill cost estimate and budget gate
-│   ├── retention.py                  # partition and retention planning
-│   └── cache.py                      # content-addressed decision-cache key
+├── risk_controls.py                  # RSK-07/08/11 policy: review queue, budget gate, retention, cache key
 ├── text_utils.py                     # Unicode folding and exact-span helpers
-├── validation/                       # data-asset validation package with flat re-exports
-│   ├── __init__.py                   # validate_data_dir + stable helper API
-│   ├── common.py                     # CSV reading and column checks
-│   ├── sources.py                    # sources.csv and T0 validation
-│   ├── sections.py                   # sections.csv validation
-│   └── quotes.py                     # derived JSONL/schema validation
+├── validation.py                     # data-asset validation service
+├── verification.py                   # two-stage quote verification logic
 └── db/
     ├── __init__.py                   # database subpackage marker
     ├── engine.py                     # SQLAlchemy engine and session factory
@@ -134,24 +115,18 @@ tests/
 │   ├── test_observability_policy.py
 │   ├── test_registry.py
 │   ├── test_registry_coercions.py
+│   ├── test_risk_controls.py
+│   ├── test_risk_controls_edges.py
 │   ├── test_text_and_export.py
 │   ├── test_text_utils_edges.py
-│   ├── risk_controls/                # mirrors media_quotes/risk_controls/
-│   │   ├── __init__.py
-│   │   ├── test_policies.py
-│   │   └── test_validation.py
-│   └── validation/                   # mirrors media_quotes/validation/
-│       ├── __init__.py
-│       ├── test_helpers.py
-│       └── test_service.py
+│   ├── test_validation.py
+│   └── test_validation_edges.py
 ├── integration/                      # CLI/bootstrap/DB boundary tests
 │   ├── __init__.py
 │   ├── test_bootstrap.py
-│   ├── test_storage.py
-│   └── cli/                          # mirrors media_quotes/cli/
-│       ├── __init__.py
-│       ├── test_app.py
-│       └── test_errors.py
+│   ├── test_cli.py
+│   ├── test_cli_errors.py
+│   └── test_storage.py
 └── contract/                         # docs/data contract checks
     ├── __init__.py
     └── test_docs_qa.py
@@ -181,7 +156,7 @@ docs/
 ├── 09-neo4j-integration.md           # optional graph integration plan; not adopted
 ├── 10-risk-mitigation-plan.md        # plan for closing RSK-07/08/11
 ├── 11-repository-structure.md        # this document
-├── 12-implementation-plan.md         # phases A–F to start implementation
+└── 12-implementation-plan.md         # phases A–F to cut over to live implementation
 ```
 
 Former `docs/05-critique-and-improvements.md` is retired. Do not recreate it; its content was folded into 01–04 and 06.
@@ -228,7 +203,7 @@ The `.gitkeep` files preserve empty directories in git. Actual generated files u
 | New source | `data/sources.csv`, `docs/07-sources.md`, and validation tests |
 | New canonical enum value | `src/media_quotes/enums.py`, `data/quotes.schema.json`, `src/media_quotes/db/schema.sql`, docs, tests |
 | New DB table/column | `migrations/versions/`, `src/media_quotes/db/schema.sql`, `src/media_quotes/db/tables.py`, `src/media_quotes/models.py` |
-| New command | `src/media_quotes/cli/` (add a command module and wire in `app.py`), root README, `docs/02-stack-and-architecture.md` |
+| New command | `src/media_quotes/cli.py`, root README, `docs/02-stack-and-architecture.md` |
 | New planning document | `docs/`, with an entry in `docs/README.md` |
 | New reusable Python logic | `src/media_quotes/` with a unit test |
 | New CI/repo check | `Makefile` target and `.github/workflows/ci.yml` via `uv run make check` |

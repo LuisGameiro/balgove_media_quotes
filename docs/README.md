@@ -11,14 +11,14 @@ reviewed **2026-11-20** against the brief and the scaffold):
 
 | Doc | Status | Last reviewed | Review trigger |
 |---|---|---|---|
-| 01–04, 06–11, root & data README | integrated / reviewed | 2026-11-20 | Brief change, decision change, or implementation drift |
+| 01–04, 06–12, root & data README | integrated / reviewed | 2026-11-20 | Brief change, decision change, or implementation drift |
 
 > **Status: integrated, reviewed.** Reuters/BBC stay mandatory but `blocked` under the T0
 > rights gate — see [04](04-risks-and-open-questions.md) DEC-01/DEC-14. The minimum
 > deliverable is the brief's §3–§4, reachable through one command (`mq run`, `mq audit`,
 > `mq logs`).
 >
-> **Notation:** \"T0 gate\" = rights gate (brief §1); task `T0` = first task in
+> **Notation:** "T0 gate" = rights gate (brief §1); task `T0` = first task in
 > [03](03-work-breakdown.md). Daily MD path is canonical: `digests/YYYY-MM-DD.md`.
 > Owner unless stated: **Balgove Innovations**. Former doc 05 (critique/deferred options)
 > is retired; its provenance is in 06 and its decisions in 04.
@@ -34,8 +34,8 @@ reviewed **2026-11-20** against the brief and the scaffold):
 | [08-traceability.md](08-traceability.md) | REQ/OUT → DEC → task → check matrix, CHK registry, tracked code changes, **closed-items index (solved DEC/RSK, keeping IDs resolvable)**, change-recording convention |
 | [09-neo4j-integration.md](09-neo4j-integration.md) | Planning overview for a possible Neo4j graph integration: graph model, sync from Postgres, rights/security, validation and rollout triggers — **not adopted** |
 | [10-risk-mitigation-plan.md](10-risk-mitigation-plan.md) | How RSK-07/08/11 will be closed: evidence bundle + review SLA, backfill budget/cache guard, partitioning/retention; new checks CHK-15…17 |
-| [12-implementation-plan.md](12-implementation-plan.md) | Bridge from plan to code: phases A–F, vertical slices, exit checks and the first deliverable |
 | [11-repository-structure.md](11-repository-structure.md) | Canonical whole-monorepo tree: source, data, tests, docs, migrations, tooling and generated artifacts, with placement rules |
+| [12-implementation-plan.md](12-implementation-plan.md) | Bridge from plan to code: phases A–F, vertical slices, exit checks and the cutover from file-based offline handlers to Postgres/Dagster |
 
 ## Reading order
 
@@ -48,8 +48,8 @@ reviewed **2026-11-20** against the brief and the scaffold):
 7. [07](07-sources.md) — per-source detail and the licence-limit policy.
 8. [09](09-neo4j-integration.md) — optional graph integration, only if a graph need appears.
 9. [10](10-risk-mitigation-plan.md) — how the engineering risks will be closed.
-10. [12](12-implementation-plan.md) — how to start coding, phase by phase.
 10. [11](11-repository-structure.md) — where every file in the monorepo belongs.
+11. [12](12-implementation-plan.md) — how to cut over to live Postgres/Dagster implementation, phase by phase.
 
 The implementation scaffold lives in [`../src`](../src); the registry and frozen schema in
 [`../data`](../data); operator commands in the [root README](../README.md).
@@ -74,8 +74,8 @@ The implementation scaffold lives in [`../src`](../src); the registry and frozen
 - [ ] Engineering standards in [02](02-stack-and-architecture.md) §7 are enforced by CHK-10…13 (`make check`, uv lock, mypy --strict, 85% coverage, secrets redaction).
 - [ ] Every task ID referenced in 04/08 exists in the [03](03-work-breakdown.md) table (T0–T10).
 - [ ] Enumerations match [01](01-requirements-analysis.md) §2 / `data/quotes.schema.json`.
-- [ ] \"T0 gate\" vs task `T0` used consistently (notation note in 01/03/04/06/07/08).
-- [ ] Evals dates read \"went read-only 2026-10-31; shuts down 2026-11-30\" (canonical: 02 §1 and 04 DEC-06).
+- [ ] "T0 gate" vs task `T0` used consistently (notation note in 01/03/04/06/07/08).
+- [ ] Evals dates read "went read-only 2026-10-31; shuts down 2026-11-30" (canonical: 02 §1 and 04 DEC-06).
 - [ ] `data/README.md` and the schema call `quotes.jsonl` a **derived export**, not the store.
 - [ ] No open-question IDs or sections, no deferred section: every item is decided in 04.
 - [ ] Register rows carry a status from `accepted / not adopted`; no solved rows in 04; CHK-01…19 are all defined; solved IDs remain indexed in 08 §8.

@@ -8,7 +8,8 @@ requirement→decision→task→check mappings live in
 [`docs/08`](docs/08-traceability.md). An optional Neo4j integration is planned (not adopted)
 in [`docs/09`](docs/09-neo4j-integration.md); plans to close the engineering risks are in
 [`docs/10`](docs/10-risk-mitigation-plan.md). The canonical whole-repo file tree is in
-[`docs/11`](docs/11-repository-structure.md).
+[`docs/11`](docs/11-repository-structure.md), and the phase-by-phase implementation cutover
+plan is in [`docs/12`](docs/12-implementation-plan.md).
 
 ## Implemented today vs planned
 
@@ -49,7 +50,7 @@ src/media_quotes/
   __main__.py        # python -m media_quotes
   bootstrap.py       # Alembic upgrade head + source registry sync
   db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
-docs/                # Requirements, architecture, tasks, decisions, rationale, repo structure (11)
+docs/                # Requirements, architecture, tasks, decisions, rationale, repo tree (11), start plan (12)
 data/                # Registry, frozen schema, derived JSONL export, templates (no Python)
 tests/               # pytest suite incl. test_docs_qa.py; VCR.py/syrupy planned for full stack
 scripts/             # docs_qa.py (CHK-08), validate_data.py (registry/data checks)
@@ -161,5 +162,5 @@ See docs/02 §7 for the full engineering standard.
 ## Glossary
 
 The glossary lives in [`docs/README.md`](docs/README.md) (single source). Key notation:
-\"T0 gate\" = the rights gate (brief §1); task `T0` = the first task in `docs/03`;
+"T0 gate" = the rights gate (brief §1); task `T0` = the first task in `docs/03`;
 DEC/RSK register IDs are defined in [`docs/04`](docs/04-risks-and-open-questions.md).
