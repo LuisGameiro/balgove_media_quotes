@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from ..config import Settings, get_settings
@@ -83,6 +84,13 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
     subparsers.add_parser("export", help="derived JSONL export", **shared)
     subparsers.add_parser("dashboard", help="Streamlit dashboard guidance", **shared)
+    review = subparsers.add_parser("review", help="obsolescence review queue", **shared)
+    review.add_argument("--action", choices=("list", "decide"), default="list")
+    review.add_argument("--quote-id", dest="quote_id")
+    review.add_argument("--reason-code", dest="reason_code", default="human-review")
+    subparsers.add_parser("retention", help="retention and lock readiness plan", **shared)
+    drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
+    drill.add_argument("--reference", dest="reference")
     return parser
 
 
@@ -105,6 +113,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         _do_eval,
         _do_export,
         _do_logs,
+        _do_restore_drill,
+        _do_retention,
+        _do_review,
         _do_run,
         _do_sources,
         _parse_report_date,
@@ -129,6 +140,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK
         if command == "dashboard":
             return _do_dashboard(settings)
+        if command == "review":
+            return _do_review(
+                settings,
+                action=str(args.action),
+                quote_id=getattr(args, "quote_id", None),
+                reason_code=str(getattr(args, "reason_code", "human-review")),
+            )
+        if command == "retention":
+            return _do_retention(settings, dry_run=bool(args.dry_run))
+        if command == "restore-drill":
+            reference = getattr(args, "reference", None)
+            return _do_restore_drill(settings, reference=Path(reference) if reference else None)
         if command == "sources":
             return _do_sources(
                 settings,

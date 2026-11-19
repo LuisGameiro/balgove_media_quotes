@@ -47,6 +47,7 @@ from .common import (
 )
 from .eval import _do_eval
 from .logs import _do_logs
+from .maintenance import _do_restore_drill, _do_retention, _do_review
 from .ops import _do_backfill, _do_dashboard, _do_digest, _do_export, _do_sources
 from .run import _collect, _do_run, _process_source
 
@@ -77,6 +78,9 @@ __all__ = [
     "_do_eval",
     "_do_export",
     "_do_logs",
+    "_do_restore_drill",
+    "_do_retention",
+    "_do_review",
     "_do_run",
     "_do_sources",
     "_event",
