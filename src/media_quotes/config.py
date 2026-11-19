@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
     licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)
     external_publication: bool = False  # DEC-02: internal-only by default
+    persist_to_postgres: bool = False  # C4: Dagster persists run/audit rows only when enabled
 
     # T4 will pin these; kept here so provenance columns have a value from day one.
     llm_model_snapshot: str = "unset"
