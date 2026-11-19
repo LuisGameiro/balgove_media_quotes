@@ -69,6 +69,7 @@ def _audit_report(  # pragma: no cover
         "rejected_candidates": rejected,
         "coverage": list(coverage),
         "coverage_gaps": list(gaps),
+        "review_queue": [],
         "checks": checks,
         "version_manifest": _version_manifest(settings),
         "artifacts": {

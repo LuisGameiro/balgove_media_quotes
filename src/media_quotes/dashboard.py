@@ -55,6 +55,28 @@ def coverage_gaps(audit_dir: Path) -> list[dict[str, Any]]:  # pragma: no cover
     return [gap for gap in gaps if isinstance(gap, dict)]
 
 
+def _latest_audit(audit_dir: Path) -> dict[str, Any]:
+    reports = sorted(audit_dir.glob("audit-*.json"), reverse=True) if audit_dir.is_dir() else []
+    if not reports:
+        return {}
+    payload = json.loads(reports[0].read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def review_queue_view(audit_dir: Path) -> list[dict[str, Any]]:
+    """Pending obsolescence flags from the latest audit report (E2 review queue)."""
+    payload = _latest_audit(audit_dir)
+    queue = payload.get("review_queue", [])
+    return [item for item in queue if isinstance(item, dict)]
+
+
+def coverage_summary(audit_dir: Path) -> list[dict[str, Any]]:
+    """Per-source coverage rows from the latest audit report (E2 coverage view)."""
+    payload = _latest_audit(audit_dir)
+    rows = payload.get("coverage", [])
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def recent_logs(logs_dir: Path, limit: int = 50) -> list[str]:  # pragma: no cover
     if not logs_dir.is_dir():
         return []
@@ -92,6 +114,8 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     load_gaps = st.cache_data(ttl=60)(coverage_gaps)
     load_logs = st.cache_data(ttl=60)(recent_logs)
     load_sources = st.cache_data(ttl=60)(registered_sources)
+    load_review = st.cache_data(ttl=60)(review_queue_view)
+    load_coverage = st.cache_data(ttl=60)(coverage_summary)
 
     st.set_page_config(page_title="Media Quotes — offline replay", layout="wide")
     st.title("Media Quotes — blocked/degraded mode")
@@ -101,6 +125,16 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     for day, markdown in load_digests(cfg.digest_dir):
         with st.expander(day):
             st.markdown(markdown)
+
+    st.subheader("Per-source coverage")
+    st.dataframe(load_coverage(cfg.audit_dir))
+
+    st.subheader("Obsolescence review queue")
+    pending = load_review(cfg.audit_dir)
+    if pending:
+        st.dataframe(pending)
+    else:
+        st.write("No pending review flags.")
 
     st.subheader("Coverage gaps")
     gaps = load_gaps(cfg.audit_dir)
@@ -123,10 +157,12 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
 
 __all__ = [
     "coverage_gaps",
+    "coverage_summary",
     "guidance",
     "latest_digests",
     "main",
     "recent_logs",
     "registered_sources",
+    "review_queue_view",
     "schema_summary",
 ]
