@@ -15,6 +15,7 @@ from ..export import content_hash, local_store_path, quote_record, write_jsonl
 from ..llm import make_provider
 from ..models import ExportQuoteRecord, QuoteCandidate
 from ..registry import SourceRegistryRow
+from ..rights_guard import apply_rights_limits
 from ..text_utils import normalise_text
 from ..verification import verify_quote
 from .audit import _audit_report, _write_audit
@@ -330,6 +331,8 @@ def _do_run(  # pragma: no cover
             print(f"  gap: {gap['source_id']} ({gap['gap_reason']}) — {gap['detail']}")
         return EXIT_OK
 
+    rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
+    records = rights.kept
     store_path = local_store_path(settings.export_dir, report_date)
     write_jsonl(records, store_path)
     digest_path = write_digest(
@@ -358,7 +361,7 @@ def _do_run(  # pragma: no cover
         coverage=coverage,
         gaps=gaps,
         events=events,
-        rejected=rejected,
+        rejected=rejected + len(rights.rejected),
     )
     _write_audit(settings, report)
     _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
