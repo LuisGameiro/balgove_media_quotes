@@ -34,6 +34,7 @@ reviewed **2026-11-20** against the brief and the scaffold):
 | [08-traceability.md](08-traceability.md) | REQ/OUT → DEC → task → check matrix, CHK registry, tracked code changes, **closed-items index (solved DEC/RSK, keeping IDs resolvable)**, change-recording convention |
 | [09-neo4j-integration.md](09-neo4j-integration.md) | Planning overview for a possible Neo4j graph integration: graph model, sync from Postgres, rights/security, validation and rollout triggers — **not adopted** |
 | [10-risk-mitigation-plan.md](10-risk-mitigation-plan.md) | How RSK-07/08/11 will be closed: evidence bundle + review SLA, backfill budget/cache guard, partitioning/retention; new checks CHK-15…17 |
+| [12-implementation-plan.md](12-implementation-plan.md) | Bridge from plan to code: phases A–F, vertical slices, exit checks and the first deliverable |
 | [11-repository-structure.md](11-repository-structure.md) | Canonical whole-monorepo tree: source, data, tests, docs, migrations, tooling and generated artifacts, with placement rules |
 
 ## Reading order
@@ -47,6 +48,7 @@ reviewed **2026-11-20** against the brief and the scaffold):
 7. [07](07-sources.md) — per-source detail and the licence-limit policy.
 8. [09](09-neo4j-integration.md) — optional graph integration, only if a graph need appears.
 9. [10](10-risk-mitigation-plan.md) — how the engineering risks will be closed.
+10. [12](12-implementation-plan.md) — how to start coding, phase by phase.
 10. [11](11-repository-structure.md) — where every file in the monorepo belongs.
 
 The implementation scaffold lives in [`../src`](../src); the registry and frozen schema in

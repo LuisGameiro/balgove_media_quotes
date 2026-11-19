@@ -180,7 +180,8 @@ docs/
 ├── 08-traceability.md                # REQ/OUT -> DEC -> task -> CHK matrix
 ├── 09-neo4j-integration.md           # optional graph integration plan; not adopted
 ├── 10-risk-mitigation-plan.md        # plan for closing RSK-07/08/11
-└── 11-repository-structure.md        # this document
+├── 11-repository-structure.md        # this document
+├── 12-implementation-plan.md         # phases A–F to start implementation
 ```
 
 Former `docs/05-critique-and-improvements.md` is retired. Do not recreate it; its content was folded into 01–04 and 06.
