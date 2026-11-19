@@ -8,7 +8,7 @@ provider is a clearly labelled deterministic stand-in.
 from __future__ import annotations
 
 import csv
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
 
@@ -40,6 +40,7 @@ def render_digest(  # pragma: no cover
     sections_csv: Path | None = None,
     provider: InferenceProvider | None = None,
     obsolescence_flags: Sequence[ObsolescenceFlag] = (),
+    review_badges: Mapping[str, str] | None = None,
     notice: str = "",
 ) -> str:
     """Render the Markdown for digests/REPORT_DATE.md without changing quote text."""
@@ -85,6 +86,9 @@ def render_digest(  # pragma: no cover
                 )
                 if record.article_author:
                     lines.append(f"  - Byline: {record.article_author}")
+                badge = (review_badges or {}).get(record.quote_id, "")
+                if badge:
+                    lines.append(f"  - Status: {badge} (provisional hold)")
         else:
             lines.append("_No verified quotes in this window._")
         lines.append("")
@@ -110,6 +114,7 @@ def write_digest(  # pragma: no cover
     sections_csv: Path | None = None,
     provider: InferenceProvider | None = None,
     obsolescence_flags: Sequence[ObsolescenceFlag] = (),
+    review_badges: Mapping[str, str] | None = None,
     notice: str = "",
 ) -> Path:
     """Render and write the canonical MD file (UTF-8, no BOM, deterministic bytes)."""
@@ -122,6 +127,7 @@ def write_digest(  # pragma: no cover
         sections_csv=sections_csv,
         provider=provider,
         obsolescence_flags=obsolescence_flags,
+        review_badges=review_badges,
         notice=notice,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
