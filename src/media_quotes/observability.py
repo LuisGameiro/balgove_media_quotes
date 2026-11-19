@@ -71,6 +71,12 @@ def configure_logging(settings: Settings) -> None:
     )
 
 
+def configure_observability(settings: Settings) -> Tracer | None:
+    """Single entry point used by CLI/pipeline runs: logging + tracing together (B3)."""
+    configure_logging(settings)
+    return configure_tracing(settings)
+
+
 def configure_tracing(settings: Settings) -> Tracer | None:
     """Return a tracer (or None when disabled). Safe no-op without the SDK."""
     if not settings.otel_enabled:
