@@ -53,7 +53,8 @@ fallback hook, `find_span()` for exact offsets), `verification_stages.py` (Stage
 junk/word-limit/duplicate filter + Stage 2 existing `verify_quote`, publishable-only output),
 repository run/audit/quote persistence and `orchestration.py` (Dagster daily partitions, code
 version) are implemented with offline tests. `mq run` persists run, article, quote and audit
-rows when `MQ_PERSIST_TO_POSTGRES=true`; otherwise it stays file-based. No source is
+rows when `PERSIST_TO_POSTGRES=true` (Settings has no env prefix); otherwise it stays
+file-based. No source is
 activated; every run emits explicit mandatory-source coverage gaps. Persisted quote rows are
 never written without exact offsets from the verifier.
 
