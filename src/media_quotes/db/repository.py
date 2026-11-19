@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -15,12 +16,14 @@ from .tables import (
     audit_events_table,
     decision_cache_table,
     eval_runs_table,
+    gold_set_labels_table,
     pipeline_runs_table,
     quotes_table,
     sources_table,
 )
 
 if TYPE_CHECKING:
+    from ..gold_set import GoldSet
     from ..models import ExportQuoteRecord
     from ..registry import SourceRegistryRow
 
@@ -51,6 +54,75 @@ def record_eval_run(
     session.execute(statement)
     session.commit()
     return eval_id
+
+
+def sync_gold_set_labels(session: Session, gold_set: GoldSet) -> int:
+    """Persist gold-set labels and negative candidates with their deterministic split."""
+    from ..gold_set import split_for
+
+    rows: list[dict[str, Any]] = []
+    for article in gold_set.articles:
+        split = split_for(article.article_ref, gold_set.version)
+        pub_date = date.fromisoformat(article.publication_date[:10])
+        if not article.quotes:
+            label_id = _run_uuid(f"gold-art:{gold_set.version}:{article.article_ref}")
+            rows.append(
+                {
+                    "label_id": label_id,
+                    "gold_set_version": gold_set.version,
+                    "split": split,
+                    "article_ref": article.article_ref,
+                    "source_id": article.source_id,
+                    "publication_date": pub_date,
+                    "relevant": article.relevant,
+                    "quote_text": None,
+                    "section_id": None,
+                    "human_label": False,
+                    "is_negative_candidate": False,
+                }
+            )
+        else:
+            for idx, quote in enumerate(article.quotes):
+                label_id = _run_uuid(f"gold-quote:{gold_set.version}:{article.article_ref}:{idx}")
+                rows.append(
+                    {
+                        "label_id": label_id,
+                        "gold_set_version": gold_set.version,
+                        "split": split,
+                        "article_ref": article.article_ref,
+                        "source_id": article.source_id,
+                        "publication_date": pub_date,
+                        "relevant": article.relevant,
+                        "quote_text": quote.quote_text,
+                        "section_id": quote.section_id,
+                        "human_label": quote.human_label,
+                        "is_negative_candidate": False,
+                    }
+                )
+    for idx, neg in enumerate(gold_set.negative_candidates):
+        label_id = _run_uuid(f"gold-neg:{gold_set.version}:{idx}")
+        rows.append(
+            {
+                "label_id": label_id,
+                "gold_set_version": gold_set.version,
+                "split": "test",
+                "article_ref": "negative_candidate",
+                "source_id": "negative",
+                "publication_date": date(2026, 11, 19),
+                "relevant": False,
+                "quote_text": neg.quote_text,
+                "section_id": None,
+                "human_label": False,
+                "is_negative_candidate": True,
+            }
+        )
+    if not rows:
+        return 0
+    statement = pg_insert(gold_set_labels_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["label_id"])
+    result = session.execute(statement)
+    session.commit()
+    return getattr(result, "rowcount", 0) or len(rows)
 
 
 def persist_articles_and_quotes(
@@ -220,6 +292,13 @@ def upsert_decision_cache(session: Session, entry: DecisionCacheEntry) -> bool:
     session.commit()
     rowcount = getattr(result, "rowcount", 0) or 0
     return rowcount > 0
+
+
+def get_decision_cache(session: Session, cache_key: str) -> dict[str, Any] | None:
+    """Look up an existing decision by unique cache key."""
+    statement = select(decision_cache_table).where(decision_cache_table.c.cache_key == cache_key)
+    row = session.execute(statement).mappings().first()
+    return dict(row) if row else None
 
 
 def sync_sources(session: Session, rows: list[SourceRegistryRow]) -> int:

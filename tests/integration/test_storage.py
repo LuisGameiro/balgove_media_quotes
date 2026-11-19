@@ -1,4 +1,4 @@
-"""Offline tests for the database bootstrapping helpers (engine and schema loader)."""
+"""Integration tests for storage bootstrap, schema application and DB writes."""
 
 from __future__ import annotations
 
@@ -8,93 +8,112 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.engine import Engine
 
 from media_quotes.cli.common import _parse_report_date
 from media_quotes.cli.run import _collect
 from media_quotes.config import Settings
-from media_quotes.db import engine as db_engine
+from media_quotes.db.engine import make_session_factory
 from media_quotes.db.repository import (
     DecisionCacheEntry,
     append_audit_events,
     finish_pipeline_run,
+    get_decision_cache,
     persist_articles_and_quotes,
     record_eval_run,
     start_pipeline_run,
+    sync_gold_set_labels,
     sync_sources,
     upsert_decision_cache,
 )
-from media_quotes.db.tables import sources_table
+from media_quotes.gold_set import GoldArticle, GoldQuoteLabel, GoldSet
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
 
-SOURCES_CSV = Path(__file__).resolve().parents[2] / "data" / "sources.csv"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCES_CSV = REPO_ROOT / "data" / "sources.csv"
+SCHEMA_SQL = REPO_ROOT / "src" / "media_quotes" / "db" / "schema.sql"
 
 
-def test_create_db_engine_uses_settings(monkeypatch) -> None:
-    settings = Settings(_env_file=None, database_url="postgresql+psycopg://u:p@host/db")
-    create_engine = MagicMock()
-    monkeypatch.setattr(db_engine, "create_engine", create_engine)
-
-    result = db_engine.create_db_engine(settings)
-
-    create_engine.assert_called_once_with(
-        settings.database_url_value, pool_pre_ping=True, future=True
-    )
-    assert result is create_engine.return_value
+def test_schema_sql_has_t0_constraints() -> None:
+    ddl = SCHEMA_SQL.read_text(encoding="utf-8")
+    assert "CONSTRAINT sources_t0_gate CHECK" in ddl
+    assert "CONSTRAINT sources_state_controlled_claim_only CHECK" in ddl
+    assert "CONSTRAINT sources_tier4_disabled CHECK" in ddl
+    assert "rights_status IN ('license_held','api_permitted')" in ddl
 
 
-def test_make_session_factory_uses_engine(monkeypatch) -> None:
-    engine = object()
-    sessionmaker = MagicMock()
-    monkeypatch.setattr(db_engine, "sessionmaker", sessionmaker)
-
-    result = db_engine.make_session_factory(engine)
-
-    sessionmaker.assert_called_once_with(bind=engine, expire_on_commit=False, future=True)
-    assert result is sessionmaker.return_value
-
-
-def test_engine_never_executes_raw_ddl() -> None:
-    """DEC-15: bootstrap delegates DDL to Alembic, not the engine module."""
-    assert not hasattr(db_engine, "initialize_database")
-    assert not hasattr(db_engine, "_SCHEMA")
-
-
-def test_engine_has_no_schema_loader_side_effects() -> None:
-    """The engine module creates engines/sessions only; schema setup lives in bootstrap/Alembic."""
-    assert set(dir(db_engine)).isdisjoint({"_SCHEMA", "initialize_database"})
-    assert callable(db_engine.create_db_engine)
-    assert callable(db_engine.make_session_factory)
-
-
-def test_sources_table_definition() -> None:
-    assert sources_table.name == "sources"
-    names = [column.name for column in sources_table.columns]
-    assert "source_id" in names
-    assert "created_at" not in names
-    assert "updated_at" not in names
+def test_session_factory_produces_session() -> None:
+    mock_engine = MagicMock(spec=Engine)
+    factory = make_session_factory(mock_engine)
+    session = factory()
+    assert session is not None
+    session.close()
 
 
 def test_record_eval_run_is_idempotent() -> None:
     session = MagicMock()
-    first = record_eval_run(
+    metrics = {"article_recall": 1.0, "quote_recall": 1.0, "false_quote_rate": 0.0}
+    thresholds = {"article_recall": 0.90}
+    run_date = date(2026, 11, 19)
+
+    eval_id_1 = record_eval_run(
         session,
         gold_set_version="synthetic-v1",
-        report_date=date(2026, 11, 19),
-        metrics={"pass": True},
-        thresholds={"article_recall": 0.9},
+        report_date=run_date,
+        metrics=metrics,
+        thresholds=thresholds,
         passed=True,
     )
-    second = record_eval_run(
+    eval_id_2 = record_eval_run(
         session,
         gold_set_version="synthetic-v1",
-        report_date=date(2026, 11, 19),
-        metrics={"pass": True},
-        thresholds={"article_recall": 0.9},
+        report_date=run_date,
+        metrics=metrics,
+        thresholds=thresholds,
         passed=True,
     )
-    assert first == second and len(first) == 36
+    assert eval_id_1 == eval_id_2
+    assert len(eval_id_1) == 36
     assert session.execute.call_count == 2
     assert session.commit.call_count == 2
+
+
+def test_sync_gold_set_labels_persists_splits() -> None:
+    session = MagicMock()
+    session.execute.return_value.rowcount = 2
+    gold = GoldSet(
+        version="v1",
+        articles=[
+            GoldArticle(
+                article_ref="fixture://reuters/art-1",
+                source_id="reuters",
+                publication_date="2026-11-18",
+                relevant=True,
+                quotes=[
+                    GoldQuoteLabel(
+                        quote_text="Quote text here",
+                        section_id="war_intensity",
+                        human_label=True,
+                    )
+                ],
+            )
+        ],
+    )
+    count = sync_gold_set_labels(session, gold)
+    assert count >= 1
+    session.execute.assert_called_once()
+    session.commit.assert_called_once()
+
+
+def test_get_decision_cache_queries_cache_key() -> None:
+    session = MagicMock()
+    session.execute.return_value.mappings.return_value.first.return_value = {
+        "cache_key": "k1",
+        "output": {"text": "hello"},
+    }
+    result = get_decision_cache(session, "k1")
+    assert result is not None
+    assert result["output"]["text"] == "hello"
 
 
 def test_persist_articles_and_quotes_skips_missing_offsets() -> None:

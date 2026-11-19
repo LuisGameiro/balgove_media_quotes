@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from datetime import UTC, date, datetime, time
-from typing import Any, cast
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import FixtureSource, build_adapter
 from ..config import Settings
+from ..curation import dedupe_quotes, review_badge
 from ..digest import write_digest
 from ..export import content_hash, local_store_path, quote_record, write_jsonl
 from ..llm import make_provider
 from ..models import ExportQuoteRecord, QuoteCandidate
 from ..registry import SourceRegistryRow
 from ..rights_guard import apply_rights_limits
+from ..risk_controls.models import ObsolescenceFlag
 from ..text_utils import normalise_text
-from ..verification import verify_quote
+from ..verification_stages import verify_pipeline
 from .audit import _audit_report, _write_audit
 from .common import (
     _MANDATORY,
@@ -29,11 +32,27 @@ from .common import (
     _gap_for,
     _gap_record,
     _load_registry,
+    _read_json,
     _run_id,
     _trace_id,
     _window,
     _write_json,
 )
+
+
+def _load_review_flags(settings: Settings) -> list[ObsolescenceFlag]:
+    queue_path = settings.audit_dir / "review-queue.json"
+    if not queue_path.is_file():
+        return []
+    payload = _read_json(queue_path)
+    flags_data = payload.get("flags", [])
+    flags: list[ObsolescenceFlag] = []
+    if isinstance(flags_data, list):
+        for item in flags_data:
+            if isinstance(item, dict):
+                with contextlib.suppress(Exception):
+                    flags.append(ObsolescenceFlag.model_validate(item))
+    return flags
 
 
 def _process_source(  # pragma: no cover
@@ -52,7 +71,7 @@ def _process_source(  # pragma: no cover
     int,
     dict[str, dict[str, Any]],
 ]:
-    """Process one source through discovery, fixture fetch, verification and metadata."""
+    """Process one source through discovery, fixture fetch, two-stage verification and metadata."""
     replay = _fixture_mode(row, settings)
     events: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
@@ -141,41 +160,45 @@ def _process_source(  # pragma: no cover
                 license_reference=row.license_reference or "(none)",
             )
         )
-        spans = [cast(dict[str, Any], span) for span in metadata.get("quote_spans", [])]
+        spans_raw = metadata.get("quote_spans", [])
+        spans = [s for s in spans_raw if isinstance(s, dict)] if isinstance(spans_raw, list) else []
         by_text = {
             normalise_text(str(span.get("quote_text") or "")): span
             for span in spans
-            if isinstance(span, dict)
         }
+        candidates: list[QuoteCandidate] = []
         for found in adapter.extract_quotes(text):
             quote_text = str(found.get("quote_text") or "")
-            if len(normalise_text(quote_text)) < 20:
-                rejected += 1
-                continue
             span = by_text.get(normalise_text(quote_text), {})
-            candidate = QuoteCandidate(
-                quote_text=quote_text,
-                article_id=uuid5(NAMESPACE_URL, ref),
-                char_start=int(found.get("char_start", 0)),
-                char_end=int(found.get("char_end", 0)),
-                dom_path=str(found.get("dom_path") or span.get("dom_path") or ""),
-                speaker=str(span.get("speaker") or found.get("speaker") or "") or None,
-                attribution_span=str(
-                    span.get("attribution_span") or found.get("attribution_span") or ""
+            candidates.append(
+                QuoteCandidate(
+                    quote_text=quote_text,
+                    article_id=uuid5(NAMESPACE_URL, ref),
+                    char_start=int(found.get("char_start", 0)),
+                    char_end=int(found.get("char_end", 0)),
+                    dom_path=str(found.get("dom_path") or span.get("dom_path") or ""),
+                    speaker=str(span.get("speaker") or found.get("speaker") or "") or None,
+                    attribution_span=str(
+                        span.get("attribution_span") or found.get("attribution_span") or ""
+                    )
+                    or None,
                 )
-                or None,
             )
-            result = verify_quote(
-                candidate,
-                text,
-                row,
-                policy_flags,
-                metadata=metadata,
-                window_start=window_start,
-                window_end=report_date,
-                now=verified_at,
-            )
-            if result.status != "verified":
+
+        pipeline_outcome = verify_pipeline(
+            candidates,
+            text=text,
+            source_row=row,
+            policy_flags=policy_flags,
+            metadata=metadata,
+            window_start=window_start,
+            window_end=report_date,
+            max_quote_words=settings.max_quote_words,
+            now=verified_at,
+        )
+        rejected += sum(pipeline_outcome.prefilter.rejected.values())
+        for v_res in pipeline_outcome.results:
+            if v_res.status != "verified":
                 rejected += 1
                 events.append(
                     _event(
@@ -183,13 +206,15 @@ def _process_source(  # pragma: no cover
                         trace_id=trace_id,
                         source_id=row.source_id,
                         step="verify",
-                        status=result.status,
+                        status=v_res.status,
                         quote_id="",
-                        reasons=result.reasons,
+                        reasons=v_res.reasons,
                         license_reference=row.license_reference or "(none)",
                     )
                 )
-                continue
+
+        for candidate in pipeline_outcome.publishable:
+            span = by_text.get(normalise_text(candidate.quote_text), {})
             publication_date = str(metadata.get("publication_date") or report_date.isoformat())[:10]
             index = counters.get(publication_date, 0) + 1
             counters[publication_date] = index
@@ -202,11 +227,11 @@ def _process_source(  # pragma: no cover
                 "attribution_span": candidate.attribution_span,
                 "content_hash": raw_hash,
             }
-            section_id = str(span.get("section_id") or found.get("section_id") or "other")
+            section_id = str(span.get("section_id") or "other")
             records.append(
                 quote_record(
                     quote_id=quote_id,
-                    quote_text_original=quote_text,
+                    quote_text_original=candidate.quote_text,
                     source_id=row.source_id,
                     source_name=row.source_name,
                     source_tier=row.tier,
@@ -230,7 +255,7 @@ def _process_source(  # pragma: no cover
                         [
                             row.source_id,
                             canonical_url,
-                            quote_text,
+                            candidate.quote_text,
                             str(candidate.char_start),
                             raw_hash,
                         ]
@@ -332,9 +357,18 @@ def _do_run(  # pragma: no cover
         return EXIT_OK
 
     rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
-    records = rights.kept
+    records = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
     store_path = local_store_path(settings.export_dir, report_date)
     write_jsonl(records, store_path)
+
+    review_flags = _load_review_flags(settings)
+    now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
+    review_badges = {
+        flag.evidence.old_quote_id: review_badge(flag, now=now)
+        for flag in review_flags
+        if review_badge(flag, now=now)
+    }
+
     digest_path = write_digest(
         records,
         report_date=report_date,
@@ -343,6 +377,8 @@ def _do_run(  # pragma: no cover
         out_path=settings.digest_dir / f"{report_date.isoformat()}.md",
         sections_csv=settings.sections_csv,
         provider=make_provider("local"),
+        obsolescence_flags=review_flags,
+        review_badges=review_badges,
         notice=_NOTICE,
     )
     logs_path = settings.logs_dir / f"{actual_run_id}.jsonl"
@@ -362,6 +398,7 @@ def _do_run(  # pragma: no cover
         gaps=gaps,
         events=events,
         rejected=rejected + len(rights.rejected),
+        review_queue=[flag.model_dump(mode="json") for flag in review_flags],
     )
     _write_audit(settings, report)
     _write_json(settings.audit_dir / f"{actual_run_id}.json", report)

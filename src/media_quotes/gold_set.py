@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .enums import SECTION_IDS  # type: ignore[attr-defined]
+from .enums import SECTION_IDS
 
 STRICT = ConfigDict(strict=True, extra="forbid")
 Split = Literal["train", "dev", "test"]

@@ -75,6 +75,8 @@ def render_digest(  # pragma: no cover
         if selected:
             for record in selected:
                 lines.append(f"- {record.quote_text_original}")
+                if record.quote_text_en and record.source_language != "en":
+                    lines.append(f"  - Translation (EN): {record.quote_text_en}")
                 lines.append(
                     f"  - Source: {record.source_name}; publication: "
                     f"{record.publication_name or record.source_name}"

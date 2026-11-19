@@ -87,6 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser("review", help="obsolescence review queue", **shared)
     review.add_argument("--action", choices=("list", "decide"), default="list")
     review.add_argument("--quote-id", dest="quote_id")
+    review.add_argument("--verdict", choices=("confirmed", "rejected", "escalated"), dest="verdict")
     review.add_argument("--reason-code", dest="reason_code", default="human-review")
     subparsers.add_parser("retention", help="retention and lock readiness plan", **shared)
     drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
@@ -145,6 +146,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 settings,
                 action=str(args.action),
                 quote_id=getattr(args, "quote_id", None),
+                verdict=getattr(args, "verdict", None),
                 reason_code=str(getattr(args, "reason_code", "human-review")),
             )
         if command == "retention":

@@ -86,7 +86,7 @@ warn_unused_configs = true
 
 # Targeted overrides only; untyped third-party libraries.
 [[tool.mypy.overrides]]
-module = ["jsonschema", "feedparser", "trafilatura", "selectolax"]
+module = ["jsonschema", "trafilatura"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

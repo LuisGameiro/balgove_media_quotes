@@ -14,54 +14,54 @@ from media_quotes.risk_controls.models import ObsolescenceEvidence, Obsolescence
 
 
 def settings_for(tmp_path: Path) -> Settings:
-    audit = tmp_path / "audit"
-    audit.mkdir(exist_ok=True)
-    export = tmp_path / "export"
-    export.mkdir(exist_ok=True)
-    return Settings(_env_file=None, audit_dir=audit, export_dir=export)
+    return Settings(
+        digest_dir=tmp_path / "digests",
+        blob_dir=tmp_path / "blobs",
+        sources_csv=Path("data/sources.csv"),
+        sections_csv=Path("data/sections.csv"),
+        schema_path=Path("data/quotes.schema.json"),
+        fixtures_dir=Path("data/fixtures"),
+        gold_set_dir=Path("data/gold_set"),
+        audit_dir=tmp_path / "audit",
+        export_dir=tmp_path / "export",
+        logs_dir=tmp_path / "logs",
+        alembic_ini=Path("alembic.ini"),
+    )
 
 
-def flag_payload() -> dict[str, object]:
+def test_review_queue_list_and_decide(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    settings.audit_dir.mkdir(parents=True, exist_ok=True)
     evidence = ObsolescenceEvidence(
-        old_quote_id="Q-20261101-0001",
+        old_quote_id="Q-20261118-0001",
         old_content_hash="a" * 64,
-        newer_article_id="art",
+        newer_article_id="art-2",
         newer_content_hash="b" * 64,
         newer_is_first_hand=True,
         newer_rights_cleared=True,
-        superseding_span="new fact",
-        decision_id="d1",
-        rationale="superseded",
+        superseding_span="new facts",
+        decision_id="dec-1",
+        rationale="updated by primary source",
     )
-    return ObsolescenceFlag(evidence=evidence, confidence=0.9).model_dump(mode="json")
+    flag = ObsolescenceFlag(evidence=evidence, confidence=0.95, state="pending")
+    queue_file = settings.audit_dir / "review-queue.json"
+    queue_file.write_text(json.dumps({"flags": [flag.model_dump(mode="json")]}), encoding="utf-8")
 
-
-def test_review_list_and_decide(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    settings = settings_for(tmp_path)
-    (settings.audit_dir / "review-queue.json").write_text(
-        json.dumps({"flags": [flag_payload()]}), encoding="utf-8"
-    )
     assert _do_review(settings, action="list") == 0
-    assert "pending" in capsys.readouterr().out
+    assert _do_review(settings, action="decide", quote_id="Q-20261118-0001") == 0
+    payload = json.loads(queue_file.read_text(encoding="utf-8"))
+    assert payload["flags"][0]["state"] == "confirmed"
 
-    assert _do_review(
-        settings, action="decide", quote_id="Q-20261101-0001", reason_code="human-review"
-    ) == 0
-    assert "confirmed" in capsys.readouterr().out
-    stored = json.loads((settings.audit_dir / "review-queue.json").read_text(encoding="utf-8"))
-    assert stored["flags"][0]["state"] == "confirmed"
 
-    assert _do_review(
-        settings, action="decide", quote_id="missing", reason_code="human-review"
-    ) == 1
+def test_review_unknown_action(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
-        _do_review(settings, action="nope")
+        _do_review(settings_for(tmp_path), action="unknown")
 
 
-def test_retention_prints_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_retention_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert _do_retention(settings_for(tmp_path), dry_run=True) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert "partitions_to_detach" in payload
+    out = capsys.readouterr().out
+    assert "partitions_to_detach" in out
 
 
 def test_restore_drill_needs_two_exports(

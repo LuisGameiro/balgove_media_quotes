@@ -81,6 +81,7 @@ async def fetch_bytes(
     row: SourceRegistryRow,
     policy: FetchPolicy,
     track_a_approved: bool,
+    bucket: TokenBucket | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     clock: Any = None,
 ) -> tuple[bytes, str]:
@@ -88,11 +89,11 @@ async def fetch_bytes(
     assert_fetch_permitted(row, track_a_approved=track_a_approved)
     if not url.startswith(("https://", "http://")):
         raise ValueError("article URL must be absolute http(s)")
-    bucket = TokenBucket(policy.requests_per_second)
+    token_bucket = bucket or TokenBucket(policy.requests_per_second)
     import time as _time
 
     now = (clock or _time.monotonic)()
-    if not bucket.allow(now):
+    if not token_bucket.allow(now):
         raise RuntimeError("rate limit exceeded")
     async with httpx.AsyncClient(transport=transport, **policy.client_kwargs()) as client:
         response = await client.get(url)

@@ -20,7 +20,7 @@ plan is in [`docs/12`](docs/12-implementation-plan.md).
 | CLI | All 12 `mq` subcommands implemented in offline fixture-replay mode | Live Dagster/Postgres/LLM orchestration |
 | Export | `src/media_quotes/export.py` with strict `ExportQuoteRecord` validation | Context packs from live Postgres (`mq export`) |
 | Logs / traces | JSON logging, structlog secret redaction, optional OTLP tracing (`observability.py`) | Distributed tracing with live collectors |
-| Tests | 146 pytest tests, 23 risk-control policy tests, 95% coverage | VCR.py live recordings, Dagster asset checks |
+| Tests | 209 pytest tests, risk-control policy tests, >90% coverage | VCR.py live recordings, Dagster asset checks |
 | Quality tooling | Alembic migrations, committed `uv.lock`, `Makefile` (`make check`), GitHub Actions CI, ruff/mypy/pytest, `mq doctor` | Continuous asset contracts |
 
 Reuters and BBC **stay mandatory** (DEC-01) but ingestion is operationally blocked until
@@ -41,14 +41,27 @@ src/media_quotes/
   models.py          # Strict boundary schemas
   enums.py           # Canonical enums (rights_status, access_mode, source_type, …)
   text_utils.py      # NFC + smart-quote + whitespace normalisation, exact-span check
-  risk_controls.py   # RSK-07/08/11 policy: review evidence, budget gate, retention
   observability.py   # JSON logging, optional OTel traces
   adapters.py        # Single permission-gated source adapter
   export.py          # Derived JSONL export with strict schema validation
-  validation.py      # Importable registry/schema/quote validation
-  cli.py             # all 12 mq subcommands implemented (offline fixture-replay mode)
+  verification.py    # Deterministic quote verification
+  verification_stages.py # Two-stage verification: pre-LLM filter + deterministic gate
+  curation.py        # Section assignment, cross-outlet dedup and review badges
+  gold_set.py        # Versioned gold set loading and deterministic 60/20/20 splits
+  evaluation.py      # Pure evaluation thresholds contract
+  fetch.py           # Rate-limited, rights-gated HTTP client policy
+  extraction.py      # Trafilatura DOM-aware extraction and quality gate
+  llm.py             # Inference provider protocol and local stand-in
+  llm_live.py        # Pinned OpenAI client with structured outputs and decision caching
+  batch.py           # Provider batch API planning for backfills
+  rights_guard.py    # DEC-10 word limits and attribution policy guard
+  restore_drill.py   # Export integrity verification and retention readiness
+  orchestration.py   # Dagster daily-partitioned orchestration asset
   __main__.py        # python -m media_quotes
   bootstrap.py       # Alembic upgrade head + source registry sync
+  cli/               # mq command-line interface package (all subcommands)
+  risk_controls/     # RSK-07/08/11 policy package: review queue, budget gate, retention, cache
+  validation/        # Data-asset validation package: sources, sections, quotes
   db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
 docs/                # Requirements, architecture, tasks, decisions, rationale, repo tree (11), start plan (12)
 data/                # Registry, frozen schema, derived JSONL export, templates (no Python)
@@ -56,7 +69,9 @@ tests/               # pytest suite incl. test_docs_qa.py; VCR.py/syrupy planned
 scripts/             # docs_qa.py (CHK-08), validate_data.py (registry/data checks)
 alembic.ini          # Alembic config; database URL comes from Settings, not this file
 migrations/          # Alembic env.py, script.py.mako and versions/
-  versions/0001_initial.py  # initial schema, executed from db/schema.sql via op.execute
+  versions/0001_initial.py        # initial schema
+  versions/0002_gold_set.py       # gold set labels and eval runs
+  versions/0003_decision_cache.py # decision cache and partition registry
 digests/, var/{blobs,audit}/ # Generated artifacts (gitignored)
 ```
 
@@ -100,7 +115,6 @@ Dagster asset scheduling, external LLM provider calls, and production database c
 | `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id` |
 | `mq eval --gold-set <version>` | Deterministic metrics + κ-calibrated judge |
 | `mq sources`, `mq version` | Registry + rights status at a glance; version manifest |
-| `mq review`, `mq retention`, `mq restore-drill` | Review queue, retention plan, export integrity drill |
 | `mq backfill`, `mq digest`, `mq export`, `mq dashboard` | Backfill, regenerate MD, derived JSONL, Streamlit UI |
 
 Shared flags: `--offline` (VCR replay), `--dry-run`, `--date`, `--run-id`/`--trace-id`,

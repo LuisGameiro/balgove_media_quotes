@@ -113,3 +113,27 @@ decision_cache_table = Table(
     Column("output", JSON, nullable=False),
     Column("trace_id", String, nullable=True),
 )
+
+gold_set_labels_table = Table(
+    "gold_set_labels",
+    metadata,
+    Column("label_id", String, primary_key=True),
+    Column("gold_set_version", String, nullable=False),
+    Column("split", String, nullable=False),
+    Column("article_ref", String, nullable=False),
+    Column("source_id", String, nullable=False),
+    Column("publication_date", Date, nullable=False),
+    Column("relevant", Boolean, nullable=False),
+    Column("quote_text", String, nullable=True),
+    Column("section_id", String, nullable=True),
+    Column("human_label", Boolean, nullable=False),
+    Column("is_negative_candidate", Boolean, nullable=False, default=False),
+)
+
+storage_partitions_table = Table(
+    "storage_partitions",
+    metadata,
+    Column("table_name", String, primary_key=True),
+    Column("month", Date, primary_key=True),
+    Column("state", String, nullable=False),
+)

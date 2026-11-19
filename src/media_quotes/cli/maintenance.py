@@ -9,9 +9,10 @@ from typing import Any, cast
 
 from ..config import Settings
 from ..exceptions import ConfigError
-from ..export import read_jsonl
+from ..export import local_store_path, read_jsonl
 from ..restore_drill import retention_readiness, verify_export_integrity
 from ..risk_controls.models import ObsolescenceFlag
+from ..risk_controls.obsolescence import ReviewQueue
 from ..risk_controls.retention import RetentionPolicy
 from .common import EXIT_FAILURE, EXIT_OK, _read_json, _write_json
 
@@ -36,17 +37,21 @@ def _do_review(
     *,
     action: str,
     quote_id: str | None = None,
+    verdict: str | None = None,
     reviewer: str = "Balgove Innovations",
     reason_code: str = "human-review",
 ) -> int:
-    """List pending obsolete flags or decide one (fail-closed on bad input)."""
+    """List pending obsolete flags or decide one using ReviewQueue (fail-closed)."""
     payload = _load_queue(settings)
-    flags = cast(list[dict[str, Any]], payload.get("flags", []))
+    flags_data = cast(list[dict[str, Any]], payload.get("flags", []))
+    flags = [_flag_from_dict(item) for item in flags_data]
+    queue = ReviewQueue(flags)
+
     if action == "list":
         pending = [
-            item
-            for item in flags
-            if item.get("state") in {"pending", "needs_evidence", "escalated"}
+            flag.model_dump(mode="json")
+            for flag in flags
+            if flag.state in {"pending", "needs_evidence", "escalated"}
         ]
         print(json.dumps(pending, ensure_ascii=False, sort_keys=True, indent=2))
         return EXIT_OK
@@ -54,30 +59,33 @@ def _do_review(
         raise ConfigError(f"unknown review action: {action}")
     if not quote_id:
         raise ConfigError("--quote-id is required for review decide")
+
+    chosen_verdict = verdict or ("rejected" if reason_code == "reject" else "confirmed")
     now = datetime.now(UTC)
-    updated = False
-    for item in flags:
-        if str(item.get("evidence", {}).get("old_quote_id")) != quote_id:
-            continue
-        flag = _flag_from_dict(item)
-        verdict = "confirmed" if reason_code != "reject" else "rejected"
-        decided = flag.model_copy(
-            update={
-                "state": verdict,
-                "reviewer": reviewer,
-                "reviewed_at": now,
-                "reason_code": reason_code,
-            }
+    try:
+        decided_flag = queue.decide(
+            quote_id,
+            chosen_verdict,
+            reviewer=reviewer,
+            now=now,
+            reason_code=reason_code,
         )
-        item.clear()
-        item.update(decided.model_dump(mode="json"))
-        updated = True
-    if not updated:
+    except KeyError:
         print(f"no pending flag for {quote_id}", end="\n")
         return EXIT_FAILURE
-    payload["flags"] = flags
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    # Persist updated flags
+    updated_list = []
+    for flag in flags:
+        if flag.evidence.old_quote_id == quote_id:
+            updated_list.append(decided_flag.model_dump(mode="json"))
+        else:
+            updated_list.append(flag.model_dump(mode="json"))
+    payload["flags"] = updated_list
     _write_json(_queue_path(settings), payload)
-    print(f"review recorded: {quote_id} -> {verdict}")
+    print(f"review recorded: {quote_id} -> {chosen_verdict}")
     return EXIT_OK
 
 
@@ -97,9 +105,9 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
 def _do_restore_drill(settings: Settings, *, reference: Path | None = None) -> int:
     """Compare the latest derived export with a reference export (identity + hash)."""
     today = settings.report_date
-    current_path = settings.export_dir / f"{today.isoformat()}.jsonl"
+    current_path = local_store_path(settings.export_dir, today)
     if reference is None:
-        files = sorted(settings.export_dir.glob("*.jsonl"), reverse=True)
+        files = sorted(settings.export_dir.glob("quotes-*.jsonl"), reverse=True)
         if len(files) < 2:
             print("restore drill requires two exports; pass --reference PATH")
             return EXIT_FAILURE

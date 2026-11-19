@@ -36,6 +36,7 @@ def _audit_report(  # pragma: no cover
     gaps: Sequence[dict[str, Any]],
     events: Sequence[dict[str, Any]],
     rejected: int,
+    review_queue: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     window_start, window_end = _window(report_date, settings)
     checks = {
@@ -51,7 +52,7 @@ def _audit_report(  # pragma: no cover
         "trace_complete": all(bool(event.get("trace_id")) for event in events),
         "license_reference_logged": all("license_reference" in event for event in events),
         "offline_no_network": True,
-        "no_database_writes": True,
+        "no_database_writes": not settings.persist_to_postgres,
         "no_llm_api_calls": True,
         "rejected_candidates_excluded": True,
     }
@@ -69,7 +70,7 @@ def _audit_report(  # pragma: no cover
         "rejected_candidates": rejected,
         "coverage": list(coverage),
         "coverage_gaps": list(gaps),
-        "review_queue": [],
+        "review_queue": list(review_queue),
         "checks": checks,
         "version_manifest": _version_manifest(settings),
         "artifacts": {
@@ -159,6 +160,7 @@ def _do_audit(  # pragma: no cover
             gaps=[_gap_record(row) for row in _load_registry(settings) if not row.usable],
             events=[],
             rejected=0,
+            review_queue=[],
         )
     out_dir = Path(out) if out else None
     json_path, md_path = _write_audit(settings, report, out_dir)
