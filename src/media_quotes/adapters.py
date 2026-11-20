@@ -33,7 +33,7 @@ from typing import Any
 from .config import get_settings
 from .enums import ENUMERABLE_DISCOVERY
 from .exceptions import SourceNotPermitted
-from .extraction import ExtractionParams, RenderingFallback, extract_article
+from .extraction import ExtractionParams, RenderingFallback, extract_article, find_span
 from .registry import SourceRegistryRow
 from .text_utils import normalise_text
 
@@ -472,9 +472,16 @@ def parse_newspaper_html(
         or dom_meta.get("publication_name")
         or str(extracted.metadata.get("publication_name") or "")
     )
-    quote_spans = (
-        dom_meta["quote_spans"] if dom_meta.get("quote_spans") else _extract_quotes(article_text)
-    )
+    if dom_meta.get("quote_spans"):
+        quote_spans: list[dict[str, Any]] = []
+        for span in dom_meta["quote_spans"]:
+            realigned = dict(span)
+            found_offsets = find_span(article_text, str(span.get("quote_text") or ""))
+            if found_offsets is not None:
+                realigned["char_start"], realigned["char_end"] = found_offsets
+            quote_spans.append(realigned)
+    else:
+        quote_spans = _extract_quotes(article_text)
 
     return {
         "canonical_url": canonical_url,
