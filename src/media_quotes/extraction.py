@@ -87,13 +87,15 @@ def quality_gate(
     return (not reasons), tuple(reasons)
 
 
-def _as_mapping(document: Any) -> Mapping[str, Any]:
+def _as_mapping(document: object) -> Mapping[str, Any]:
     if isinstance(document, Mapping):
         return document
-    if hasattr(document, "as_dict"):
-        return dict(document.as_dict())
+    if hasattr(document, "as_dict") and callable(document.as_dict):
+        result = document.as_dict()
+        if isinstance(result, Mapping):
+            return result
     names = ("text", "title", "author", "date", "sitename", "url")
-    return {name: getattr(document, name) for name in names}
+    return {name: getattr(document, name, None) for name in names}
 
 
 def extract_article(

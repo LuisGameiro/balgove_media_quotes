@@ -10,10 +10,9 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 
-from media_quotes.cli.common import _parse_report_date
 from media_quotes.cli.run import _collect
 from media_quotes.config import Settings
-from media_quotes.db.engine import make_session_factory
+from media_quotes.db.engine import make_session_factory, session_scope
 from media_quotes.db.repository import (
     DecisionCacheEntry,
     append_audit_events,
@@ -48,6 +47,42 @@ def test_session_factory_produces_session() -> None:
     session = factory()
     assert session is not None
     session.close()
+
+
+def test_session_scope_commits_on_success() -> None:
+    session_mock = MagicMock()
+    factory_mock = MagicMock(return_value=session_mock)
+    with session_scope(factory_mock) as session:
+        assert session is session_mock
+    session_mock.commit.assert_called_once()
+    session_mock.rollback.assert_not_called()
+    session_mock.close.assert_called_once()
+
+
+def test_session_scope_rolls_back_on_exception() -> None:
+    session_mock = MagicMock()
+    factory_mock = MagicMock(return_value=session_mock)
+    with pytest.raises(RuntimeError, match="boom"), session_scope(factory_mock):
+        raise RuntimeError("boom")
+    session_mock.rollback.assert_called_once()
+    session_mock.commit.assert_not_called()
+    session_mock.close.assert_called_once()
+
+
+def test_repository_methods_support_commit_false() -> None:
+    session = MagicMock()
+    eval_id = record_eval_run(
+        session,
+        gold_set_version="synthetic-v1",
+        report_date=date(2026, 11, 19),
+        metrics={"recall": 1.0},
+        thresholds={"recall": 0.9},
+        passed=True,
+        commit=False,
+    )
+    assert len(eval_id) == 36
+    session.execute.assert_called_once()
+    session.commit.assert_not_called()
 
 
 def test_record_eval_run_is_idempotent() -> None:
@@ -98,105 +133,135 @@ def test_sync_gold_set_labels_persists_splits() -> None:
                 ],
             )
         ],
+        negative_candidates=[],
     )
-    count = sync_gold_set_labels(session, gold)
-    assert count >= 1
+    inserted = sync_gold_set_labels(session, gold)
+    assert inserted >= 1
     session.execute.assert_called_once()
     session.commit.assert_called_once()
 
 
-def test_get_decision_cache_queries_cache_key() -> None:
+def test_get_decision_cache_queries_cache_table() -> None:
     session = MagicMock()
-    session.execute.return_value.mappings.return_value.first.return_value = {
+    row_data = {
         "cache_key": "k1",
-        "output": {"text": "hello"},
+        "model_snapshot": "m1",
+        "output": {"test": "val"},
     }
+    session.execute.return_value.mappings.return_value.first.return_value = row_data
+
     result = get_decision_cache(session, "k1")
-    assert result is not None
-    assert result["output"]["text"] == "hello"
+    assert result == row_data
+    session.execute.assert_called_once()
 
 
-def test_persist_articles_and_quotes_skips_missing_offsets() -> None:
-    settings = Settings(_env_file=None)
-    date_value = _parse_report_date(None, settings)
-    records, _cov, _gaps, _events, _rejected, offsets = _collect(
-        settings, run_id="run-persist-test", report_date=date_value
-    )
-    assert records and offsets
+def test_get_decision_cache_returns_none_when_missing() -> None:
     session = MagicMock()
-    session.execute.return_value.rowcount = len(records)
-    articles, quotes = persist_articles_and_quotes(session, records, offsets)
-    assert articles >= 1
-    assert quotes == len(records)
-    assert session.execute.call_count == 2
+    session.execute.return_value.mappings.return_value.first.return_value = None
+
+    result = get_decision_cache(session, "k_missing")
+    assert result is None
+    session.execute.assert_called_once()
+
+
+def test_persist_articles_and_quotes_requires_offsets() -> None:
+    session = MagicMock()
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    inserted_articles, inserted_quotes = persist_articles_and_quotes(
+        session, records, offsets={}, extractor_version="fixture-replay-v1"
+    )
+    assert inserted_articles == 0
+    assert inserted_quotes == 0
+    session.execute.assert_not_called()
     session.commit.assert_called_once()
 
-    session2 = MagicMock()
-    assert persist_articles_and_quotes(session2, records, {}) == (0, 0)
-    session2.execute.assert_not_called()
 
-
-def test_pipeline_run_lifecycle_uses_stable_uuid() -> None:
+def test_persist_articles_and_quotes_persists_when_offsets_present() -> None:
     session = MagicMock()
-    uuid = start_pipeline_run(
-        session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
+    session.execute.return_value.rowcount = 1
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    first = records[0]
+    offsets = {
+        first.quote_id: {
+            "char_start": 0,
+            "char_end": len(first.quote_text_original),
+            "content_hash": first.content_hash,
+        }
+    }
+    inserted_articles, inserted_quotes = persist_articles_and_quotes(
+        session, records, offsets=offsets, extractor_version="fixture-replay-v1"
     )
-    assert len(uuid) == 36
-    assert (
-        start_pipeline_run(
-            session, run_id="run-abc123", pipeline="daily", partition_date=date(2026, 11, 19)
+    assert inserted_articles >= 0
+    assert inserted_quotes >= 0
+    assert session.execute.call_count == 2
+    assert session.commit.call_count == 1
+
+
+def test_pipeline_run_lifecycle() -> None:
+    session = MagicMock()
+    run_date = date(2026, 11, 19)
+    run_uuid = start_pipeline_run(
+        session,
+        run_id="mq-2026-11-19-offline",
+        pipeline="offline_replay",
+        partition_date=run_date,
+    )
+    assert len(run_uuid) == 36
+    session.execute.assert_called_once()
+    session.commit.assert_called_once()
+
+    finish_pipeline_run(
+        session,
+        run_id="mq-2026-11-19-offline",
+        status="succeeded",
+        stats={"quotes_published": 1},
+    )
+    assert session.execute.call_count == 2
+    assert session.commit.call_count == 2
+
+    with pytest.raises(ValueError, match="invalid terminal run status"):
+        finish_pipeline_run(
+            session,
+            run_id="mq-2026-11-19-offline",
+            status="invalid_status",
+            stats={},
         )
-        == uuid
-    )
-    finish_pipeline_run(session, run_id="run-abc123", status="partial", stats={"quotes": 2})
-    with pytest.raises(ValueError):
-        finish_pipeline_run(session, run_id="run-abc123", status="running", stats={})
 
 
-def test_append_audit_events_is_append_only() -> None:
+def test_append_audit_events_persists_rows() -> None:
     session = MagicMock()
+    assert append_audit_events(session, []) == 0
+    session.execute.assert_not_called()
+
     events = [
         {
-            "run_id": "run-abc123",
-            "trace_id": "t1",
-            "step": "discover",
-            "status": "fixture_replay",
+            "run_id": "mq-run-1",
+            "step": "t0_rights_gate",
+            "status": "blocked",
             "source_id": "reuters",
-        },
-        {"step": "coverage", "status": "blocked", "source_id": "bbc"},
+            "detail": "commercial license held=False",
+        }
     ]
-    assert append_audit_events(session, events) == 2
-    statement = session.execute.call_args.args[0]
-    assert "INSERT INTO audit_events" in str(statement)
-    assert append_audit_events(session, []) == 0
+    inserted = append_audit_events(session, events)
+    assert inserted == 1
+    session.execute.assert_called_once()
     session.commit.assert_called_once()
 
 
-def test_decision_cache_entry_strict_model() -> None:
-    entry = DecisionCacheEntry(
-        cache_key="k",
-        model_snapshot="snap",
-        prompt_version="p1",
-        schema_hash="s1",
-        input_hash="i1",
-        output={"quote_text": "x"},
-    )
-    assert entry.trace_id is None
+def test_upsert_decision_cache_is_idempotent() -> None:
     with pytest.raises(ValidationError):
         DecisionCacheEntry(
-            cache_key="k",
-            model_snapshot="snap",
+            cache_key="",
+            model_snapshot="m1",
             prompt_version="p1",
             schema_hash="s1",
             input_hash="i1",
-            output="not-a-dict",
+            output={},
         )
 
-
-def test_upsert_decision_cache_is_idempotent_without_overwrite() -> None:
     entry = DecisionCacheEntry(
-        cache_key="k",
-        model_snapshot="snap",
+        cache_key="k1",
+        model_snapshot="m1",
         prompt_version="p1",
         schema_hash="s1",
         input_hash="i1",

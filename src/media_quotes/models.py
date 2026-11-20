@@ -23,11 +23,11 @@ from .enums import (
 STRICT = ConfigDict(strict=True, extra="forbid")
 
 
-def _parse_date(value: Any) -> Any:
+def _parse_date(value: object) -> object:
     return date.fromisoformat(value) if isinstance(value, str) else value
 
 
-def _parse_datetime(value: Any) -> Any:
+def _parse_datetime(value: object) -> object:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
 
 
@@ -102,7 +102,7 @@ class VerificationRecord(BaseModel):
 
     @field_validator("verified_at", mode="before")
     @classmethod
-    def _parse_verified_at(cls, value: Any) -> Any:
+    def _parse_verified_at(cls, value: object) -> object:
         return _parse_datetime(value)
 
 
@@ -142,10 +142,10 @@ class ExportQuoteRecord(BaseModel):
 
     @field_validator("publication_date", mode="before")
     @classmethod
-    def _parse_publication_date(cls, value: Any) -> Any:
+    def _parse_publication_date(cls, value: object) -> object:
         return _parse_date(value)
 
     @field_validator("extraction_date", mode="before")
     @classmethod
-    def _parse_extraction_date(cls, value: Any) -> Any:
+    def _parse_extraction_date(cls, value: object) -> object:
         return _parse_datetime(value)

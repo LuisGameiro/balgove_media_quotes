@@ -8,13 +8,15 @@ until DEC-14 is recorded. Tests use httpx.MockTransport, so the suite never touc
 from __future__ import annotations
 
 import hashlib
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from .exceptions import SourceNotPermitted
+from .exceptions import RateLimitExceededError, SourceNotPermitted
 from .registry import SourceRegistryRow
 
 POLITE_USER_AGENT = "MediaQuotesBot/0.1 (+internal research; rights-gated)"
@@ -83,18 +85,23 @@ async def fetch_bytes(
     track_a_approved: bool,
     bucket: TokenBucket | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-    clock: Any = None,
+    clock: Callable[[], float] | float | None = None,
 ) -> tuple[bytes, str]:
     """Fetch raw article bytes and return (bytes, sha256). Never used without approval."""
     assert_fetch_permitted(row, track_a_approved=track_a_approved)
     if not url.startswith(("https://", "http://")):
         raise ValueError("article URL must be absolute http(s)")
     token_bucket = bucket or TokenBucket(policy.requests_per_second)
-    import time as _time
 
-    now = (clock or _time.monotonic)()
+    if callable(clock):
+        now = clock()
+    elif clock is not None:
+        now = float(clock)
+    else:
+        now = time.monotonic()
+
     if not token_bucket.allow(now):
-        raise RuntimeError("rate limit exceeded")
+        raise RateLimitExceededError("rate limit exceeded")
     async with httpx.AsyncClient(transport=transport, **policy.client_kwargs()) as client:
         response = await client.get(url)
         response.raise_for_status()

@@ -93,9 +93,7 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     """Print the retention/lock readiness plan; no DDL is executed."""
     today: date = settings.report_date
     months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
-    report = retention_readiness(
-        RetentionPolicy(), today, months, longest_txn_seconds=0
-    )
+    report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     if not dry_run:
         print("Live retention job is not available in blocked/degraded mode; no rows were touched.")

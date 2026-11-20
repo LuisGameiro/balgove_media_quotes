@@ -36,17 +36,13 @@ _STANDIN = {
 class InferenceProvider(Protocol):
     """One section inference from the quotes actually selected for that section."""
 
-    def infer(
-        self, *, section_id: str, section_name: str, quote_texts: Sequence[str]
-    ) -> str: ...  # pragma: no cover
+    def infer(self, *, section_id: str, section_name: str, quote_texts: Sequence[str]) -> str: ...
 
 
 class LocalStandInProvider:
     """Template-based, clearly labelled stand-in for the future pinned LLM provider."""
 
-    def infer(
-        self, *, section_id: str, section_name: str, quote_texts: Sequence[str]
-    ) -> str:  # pragma: no cover
+    def infer(self, *, section_id: str, section_name: str, quote_texts: Sequence[str]) -> str:
         count = len(quote_texts)
         body = _STANDIN.get(
             section_id,
@@ -59,7 +55,7 @@ class LocalStandInProvider:
         )
 
 
-def make_provider(name: str = "local") -> InferenceProvider:  # pragma: no cover
+def make_provider(name: str = "local") -> InferenceProvider:
     """Resolve a provider by name; live providers are disabled while sources are blocked."""
     if name in {"local", "stand-in", "none", ""}:
         return LocalStandInProvider()

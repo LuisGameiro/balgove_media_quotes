@@ -162,10 +162,7 @@ def _process_source(  # pragma: no cover
         )
         spans_raw = metadata.get("quote_spans", [])
         spans = [s for s in spans_raw if isinstance(s, dict)] if isinstance(spans_raw, list) else []
-        by_text = {
-            normalise_text(str(span.get("quote_text") or "")): span
-            for span in spans
-        }
+        by_text = {normalise_text(str(span.get("quote_text") or "")): span for span in spans}
         candidates: list[QuoteCandidate] = []
         for found in adapter.extract_quotes(text):
             quote_text = str(found.get("quote_text") or "")

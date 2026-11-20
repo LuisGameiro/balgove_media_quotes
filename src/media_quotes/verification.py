@@ -40,7 +40,7 @@ _REQUIRED_CHECKS = (
 )
 
 
-def verify_quote(  # pragma: no cover
+def verify_quote(
     candidate: QuoteCandidate,
     article_text: str,
     source_row: SourceRegistryRow,
@@ -117,7 +117,7 @@ def verify_quote(  # pragma: no cover
     )
 
 
-def _as_date(value: object) -> date | None:  # pragma: no cover
+def _as_date(value: object) -> date | None:
     if isinstance(value, date):
         return value
     if isinstance(value, str):
@@ -128,7 +128,7 @@ def _as_date(value: object) -> date | None:  # pragma: no cover
     return None
 
 
-def _attribution_ok(  # pragma: no cover
+def _attribution_ok(
     context: str,
     near_text: str,
     speaker: str,
@@ -152,7 +152,7 @@ def _attribution_ok(  # pragma: no cover
     return bool(re.search(r"\b[A-Z][a-zA-Z'-]+\s+[A-Z][a-zA-Z'-]+\b", context))
 
 
-def _junk_free(norm_quote: str) -> bool:  # pragma: no cover
+def _junk_free(norm_quote: str) -> bool:
     if len(norm_quote) < 20 or len(norm_quote) > 4000:
         return False
     if _JUNK_RE.search(norm_quote) or any(symbol in norm_quote for symbol in _JUNK_SYMBOLS):

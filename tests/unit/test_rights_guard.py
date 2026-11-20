@@ -35,8 +35,7 @@ def test_overlimit_and_missing_attribution_are_rejected() -> None:
     assert all("over_word_limit" in item["reason"] for item in strict.rejected)
 
     no_author = [
-        record.model_copy(update={"article_author": "", "source_name": ""})
-        for record in records
+        record.model_copy(update={"article_author": "", "source_name": ""}) for record in records
     ]
     missing = apply_rights_limits(no_author, max_quote_words=30, attribution_required=True)
     assert all("missing_attribution" in item["reason"] for item in missing.rejected)

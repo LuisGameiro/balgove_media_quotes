@@ -17,12 +17,12 @@ from typing import Any, cast
 from .models import ExportQuoteRecord
 
 
-def local_store_path(export_dir: Path, report_date: date) -> Path:  # pragma: no cover
+def local_store_path(export_dir: Path, report_date: date) -> Path:
     """Canonical offline store path for one report date."""
     return export_dir / f"quotes-{report_date.isoformat()}.jsonl"
 
 
-def read_jsonl(path: Path) -> list[ExportQuoteRecord]:  # pragma: no cover
+def read_jsonl(path: Path) -> list[ExportQuoteRecord]:
     """Read a local JSONL store back into strict records (idempotent replay input)."""
     if not path.is_file():
         return []
@@ -36,7 +36,7 @@ def read_jsonl(path: Path) -> list[ExportQuoteRecord]:  # pragma: no cover
     return records
 
 
-def content_hash(parts: Sequence[str]) -> str:  # pragma: no cover
+def content_hash(parts: Sequence[str]) -> str:
     """Deterministic SHA-256 over canonical JSON, used for ids and the decision cache."""
     canonical = json.dumps(list(parts), ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -114,7 +114,7 @@ def quote_record(
         "is_obsolete": is_obsolete,
         "obsolete_reason": obsolete_reason,
         "content_hash": content_hash,
-        "verification": dict(verification),
+        "verification": verification,
         "notes": notes,
     }
     return ExportQuoteRecord.model_validate(record)

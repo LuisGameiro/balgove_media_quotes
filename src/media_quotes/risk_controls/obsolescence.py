@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
+from ..exceptions import ReviewNotFoundError, ReviewStateError
 from .models import ObsolescenceEvidence, ObsolescenceFlag, ReviewState
 
 VERDICTS = frozenset({"confirmed", "rejected", "escalated"})
@@ -40,7 +41,7 @@ class ReviewQueue:
     def add(self, flag: ObsolescenceFlag) -> None:
         key = flag.evidence.old_quote_id
         if key in self._flags:
-            raise ValueError(f"quote {key} already has an obsolescence flag")
+            raise ReviewStateError(f"quote {key} already has an obsolescence flag")
         self._flags[key] = flag
 
     def decide(
@@ -54,13 +55,13 @@ class ReviewQueue:
     ) -> ObsolescenceFlag:
         current = self._flags.get(old_quote_id)
         if current is None:
-            raise KeyError(old_quote_id)
+            raise ReviewNotFoundError(f"quote {old_quote_id} not found in review queue")
         if current.state in TERMINAL_STATES:
-            raise ValueError(f"quote {old_quote_id} already decided: {current.state}")
+            raise ReviewStateError(f"quote {old_quote_id} already decided: {current.state}")
         if verdict not in VERDICTS:
-            raise ValueError(f"invalid verdict: {verdict}")
+            raise ReviewStateError(f"invalid verdict: {verdict}")
         if not reviewer.strip() or not reason_code.strip():
-            raise ValueError("reviewer and reason_code are required")
+            raise ReviewStateError("reviewer and reason_code are required")
         updated = current.model_copy(
             update={
                 "state": verdict,

@@ -19,7 +19,7 @@ from .risk_controls import ObsolescenceFlag
 __all__ = ["load_sections", "render_digest", "write_digest"]
 
 
-def load_sections(path: Path) -> list[tuple[str, str]]:  # pragma: no cover
+def load_sections(path: Path) -> list[tuple[str, str]]:
     """Read the canonical section order and display names from data/sections.csv."""
     with Path(path).open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -30,7 +30,7 @@ def load_sections(path: Path) -> list[tuple[str, str]]:  # pragma: no cover
     ]
 
 
-def render_digest(  # pragma: no cover
+def render_digest(
     records: Sequence[ExportQuoteRecord],
     *,
     report_date: date,
@@ -102,10 +102,10 @@ def render_digest(  # pragma: no cover
             )
         )
         lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(lines).strip() + "\n"
 
 
-def write_digest(  # pragma: no cover
+def write_digest(
     records: Sequence[ExportQuoteRecord],
     *,
     report_date: date,

@@ -11,6 +11,7 @@ import pytest
 from media_quotes.adapters import FixtureSource, build_adapter
 from media_quotes.models import QuoteCandidate
 from media_quotes.registry import load_sources_csv
+from media_quotes.verification import _as_date, _attribution_ok, _junk_free, verify_quote
 from media_quotes.verification_stages import PipelineResult, pre_llm_filter, verify_pipeline
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,3 +89,50 @@ def test_pipeline_publishable_only_verified() -> None:
 def test_word_limits_must_be_positive() -> None:
     with pytest.raises(ValueError):
         pre_llm_filter([], text=TEXT, policy_flags=FLAGS, max_quote_words=0)
+
+
+def test_as_date_parsing() -> None:
+    d = date(2026, 11, 19)
+    assert _as_date(d) == d
+    assert _as_date("2026-11-19T00:00:00Z") == d
+    assert _as_date("invalid-date-string") is None
+    assert _as_date(12345) is None
+
+
+def test_junk_free_and_attribution_helpers() -> None:
+    assert _junk_free("Valid long enough quote with normal alphabetic text.")
+    assert not _junk_free("short")
+    assert not _junk_free("Quote with forbidden symbol © inside text here.")
+    assert not _junk_free("Advertisement message and promotion details here.")
+
+    assert _attribution_ok(
+        context="John Doe said that negotiations would proceed.",
+        near_text="john doe said that negotiations would proceed",
+        speaker="John Doe",
+        author="",
+        attribution_span="said",
+        quote="negotiations would proceed",
+    )
+    assert not _attribution_ok(
+        context="Context without any names.",
+        near_text="context without any names",
+        speaker="",
+        author="",
+        attribution_span="",
+        quote="negotiations would proceed",
+    )
+
+
+def test_verify_quote_rejection_and_unverified() -> None:
+    cand = candidate("A valid quote string for testing.", 0)
+    # Span mismatch causes rejection
+    res = verify_quote(
+        cand,
+        article_text="Different text without matching span.",
+        source_row=ROW,
+        policy_flags=FLAGS,
+        metadata=META,
+        window_start=date(2026, 11, 1),
+        window_end=date(2026, 11, 30),
+    )
+    assert res.status == "rejected"

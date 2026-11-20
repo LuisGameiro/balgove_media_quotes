@@ -93,9 +93,7 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
                 spans_ok += int(result.checks.get("span_match", False))
                 metadata_ok += int(result.checks.get("metadata_non_empty", False))
                 span = by_text.get(normalise_text(quote_text), {})
-                sections_ok += int(
-                    str(span.get("section_id") or "") == str(label.section_id)
-                )
+                sections_ok += int(str(span.get("section_id") or "") == str(label.section_id))
         if article_verified:
             articles_ok += 1
     negatives = gold_data.negative_candidates

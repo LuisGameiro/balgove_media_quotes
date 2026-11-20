@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from media_quotes.config import Settings
 from media_quotes.curation import allowed_sections, dedupe_quotes, group_by_section, review_badge
-from media_quotes.digest import render_digest
+from media_quotes.digest import load_sections, render_digest, write_digest
 from media_quotes.llm import LocalStandInProvider
 from media_quotes.risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
 
@@ -54,7 +55,7 @@ def test_review_badge_lifecycle() -> None:
     assert review_badge(confirmed, now=now) == ""
 
 
-def test_digest_renders_status_line_without_changing_quote(tmp_path: object) -> None:
+def test_digest_renders_status_line_without_changing_quote() -> None:
     from media_quotes.cli.common import _parse_report_date
     from media_quotes.cli.run import _collect
 
@@ -73,3 +74,20 @@ def test_digest_renders_status_line_without_changing_quote(tmp_path: object) -> 
     )
     assert records[0].quote_text_original in markdown
     assert "Status: [Under Review] (provisional hold)" in markdown
+
+
+def test_write_digest_and_load_sections(tmp_path: Path) -> None:
+    settings = Settings(_env_file=None)
+    sections = load_sections(settings.sections_csv)
+    assert len(sections) >= 5
+    out_file = tmp_path / "test-digest.md"
+    written = write_digest(
+        [],
+        report_date=settings.report_date,
+        window_start=settings.report_date,
+        window_end=settings.report_date,
+        out_path=out_file,
+        sections_csv=settings.sections_csv,
+    )
+    assert written.is_file()
+    assert "_No verified quotes in this window._" in written.read_text(encoding="utf-8")

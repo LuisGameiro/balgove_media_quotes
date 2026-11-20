@@ -37,6 +37,7 @@ def record_eval_run(
     thresholds: dict[str, Any],
     passed: bool,
     trace_id: str | None = None,
+    commit: bool = True,
 ) -> str:
     """Append one evaluation result; eval ids are stable per gold set + date."""
     eval_id = _run_uuid(f"eval:{gold_set_version}:{report_date.isoformat()}")
@@ -52,11 +53,12 @@ def record_eval_run(
     )
     statement = statement.on_conflict_do_nothing(index_elements=["eval_id"])
     session.execute(statement)
-    session.commit()
+    if commit:
+        session.commit()
     return eval_id
 
 
-def sync_gold_set_labels(session: Session, gold_set: GoldSet) -> int:
+def sync_gold_set_labels(session: Session, gold_set: GoldSet, *, commit: bool = True) -> int:
     """Persist gold-set labels and negative candidates with their deterministic split."""
     from ..gold_set import split_for
 
@@ -121,7 +123,8 @@ def sync_gold_set_labels(session: Session, gold_set: GoldSet) -> int:
     statement = pg_insert(gold_set_labels_table).values(rows)
     statement = statement.on_conflict_do_nothing(index_elements=["label_id"])
     result = session.execute(statement)
-    session.commit()
+    if commit:
+        session.commit()
     return getattr(result, "rowcount", 0) or len(rows)
 
 
@@ -131,6 +134,7 @@ def persist_articles_and_quotes(
     offsets: dict[str, dict[str, Any]],
     *,
     extractor_version: str = "fixture-replay-v1",
+    commit: bool = True,
 ) -> tuple[int, int]:
     """Persist one run's verified quotes idempotently; returns (articles, quotes) inserted.
 
@@ -190,7 +194,8 @@ def persist_articles_and_quotes(
         statement = statement.on_conflict_do_nothing(index_elements=["quote_id"])
         result = session.execute(statement)
         inserted_quotes = getattr(result, "rowcount", 0) or 0
-    session.commit()
+    if commit:
+        session.commit()
     return inserted_articles, inserted_quotes
 
 
@@ -205,6 +210,7 @@ def start_pipeline_run(
     run_id: str,
     pipeline: str,
     partition_date: date,
+    commit: bool = True,
 ) -> str:
     """Insert a run row in 'running' state; idempotent on re-run."""
     values = {
@@ -217,7 +223,8 @@ def start_pipeline_run(
     statement = pg_insert(pipeline_runs_table).values(values)
     statement = statement.on_conflict_do_nothing(index_elements=["run_id"])
     session.execute(statement)
-    session.commit()
+    if commit:
+        session.commit()
     return str(values["run_id"])
 
 
@@ -227,6 +234,7 @@ def finish_pipeline_run(
     run_id: str,
     status: str,
     stats: dict[str, Any],
+    commit: bool = True,
 ) -> None:
     """Terminal run state (running→succeeded/failed/partial) with final stats."""
     if status not in {"succeeded", "failed", "partial"}:
@@ -239,7 +247,8 @@ def finish_pipeline_run(
         set_={"status": statement.excluded.status, "stats": statement.excluded.stats},
     )
     session.execute(statement)
-    session.commit()
+    if commit:
+        session.commit()
 
 
 def _event_details(event: dict[str, Any]) -> dict[str, Any]:
@@ -247,7 +256,9 @@ def _event_details(event: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in event.items() if key not in reserved}
 
 
-def append_audit_events(session: Session, events: list[dict[str, Any]]) -> int:
+def append_audit_events(
+    session: Session, events: list[dict[str, Any]], *, commit: bool = True
+) -> int:
     """Append audit/coverage events; never updates existing rows."""
     if not events:
         return 0
@@ -265,7 +276,8 @@ def append_audit_events(session: Session, events: list[dict[str, Any]]) -> int:
             }
         )
     session.execute(audit_events_table.insert().values(values))
-    session.commit()
+    if commit:
+        session.commit()
     return len(values)
 
 
@@ -283,13 +295,16 @@ class DecisionCacheEntry(BaseModel):
     trace_id: str | None = None
 
 
-def upsert_decision_cache(session: Session, entry: DecisionCacheEntry) -> bool:
+def upsert_decision_cache(
+    session: Session, entry: DecisionCacheEntry, *, commit: bool = True
+) -> bool:
     """Idempotent insert: an existing cache key is never overwritten (returns False)."""
     values = entry.model_dump(mode="json")
     statement = pg_insert(decision_cache_table).values(values)
     statement = statement.on_conflict_do_nothing(index_elements=["cache_key"])
     result = session.execute(statement)
-    session.commit()
+    if commit:
+        session.commit()
     rowcount = getattr(result, "rowcount", 0) or 0
     return rowcount > 0
 
@@ -301,7 +316,7 @@ def get_decision_cache(session: Session, cache_key: str) -> dict[str, Any] | Non
     return dict(row) if row else None
 
 
-def sync_sources(session: Session, rows: list[SourceRegistryRow]) -> int:
+def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: bool = True) -> int:
     """Upsert registry rows into Postgres. No network access."""
     if not rows:
         return 0
@@ -315,5 +330,6 @@ def sync_sources(session: Session, rows: list[SourceRegistryRow]) -> int:
         set_={name: getattr(statement.excluded, name) for name in columns},
     )
     session.execute(statement)
-    session.commit()
+    if commit:
+        session.commit()
     return len(values)

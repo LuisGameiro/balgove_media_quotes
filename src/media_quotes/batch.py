@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .exceptions import DuplicateBatchRequestError
 from .llm_live import LLMRequest
 
 STRICT = ConfigDict(strict=True, extra="forbid")
@@ -29,7 +30,7 @@ class BatchRequest(BaseModel):
 
 def custom_id(cache_key: str) -> str:
     """Stable, provider-safe id; no raw hashes of user text leak into the id."""
-    return f"decision-{hashlib.sha256(cache_key.encode()).hexdigest()[:16]}"
+    return f"decision-{hashlib.sha256(cache_key.encode('utf-8')).hexdigest()[:16]}"
 
 
 def build_batch_requests(requests: list[LLMRequest]) -> list[BatchRequest]:
@@ -39,7 +40,7 @@ def build_batch_requests(requests: list[LLMRequest]) -> list[BatchRequest]:
     for item in requests:
         cid = custom_id(item.cache_key)
         if cid in seen:
-            raise ValueError(f"duplicate batch custom_id: {cid}")
+            raise DuplicateBatchRequestError(f"duplicate batch custom_id: {cid}")
         seen.add(cid)
         out.append(
             BatchRequest(

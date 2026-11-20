@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,10 +52,8 @@ class LLMClient(Protocol):
     def respond(self, request: LLMRequest) -> LLMDecision: ...  # pragma: no cover
 
 
-def schema_hash(path: Any) -> str:
+def schema_hash(path: Path | str) -> str:
     """SHA-256 of the frozen schema file; part of the cache key and audit manifest."""
-    from pathlib import Path
-
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 

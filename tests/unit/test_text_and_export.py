@@ -1,13 +1,25 @@
 import json
+from datetime import date
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from media_quotes.export import quote_record, write_jsonl
+from media_quotes.export import (
+    content_hash,
+    local_store_path,
+    quote_record,
+    read_jsonl,
+    write_jsonl,
+)
+from media_quotes.models import ExportQuoteRecord
 from media_quotes.text_utils import exact_span_match, normalise_text
 
 
-def _record(quote_id: str = "Q-20261001-0001", quote_text: str = "sample quote") -> dict:
+def _record(
+    quote_id: str = "Q-20261001-0001",
+    quote_text: str = "sample quote",
+) -> ExportQuoteRecord:
     return quote_record(
         quote_id=quote_id,
         quote_text_original=quote_text,
@@ -49,7 +61,29 @@ def test_exact_span_match():
     assert not exact_span_match(text, quote, 1, len(text))
 
 
-def test_jsonl_has_one_schema_valid_json_object_per_line(tmp_path):
+def test_content_hash_and_local_store_path(tmp_path: Path):
+    h = content_hash(["a", "b", "c"])
+    assert len(h) == 64
+    assert h == content_hash(["a", "b", "c"])
+
+    store = local_store_path(tmp_path, date(2026, 11, 20))
+    assert store == tmp_path / "quotes-2026-11-20.jsonl"
+
+
+def test_read_jsonl_nonexistent_and_roundtrip(tmp_path: Path):
+    missing_path = tmp_path / "missing.jsonl"
+    assert read_jsonl(missing_path) == []
+
+    records = [_record()]
+    write_path = tmp_path / "roundtrip.jsonl"
+    write_jsonl(records, write_path)
+
+    loaded = read_jsonl(write_path)
+    assert len(loaded) == 1
+    assert loaded[0].quote_id == "Q-20261001-0001"
+
+
+def test_jsonl_has_one_schema_valid_json_object_per_line(tmp_path: Path):
     path = tmp_path / "quotes.jsonl"
     records = [
         _record(),
