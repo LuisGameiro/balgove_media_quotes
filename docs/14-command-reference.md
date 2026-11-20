@@ -127,7 +127,7 @@ python -m build                         # wheel + sdist into dist/
 ```powershell
 docker compose up -d --wait   # start local Postgres
 docker compose ps             # service status
-docker compose logs -f db     # follow DB logs (service named in docker-compose.yml)
+docker compose logs -f postgres  # service name from docker-compose.yml
 docker compose down           # stop; add -v to remove volumes (destroys local DB)
 ```
 
@@ -169,15 +169,127 @@ section summaries — never verification, quote selection or the T0 gate.
 
 ---
 
-## 9. Recommended operational order (where Dagster fits)
+## 9. Step-by-step operational runbook (PowerShell)
 
-1. `check` — full gate green.
-2. `python -m media_quotes run --dry-run --date 2026-11-19` — already working.
-3. Real offline run: `python -m media_quotes run --date 2026-11-19`, then `audit`, `eval`, `review --action list`.
-4. Local Postgres: `docker compose up -d --wait` → `python -m media_quotes.bootstrap` → `doctor` → rerun `run` with `PERSIST_TO_POSTGRES=true`.
-5. **Dagster test:** `dagster dev -m media_quotes.orchestration`, materialise `2026-11-19`; verify `pipeline_runs` / audit rows in Postgres.
-6. Track A rights: apply your written confirmations to `data/sources.csv` (see `docs/07`), re-bootstrap, re-run.
-7. Live LLM (optional): set `LLM_PROVIDER=openrouter` + rotated `OPENROUTER_API_KEY` + pinned `LLM_MODEL_SNAPSHOT` in `.env`; rerun a date and compare section inferences only.
-8. Close RSK-07/08/11 with real backfill/load-test/restore evidence (see `docs/10` and `docs/12` §8.6).
+Prerequisites already done: activated `(media-quotes)` venv, minimal `.env` (§8),
+`check` function installed (§1). Run from the repository root.
+Each phase ends with a pass/fail signal; **do not continue past a failed phase**.
 
-Full background and phase-by-phase status live in `docs/12-implementation-plan.md`.
+### Phase 0 — full quality gate
+
+```powershell
+check
+```
+Expect: docs QA 41/41, format/lint/mypy clean, 210+ tests at >=85% coverage, wheel+sdist
+built, CLI smoke OK, ending in `ALL CHECKS PASSED`. If it fails, fix and re-run before
+anything else. Equivalent without the profile function:
+`powershell -ExecutionPolicy Bypass -File scripts/check.ps1`.
+
+### Phase 1 — dry-run (already working; confirm again after any change)
+
+```powershell
+python -m media_quotes run --dry-run --date 2026-11-19
+python -m media_quotes backfill --from 2026-10-01 --to 2026-11-19 --max-cost 100 --dry-run
+python -m media_quotes doctor
+python -m media_quotes version
+python scripts/validate_data.py
+```
+Expect: no files written by `run --dry-run`; a line like `Run run-…: N quote(s), M gap(s)`;
+`doctor` prints `T0 gate: 2 mandatory source(s) blocked` (Reuters/BBC — correct); backfill
+prints estimate, cache-hit summary and budget note; `validate_data.py` says all data valid.
+
+### Phase 2 — real offline run (file outputs, no DB, no network)
+
+```powershell
+python -m media_quotes run --date 2026-11-19
+python -m media_quotes audit --date 2026-11-19
+python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19
+python -m media_quotes review --action list
+python -m media_quotes logs --run-id <run-id printed by run>
+python -m media_quotes sources
+python -m media_quotes retention --dry-run
+```
+Expect: `run` writes `var/export/2026-11-19.jsonl`, `digests/2026-11-19.md`,
+`var/logs/<run-id>.jsonl`, `var/audit/*`; prints `COVERAGE GAP: reuters/bbc … rights_blocked`.
+`audit` writes JSON+MD; `eval` prints all thresholds with `"pass": true` on the synthetic gold
+set; `review --action list` prints `[]` (no pending flags yet); `logs` prints structured JSON
+with `trace_id`; `sources` shows all rows disabled. These exit `2` when gaps exist — expected.
+
+### Phase 3 — local Postgres + persistence
+
+`.env` already has `PERSIST_TO_POSTGRES=true` and `LLM_PROVIDER=local`. Run:
+
+```powershell
+docker compose up -d --wait
+docker compose ps                       # service "postgres" should be healthy
+python -m media_quotes.bootstrap        # Alembic 0001..0003 + sources.csv sync
+python -m media_quotes doctor
+python -m media_quotes run --date 2026-11-19
+python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19
+```
+Expect: bootstrap prints applied SQL statement count and synced source count; `run` prints
+`Postgres: N article(s), M quote(s) persisted`; `eval` stores an `eval_runs` row
+(migration 0002). `doctor` still shows 2 mandatory sources blocked — correct until Track B
+licences exist.
+Optional: `docker compose logs -f postgres` to inspect DB startup.
+
+### Phase 4 — Dagster (the next genuinely new test)
+
+```powershell
+dagster dev -m media_quotes.orchestration
+```
+In the Dagster UI (http://localhost:3000): select asset **`daily_quotes_digest`**, partition
+**`2026-11-19`**, click *Materialize*. Expect a successful run; metadata includes
+`status`, `quotes`, `coverage`, `gaps`, `rejected`. The asset calls the same offline `_collect`
+logic and, with `PERSIST_TO_POSTGRES=true`, writes a `pipeline_runs` row plus audit events.
+If Dagster is missing: `uv sync --frozen --all-extras` (or
+`python -m pip install -e ".[orchestration]"`). Ignore the local `.tmp_dagster_home_*`
+runtime directory (gitignored under `var/dagster/`).
+
+### Phase 5 — Track A rights (stakeholder action)
+
+Only after written confirmation for `guardian_api`, `gdelt`, `suspilne`, `kyivindependent`:
+1. Edit `data/sources.csv`: for those four rows set `rights_status=api_permitted` (or
+   `license_held`), fill `license_reference` with the real consent ID, set the approved
+   `access_mode`, `enabled=true`, update `notes`.
+2. Update `docs/07-sources.md` and the `DEC-14` / `08-traceability.md` records.
+3. Re-sync and verify:
+
+```powershell
+python -m media_quotes.bootstrap
+python -m media_quotes doctor
+python -m media_quotes sources --tier 2
+python -m media_quotes sources --tier 3
+python -m media_quotes run --date 2026-11-19
+```
+Expect fewer blocked sources in `doctor`; GDELT remains **discovery only**; Reuters/BBC (and
+other paywalls/state-controlled outlets) stay disabled until their own licences are signed.
+
+### Phase 6 — optional live LLM (section inference only)
+
+In `.env`, after rotating any exposed key:
+
+```dotenv
+LLM_PROVIDER=openrouter
+LLM_MODEL_SNAPSHOT=openai/gpt-4o-mini-2024-07-18
+OPENROUTER_API_KEY=<new-rotated-key>
+```
+Then:
+```powershell
+python -m media_quotes run --date 2026-11-19
+python -m media_quotes audit --date 2026-11-19
+```
+Expect only the 1–2 sentence section summaries to change. Quote selection, deterministic
+verification, rights limits and the T0 gate are untouched. To return offline, set
+`LLM_PROVIDER=local` again. Use `LLM_MODEL_SNAPSHOT=openrouter/free` only if you accept a
+routing alias that can change over time (weaker replay guarantee).
+
+### Phase 7 — close the accepted risks with production evidence
+
+- RSK-07: `mq eval` obsolete precision >= 0.90 from held-out human labels; review SLA met.
+- RSK-08: three real backfills within +/-20% of the estimate; `--max-cost` breach exits `3`.
+- RSK-11: load test with transactions < 60s; `mq retention`/`mq restore-drill` pass.
+
+Then mark RSK-07/08/11 `solved` in `docs/04` and `docs/08` (keep the ID tokens so
+`docs_qa.py` stays green), and record the verification in `docs/10`. Full background:
+`docs/12-implementation-plan.md`.
