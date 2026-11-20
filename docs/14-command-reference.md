@@ -37,9 +37,9 @@ The CLI entrypoint is `python -m media_quotes` (or `mq` if installed in editable
 | `run` | Daily collection pipeline (discover, fetch, verify, dedupe, digest, export) | `python -m media_quotes run --offline --date 2026-11-19` |
 | `run` (dry run) | Verify pipeline without writing files | `python -m media_quotes run --offline --dry-run --date 2026-11-19` |
 | `eval` | Evaluate synthetic gold set against precision/recall contracts | `python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` |
-| `eval` (splits) | Evaluate on a specific split (`train`, `dev`, `test`, or `all`) | `python -m media_quotes eval --gold-set synthetic-v1 --split test --date 2026-11-19` |
+| `eval` (splits) | Splits are reported in the output (`train`/`dev`/`test`); there is no `--split` flag | `python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` |
 | `audit` | View audit trail and coverage report | `python -m media_quotes audit --date 2026-11-19` |
-| `logs` | Stream structured JSON logs with trace correlation | `python -m media_quotes logs --run-id <run-id>` |
+| `logs` | Stream structured JSON logs with trace correlation | `python -m media_quotes logs --run-id run-3300d30f1c8e` (copy the id printed by `run`; `<...>` is not valid PowerShell syntax) |
 | `review` | Human-in-the-loop obsolescence review queue | `python -m media_quotes review --action list` |
 | `retention` | Check/apply retention policy on partitions and blobs | `python -m media_quotes retention --dry-run` |
 | `restore-drill` | Verify backup export against a reference export | `python -m media_quotes restore-drill --reference var/export/quotes-2026-11-18.jsonl` |
@@ -193,12 +193,14 @@ python -m media_quotes run --date 2026-11-19
 python -m media_quotes audit --date 2026-11-19
 python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19
 python -m media_quotes review --action list
-python -m media_quotes logs --run-id <run-id printed by run>
+python -m media_quotes logs --run-id run-3300d30f1c8e
 python -m media_quotes sources
 python -m media_quotes retention --dry-run
 ```
-Expect: `run` writes `var/export/2026-11-19.jsonl`, `digests/2026-11-19.md`,
-`var/logs/<run-id>.jsonl`, `var/audit/*`; prints `COVERAGE GAP: reuters/bbc … rights_blocked`.
+PowerShell treats `<` and `>` as operators: paste the **actual** run id printed by `run`
+(for this date it is `run-3300d30f1c8e`); do not type angle-bracket placeholders.
+Expect: `run` writes `var/export/quotes-2026-11-19.jsonl`, `digests/2026-11-19.md`,
+`var/logs/run-3300d30f1c8e.jsonl`, `var/audit/*`; prints `COVERAGE GAP: reuters/bbc … rights_blocked`.
 `audit` writes JSON+MD; `eval` prints all thresholds with `"pass": true` on the synthetic gold
 set; `review --action list` prints `[]` (no pending flags yet); `logs` prints structured JSON
 with `trace_id`; `sources` shows all rows disabled. These exit `2` when gaps exist — expected.

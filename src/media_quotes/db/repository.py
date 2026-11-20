@@ -135,6 +135,12 @@ def sync_gold_set_labels(session: Session, gold_set: GoldSet, *, commit: bool = 
     return getattr(result, "rowcount", 0) or len(rows)
 
 
+def _inserted_count(result: object, attempted: int) -> int:
+    """psycopg reports -1 for INSERT .. ON CONFLICT DO NOTHING; fall back to attempted."""
+    rowcount = getattr(result, "rowcount", None)
+    return rowcount if isinstance(rowcount, int) and rowcount >= 0 else attempted
+
+
 def persist_articles_and_quotes(
     session: Session,
     records: list[ExportQuoteRecord],
@@ -207,7 +213,7 @@ def persist_articles_and_quotes(
         statement = pg_insert(articles_table).values(list(article_values.values()))
         statement = statement.on_conflict_do_nothing(index_elements=["article_id"])
         result = session.execute(statement)
-        inserted_articles = max(getattr(result, "rowcount", 0) or 0, 0)
+        inserted_articles = _inserted_count(result, len(article_values))
     inserted_quotes = 0
     if quote_values:
         statement = pg_insert(quotes_table).values(quote_values)
@@ -215,7 +221,7 @@ def persist_articles_and_quotes(
             index_elements=["article_id", "quote_text_normalised", "char_start", "char_end"]
         )
         result = session.execute(statement)
-        inserted_quotes = max(getattr(result, "rowcount", 0) or 0, 0)
+        inserted_quotes = _inserted_count(result, len(quote_values))
     if commit:
         session.commit()
     return inserted_articles, inserted_quotes

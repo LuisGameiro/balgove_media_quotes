@@ -222,6 +222,23 @@ def test_persist_articles_and_quotes_persists_when_offsets_present() -> None:
     assert session.commit.call_count == 1
 
 
+def test_persist_articles_and_quotes_handles_psycopg_minus_one_rowcount() -> None:
+    session = MagicMock()
+    session.execute.return_value.rowcount = -1  # psycopg INSERT .. ON CONFLICT DO NOTHING
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    first = records[0]
+    offsets = {
+        first.quote_id: {
+            "char_start": 0,
+            "char_end": len(first.quote_text_original),
+            "content_hash": first.content_hash,
+        }
+    }
+    articles, quotes = persist_articles_and_quotes(session, records, offsets)
+    assert articles == 1  # attempted insert count, not -1 -> 0
+    assert quotes >= 0
+
+
 def test_pipeline_run_lifecycle() -> None:
     session = MagicMock()
     run_date = date(2026, 11, 19)

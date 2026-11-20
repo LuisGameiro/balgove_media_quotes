@@ -56,9 +56,13 @@ def _audit_report(  # pragma: no cover
         "no_llm_api_calls": True,
         "rejected_candidates_excluded": True,
     }
-    checks["gates_pass"] = all(
-        value for key, value in checks.items() if key != "coverage_gaps_disclosed"
-    )
+    # Coverage gaps are expected while sources are T0-blocked. Database writes are
+    # allowed when PERSIST_TO_POSTGRES=true (the mode used for production verification);
+    # in that mode `no_database_writes` stays informational rather than a gate.
+    informational = {"coverage_gaps_disclosed"}
+    if settings.persist_to_postgres:
+        informational.add("no_database_writes")
+    checks["gates_pass"] = all(value for key, value in checks.items() if key not in informational)
     return {
         "report_date": report_date.isoformat(),
         "window_start": window_start.isoformat(),
