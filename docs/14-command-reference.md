@@ -23,7 +23,7 @@ Steps executed by `scripts/check.ps1`:
 1. `docs_qa.py` — 41 requirement and cross-document consistency assertions (`CHK-08`).
 2. `ruff format --check .` — zero formatting diffs.
 3. `ruff check .` — zero lint or security warnings.
-4. `mypy --strict src/` — strict static type checking (`mypy src tests scripts` also passes with 0 errors).
+4. `mypy --strict src/` — strict static type checking for the shipped package (the enforced gate; tests and scripts are outside this gate).
 5. `pytest --cov=media_quotes --cov-fail-under=85` — 240+ unit & integration tests, >=85% branch coverage.
 6. `python -m build` — builds wheel and sdist into `dist/`.
 7. `CLI smoke` — verifies `python -m media_quotes --help` and `python -m media_quotes.cli --help`.
@@ -153,8 +153,11 @@ Contract thresholds enforced (`AcceptanceThresholds` in `src/media_quotes/evalua
 .\.venv\Scripts\ruff.exe check src tests scripts
 .\.venv\Scripts\ruff.exe format --check src tests scripts
 
-# Strict type check across src, tests, and scripts
-.\.venv\Scripts\mypy.exe src tests scripts
+# Strict type check of the shipped package (the enforced gate)
+.\.venv\Scripts\mypy.exe --strict src/
+
+# Type-check a touched diagnostic script/tests explicitly when changing them
+.\.venv\Scripts\mypy.exe --strict scripts/test_scraper.py tests/unit/test_newspaper_scraping.py
 
 # Documentation QA check (41 assertions)
 .\.venv\Scripts\python.exe scripts/docs_qa.py
@@ -430,4 +433,28 @@ docker compose exec postgres psql -U news -d news -c "SELECT canonical_quote_id,
 # - Multi-format quote & speaker extraction (speaker-first, verb-first, Ukrainian guillemets «...»)
 # - Content-addressed BlobCache (var/blobs/<source_id>/<sha256>.html)
 .\.venv\Scripts\python.exe -m pytest tests/unit/test_newspaper_scraping.py tests/unit/test_extraction.py tests/unit/test_fetch.py -v
+```
+
+### 11.3 Live Feed Fetching of Today's News & Source Ingestion Validation
+
+Discover real article URLs with `--live-feed` first, then copy `articles[].url` into `--live`. A
+placeholder slug such as `sample-article-slug` returns `404 Not Found`; the scraper now prints the
+exact discovery and local-HTML alternatives when that happens. For manual validation without a
+network request, use `--html-file` with `my_article.html` or a fixture under `data/fixtures/`.
+
+```powershell
+# 1. Get today's news live from The Guardian (fetches live RSS, top 2 articles, extracts & verifies quotes)
+.\.venv\Scripts\python.exe scripts/test_scraper.py --source-id guardian --live-feed --limit 2
+
+# 2. Validate data ingestion health for a single source (registry row, T0 boundary, fixtures, feed)
+.\.venv\Scripts\python.exe scripts/test_scraper.py --validate-source guardian
+.\.venv\Scripts\python.exe scripts/test_scraper.py --validate-source reuters
+.\.venv\Scripts\python.exe scripts/test_scraper.py --validate-source bbc
+
+# 3. Audit data getting readiness across all 28 registered sources
+.\.venv\Scripts\python.exe scripts/test_scraper.py --validate-all-sources
+
+# 4. After step 1, copy articles[].url and test ONE real article page.
+#    Do NOT use a made-up slug such as sample-article-slug: it returns 404 Not Found.
+#    .\.venv\Scripts\python.exe scripts/test_scraper.py --source-id guardian --live --url <paste-real-url>
 ```

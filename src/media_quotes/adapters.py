@@ -38,6 +38,7 @@ from .registry import SourceRegistryRow
 from .text_utils import normalise_text
 
 __all__ = [
+    "UKRAINE_WAR_KEYWORDS",
     "ApiAdapter",
     "BlobCache",
     "FixtureSource",
@@ -50,6 +51,7 @@ __all__ = [
     "WebAdapter",
     "build_adapter",
     "extract_json_ld_metadata",
+    "is_ukraine_war_relevant",
     "parse_newspaper_html",
     "parse_rss_feed",
     "parse_sitemap_xml",
@@ -128,6 +130,98 @@ _SECTION_KEYWORDS = {
         "defense industry",
     ),
 }
+
+UKRAINE_WAR_KEYWORDS: tuple[str, ...] = (
+    # English terms
+    "ukraine",
+    "ukrainian",
+    "kyiv",
+    "kiev",
+    "russia",
+    "russian",
+    "moscow",
+    "putin",
+    "zelenskiy",
+    "zelensky",
+    "kremlin",
+    "donbas",
+    "donetsk",
+    "luhansk",
+    "kharkiv",
+    "kherson",
+    "zaporizhzhia",
+    "crimea",
+    "kursk",
+    "black sea",
+    "odesa",
+    "front line",
+    "frontline",
+    "air defence",
+    "interceptor",
+    "drone",
+    "missile",
+    "shahed",
+    "shelling",
+    "ceasefire",
+    "mobilisation",
+    "artillery",
+    "ammunition",
+    # Ukrainian terms
+    "україна",
+    "українськ",
+    "київ",
+    "росія",
+    "російськ",
+    "москва",
+    "путін",
+    "зеленськ",
+    "кремль",
+    "донбас",
+    "донеччин",
+    "луганськ",
+    "харків",
+    "херсон",
+    "запоріжж",
+    "крим",
+    "курськ",
+    "чорне море",
+    "одеса",
+    "фронт",
+    "ппо",
+    "перехоплювач",
+    "шахед",
+    "обстріл",
+    "ракета",
+    "дрон",
+    "перемир'я",
+    "мобілізація",
+    "артилерія",
+    "боєприпас",
+    # Russian terms
+    "украина",
+    "украинск",
+    "киев",
+    "россия",
+    "российск",
+    "москва",
+    "путин",
+    "зеленск",
+    "кремль",
+    "донбасс",
+    "перемирие",
+    "боеприпас",
+)
+
+
+def is_ukraine_war_relevant(
+    text: str,
+    *,
+    title: str = "",
+    url: str = "",
+) -> bool:
+    """Check if an article, headline, URL, or quote belongs to the Russia-Ukraine war domain."""
+    combined = f"{url} {title} {text}".lower()
+    return any(keyword in combined for keyword in UKRAINE_WAR_KEYWORDS)
 
 
 class BlobCache:
@@ -419,6 +513,7 @@ def parse_newspaper_html(
     source_url: str = "",
     params: ExtractionParams | None = None,
     fallback: RenderingFallback | None = None,
+    require_ukraine_topic: bool = False,
 ) -> dict[str, Any]:
     """Parse real-world newspaper HTML using JSON-LD + meta tags + Trafilatura 2.x body extraction.
 
@@ -472,6 +567,7 @@ def parse_newspaper_html(
         or dom_meta.get("publication_name")
         or str(extracted.metadata.get("publication_name") or "")
     )
+    topic_relevant = is_ukraine_war_relevant(article_text, title=title, url=canonical_url)
     if dom_meta.get("quote_spans"):
         quote_spans: list[dict[str, Any]] = []
         for span in dom_meta["quote_spans"]:
@@ -479,9 +575,18 @@ def parse_newspaper_html(
             found_offsets = find_span(article_text, str(span.get("quote_text") or ""))
             if found_offsets is not None:
                 realigned["char_start"], realigned["char_end"] = found_offsets
+            if (
+                require_ukraine_topic
+                and not topic_relevant
+                and not is_ukraine_war_relevant(str(span.get("quote_text") or ""))
+            ):
+                continue
             quote_spans.append(realigned)
     else:
-        quote_spans = _extract_quotes(article_text)
+        if require_ukraine_topic and not topic_relevant:
+            quote_spans = []
+        else:
+            quote_spans = _extract_quotes(article_text, require_ukraine_topic=require_ukraine_topic)
 
     return {
         "canonical_url": canonical_url,
@@ -491,6 +596,7 @@ def parse_newspaper_html(
         "publication_name": publication_name,
         "article_text": article_text,
         "quote_spans": quote_spans,
+        "topic_relevant": topic_relevant,
         "quality_ok": extracted.quality_ok,
         "quality_reasons": list(extracted.quality_reasons),
         "used_fallback": extracted.used_fallback,
@@ -523,6 +629,7 @@ def parse_rss_feed(
     *,
     start: date | None = None,
     end: date | None = None,
+    require_ukraine_topic: bool = False,
 ) -> list[dict[str, str]]:
     """Parse RSS 2.0 (`<item>`) or Atom (`<entry>`) XML and return discovered article entries.
 
@@ -561,6 +668,8 @@ def parse_rss_feed(
             continue
         if end and pub_date and pub_date > end:
             continue
+        if require_ukraine_topic and not is_ukraine_war_relevant(title, title=title, url=url):
+            continue
         items.append(
             {
                 "url": url,
@@ -576,6 +685,7 @@ def parse_sitemap_xml(
     *,
     start: date | None = None,
     end: date | None = None,
+    require_ukraine_topic: bool = False,
 ) -> list[dict[str, str]]:
     """Parse standard XML Sitemap (`<urlset>`) and Google News Sitemap (`<news:news>`).
 
@@ -609,6 +719,10 @@ def parse_sitemap_xml(
         if start and pub_date and pub_date < start:
             continue
         if end and pub_date and pub_date > end:
+            continue
+        if require_ukraine_topic and not is_ukraine_war_relevant(
+            news_title, title=news_title, url=loc
+        ):
             continue
         entries.append(
             {
@@ -735,12 +849,23 @@ def _parse_json_fixture(decoded: str) -> dict[str, Any]:  # pragma: no cover
     }
 
 
-def _extract_quotes(text: str) -> list[dict[str, Any]]:  # pragma: no cover
+def _extract_quotes(
+    text: str,
+    *,
+    require_ukraine_topic: bool = False,
+) -> list[dict[str, Any]]:  # pragma: no cover
     """Find attributed, quoted spans in article text with exact offsets into that text."""
     found: list[dict[str, Any]] = []
     for index, match in enumerate(_QUOTE_RE.finditer(text), start=1):
         quote_text, q_start, q_end = _match_quote_group(match)
         if not normalise_text(quote_text):
+            continue
+        section_id = infer_section(quote_text)
+        if (
+            require_ukraine_topic
+            and section_id == "other"
+            and not is_ukraine_war_relevant(quote_text)
+        ):
             continue
         suffix = text[match.end() : match.end() + 160]
         prefix = text[max(0, match.start() - 160) : match.start()]
@@ -753,7 +878,7 @@ def _extract_quotes(text: str) -> list[dict[str, Any]]:  # pragma: no cover
                 "dom_path": f"text://span[{index}]",
                 "speaker": speaker,
                 "attribution_span": attr_span,
-                "section_id": infer_section(quote_text),
+                "section_id": section_id,
             }
         )
     return found

@@ -9,6 +9,12 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
+from scripts.test_scraper import (
+    format_live_fetch_error,
+    run_live_feed,
+    validate_all_sources,
+    validate_single_source,
+)
 
 from media_quotes.adapters import (
     BlobCache,
@@ -84,7 +90,7 @@ REALISTIC_NEWSPAPER_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>European partners accelerate air defence deliveries — The Guardian</title>
+  <title>European partners accelerate air defence deliveries ahead of winter</title>
   <meta property="og:site_name" content="The Guardian">
   <script type="application/ld+json">
   {
@@ -261,3 +267,55 @@ def test_blob_cache_stores_and_reads_content_addressed_html(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="invalid source id"):
         cache.store("../escape", raw_bytes)
+
+
+def test_validate_single_source_and_t0_safety() -> None:
+    # 1. Blocked source Reuters: verify T0 safety boundary is intact
+    reuters_card = validate_single_source("reuters")
+    assert reuters_card["tier"] == 1
+    assert reuters_card["t0_permitted"] is False
+    assert reuters_card["t0_security_boundary_verified"] is True
+    assert reuters_card["fixtures"]["count"] >= 1
+    assert "ok" in reuters_card["fixtures"]["replay_status"]
+
+    # 2. Permitted source Guardian
+    guardian_card = validate_single_source("guardian")
+    assert guardian_card["tier"] == 2
+    assert guardian_card["t0_permitted"] is True
+    assert guardian_card["feed"]["live_supported"] is True
+
+
+def test_validate_all_sources_summary() -> None:
+    summary = validate_all_sources()
+    assert summary["total_sources"] == 28
+    assert summary["t0_blocked_sources"] == 18
+    assert summary["t0_permitted_sources"] == 10
+    assert len(summary["sources"]) == 28
+
+
+def test_format_live_fetch_error_404_is_actionable() -> None:
+    message = format_live_fetch_error(
+        "https://www.theguardian.com/world/2024/nov/20/sample-article-slug",
+        404,
+        "Not Found",
+        "guardian",
+    )
+    assert "Live fetch failed: 404 Not Found" in message
+    assert "placeholder or stale" in message.lower()
+    assert "--live-feed" in message
+    assert "--html-file" in message
+
+
+def test_format_live_fetch_error_other_status_keeps_status() -> None:
+    message = format_live_fetch_error(
+        "https://example.invalid/article", 503, "Service Unavailable", "guardian"
+    )
+    assert "Live fetch failed: 503 Service Unavailable" in message
+    assert "placeholder" not in message.lower()
+
+
+def test_run_live_feed_blocked_source_safeguard() -> None:
+    blocked_row = ROWS["bbc"]
+    result = run_live_feed(blocked_row)
+    assert result["status"] == "blocked_by_t0_gate"
+    assert result["t0_gate_permitted"] is False
