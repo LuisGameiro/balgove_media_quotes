@@ -21,6 +21,7 @@ var/blobs/*
 !var/blobs/.gitkeep
 var/audit/*
 !var/audit/.gitkeep
+var/dagster/
 var/export/*
 !var/export/.gitkeep
 var/logs/*

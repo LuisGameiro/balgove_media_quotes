@@ -36,6 +36,7 @@ reviewed **2026-11-20** against the brief and the scaffold):
 | [10-risk-mitigation-plan.md](10-risk-mitigation-plan.md) | How RSK-07/08/11 will be closed: evidence bundle + review SLA, backfill budget/cache guard, partitioning/retention; new checks CHK-15…17 |
 | [11-repository-structure.md](11-repository-structure.md) | Canonical whole-monorepo tree: source, data, tests, docs, migrations, tooling and generated artifacts, with placement rules |
 | [12-implementation-plan.md](12-implementation-plan.md) | Bridge from plan to code: phases A–F, vertical slices, exit checks and the cutover from file-based offline handlers to Postgres/Dagster |
+| [14-command-reference.md](14-command-reference.md) | Every command in the repo: CLI flags, scripts, Make/PowerShell, Docker, Dagster, `.env`, recommended order |
 
 ## Reading order
 
@@ -50,6 +51,7 @@ reviewed **2026-11-20** against the brief and the scaffold):
 9. [10](10-risk-mitigation-plan.md) — how the engineering risks will be closed.
 10. [11](11-repository-structure.md) — where every file in the monorepo belongs.
 11. [12](12-implementation-plan.md) — how to cut over to live Postgres/Dagster implementation, phase by phase.
+12. [14](14-command-reference.md) — exact commands and operational order (Dagster after local Postgres).
 
 The implementation scaffold lives in [`../src`](../src); the registry and frozen schema in
 [`../data`](../data); operator commands in the [root README](../README.md).
