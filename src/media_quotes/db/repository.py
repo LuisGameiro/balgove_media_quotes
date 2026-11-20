@@ -150,11 +150,17 @@ def persist_articles_and_quotes(
     """
     article_values: dict[UUID, dict[str, Any]] = {}
     quote_values: list[dict[str, Any]] = []
+    seen_spans: set[tuple[UUID, int, int]] = set()
+
     for record in records:
         detail = offsets.get(record.quote_id)
         if not detail:
             continue
         article_id = _run_uuid(f"article:{record.article_url}")
+        char_start = int(detail["char_start"])
+        char_end = int(detail["char_end"])
+        span_key = (article_id, char_start, char_end)
+
         article_values[article_id] = {
             "article_id": article_id,
             "source_id": record.source_id,
@@ -166,15 +172,20 @@ def persist_articles_and_quotes(
             "status": "verified",
             "extractor_version": extractor_version,
         }
+
+        if span_key in seen_spans:
+            continue
+        seen_spans.add(span_key)
+
         quote_values.append(
             {
-                "quote_id": _run_uuid(f"quote:{record.quote_id}"),
+                "quote_id": _run_uuid(f"quote:{article_id}:{char_start}:{char_end}"),
                 "canonical_quote_id": record.quote_id,
                 "article_id": article_id,
                 "quote_text_raw": record.quote_text_original,
                 "quote_text_normalised": record.quote_text_original,
-                "char_start": int(detail["char_start"]),
-                "char_end": int(detail["char_end"]),
+                "char_start": char_start,
+                "char_end": char_end,
                 "dom_path": detail.get("dom_path"),
                 "speaker": detail.get("speaker"),
                 "attribution_span": detail.get("attribution_span"),
@@ -200,7 +211,9 @@ def persist_articles_and_quotes(
     inserted_quotes = 0
     if quote_values:
         statement = pg_insert(quotes_table).values(quote_values)
-        statement = statement.on_conflict_do_nothing(index_elements=["quote_id"])
+        statement = statement.on_conflict_do_nothing(
+            index_elements=["article_id", "quote_text_normalised", "char_start", "char_end"]
+        )
         result = session.execute(statement)
         inserted_quotes = max(getattr(result, "rowcount", 0) or 0, 0)
     if commit:
