@@ -110,8 +110,63 @@ audit/log artifacts, Track A source readiness, and explicit mandatory-source gap
 Tier 1 sources. That is the first production-backed deliverable against the minimum brief
 §3–§4; Phases D–F complete live LLM reasoning, operator UX and production hardening.
 
-## 8. Immediate next action
+## 8. Operator next steps (current state)
 
-Start **A1**: add DEC-10 limit settings and tests; then **A2/A3** to lock Postgres-backed
-acceptance evaluation and **A4** to submit the Track A open/API source review packet while
-holding Track B commercial sources blocked until `DEC-14` is recorded.
+All code phases A–F are implemented and green (`check`). What remains is operational.
+PowerShell is the primary shell; `check` runs the full gate (see root README).
+
+### 8.1 Offline sanity (no secrets, no network)
+
+```powershell
+check
+python -m media_quotes run --date 2026-11-19
+python -m media_quotes audit --date 2026-11-19
+python -m media_quotes eval --gold-set synthetic-v1
+python -m media_quotes review --action list
+python -m media_quotes retention --dry-run
+python -m media_quotes restore-drill
+```
+Reuters/BBC coverage gaps are expected while Track B stays blocked.
+
+### 8.2 Secrets and configuration (`.env`, gitignored)
+
+- Rotate any API key that was ever pasted in chat; put only the new key in `.env`.
+- Keep one `LLM_MODEL_SNAPSHOT` line with an explicit model id (no duplicate `unset`, no `latest`).
+- `LLM_PROVIDER=local` keeps inference offline/deterministic; set `openrouter` only for live summaries.
+- `PERSIST_TO_POSTGRES=true` enables DB writes; remove it to stay file-based.
+- Required for `openrouter`: provider, pinned snapshot, `OPENROUTER_API_KEY`; all other OpenRouter vars have defaults.
+
+### 8.3 Local Postgres
+
+```powershell
+docker compose up -d --wait
+python -m media_quotes.bootstrap    # Alembic 0001..0003 + sources.csv sync
+python -m media_quotes doctor
+python -m media_quotes run --date 2026-11-19   # with PERSIST_TO_POSTGRES=true
+python -m media_quotes sources
+```
+
+### 8.4 Track A rights gate (stakeholder action)
+
+For `guardian_api`, `gdelt`, `suspilne`, `kyivindependent`: put the written consent/licence ID
+in `data/sources.csv` → `license_reference`, set `rights_status=api_permitted` (or
+`license_held`), approved `access_mode`, `enabled=true`, update `docs/07` and register rows.
+GDELT remains **discovery only** — no publisher-text republication.
+Keep Reuters/BBC (`Track B`) `enabled=false` until the commercial licence is signed.
+Re-run bootstrap + doctor after the edit.
+
+### 8.5 Dagster and live inference
+
+```powershell
+dagster dev -m media_quotes.orchestration   # daily partitions from 2026-10-01
+```
+Materialise 2026-11-19. Switch `.env` to `LLM_PROVIDER=openrouter` only with a rotated key
+and pinned model; this changes only section inferences, never verification or the T0 gate.
+
+### 8.6 Close the accepted risks with production evidence
+
+- RSK-07: held-out obsolete precision >= 0.90; review SLA met.
+- RSK-08: three real backfills within +/-20% of estimate; `--max-cost` breach exits 3.
+- RSK-11: load test with transactions < 60s; retention job and restore drill pass.
+Then change RSK-07/08/11 from `accepted` to `solved` in [04](04-risks-and-open-questions.md)
+and [08](08-traceability.md), keeping the ID tokens so `docs_qa.py` stays green.

@@ -1,10 +1,10 @@
 # One-command quality gate: docs/02 §7 (CHK-10..13) and README "Quick start".
-.PHONY: help docs-qa format-check format lint typecheck test build smoke check clean
+.PHONY: help docs-qa format-check format lint typecheck test coverage build smoke check clean
 
 PYTHON ?= python
 
 help:
-	@echo "Targets: docs-qa format-check format lint typecheck test build smoke check clean"
+	@echo "Targets: docs-qa format-check format lint typecheck test coverage build smoke check clean"
 
 docs-qa:
 	$(PYTHON) scripts/docs_qa.py
@@ -21,8 +21,13 @@ lint:
 typecheck:
 	$(PYTHON) -m mypy --strict src/
 
+# Fast local/full-suite run. Targeted runs stay fast; coverage is enforced by `make coverage`.
 test:
-	$(PYTHON) -m pytest --cov=media_quotes --cov-fail-under=85
+	$(PYTHON) -m pytest
+
+# Full-suite coverage gate. The 85% floor lives once in [tool.coverage.report].
+coverage:
+	$(PYTHON) -m pytest --cov=media_quotes --cov-report=term-missing
 
 build:
 	$(PYTHON) -m build
@@ -32,8 +37,8 @@ smoke:
 	mq --help >/dev/null
 
 # docs/02 §7: single gate; the CLI smoke exercises the installed `mq` entry point.
-check: docs-qa format-check lint typecheck test build smoke
+check: docs-qa format-check lint typecheck coverage build smoke
 
 clean:
-	rm -rf .pytest_cache .ruff_cache htmlcov build dist
+	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov build dist
 	rm -rf src/media_quotes.egg-info

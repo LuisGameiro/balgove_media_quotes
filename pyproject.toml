@@ -54,7 +54,7 @@ media_quotes = ["py.typed", "db/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config --cov=media_quotes"
+addopts = "-ra --strict-markers --strict-config"
 filterwarnings = ["error"]
 markers = [
     "integration: needs a real service (Postgres/feed); opt-in via -m",

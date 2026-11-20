@@ -153,9 +153,9 @@ Shared flags: `--offline` (VCR replay), `--dry-run`, `--date`, `--run-id`/`--tra
 `--out`, `--verbose`. Exit codes: `0` pass · `1` validation/threshold failure · `2` partial
 success with coverage gaps · `3` config/T0-gate error. Re-runs are idempotent.
 
-`make docs-qa`, `make format`, `make lint`, `make typecheck`, `make test`, `make build`,
-`make smoke` and `make check` (all of the above plus the `mq --help` smoke test) wrap the
-local gate; the full live orchestration contract is specified in
+`make docs-qa`, `make format`, `make lint`, `make typecheck`, `make test`, `make coverage`,
+`make build`, `make smoke` and `make check` (the full gate, using `coverage`) wrap the local
+quality workflow; the live orchestration contract is specified in
 [`docs/02`](docs/02-stack-and-architecture.md) §5.
 
 **Windows / PowerShell:** `make` is not available by default. Run the same gate with
@@ -190,13 +190,14 @@ rights clearance.
 | Goal | Command | State |
 |---|---|---|
 | Documentation consistency (CHK-08) | `python scripts/docs_qa.py` or `pytest tests/test_docs_qa.py` | works today |
-| Unit/full test suite | `python -m pytest -q -o addopts=''` | works today (use `-o` until `pytest-cov` is installed) |
-| Full gate with 85% coverage | `make check` | works today; single CI gate |
+| Unit/full test suite | `python -m pytest -q` | works today; targeted and full runs stay fast |
+| Full gate with 85% coverage | `make coverage` or `make check` | coverage is enforced only in these full-gate commands |
 | Lint/format | `python -m ruff check .` / `ruff format --check .` | works today |
 | Registry/schema/data checks | `python scripts/validate_data.py` or `mq doctor` | works today |
 
-`pytest` uses coverage flags in default `addopts`; `pytest-cov` ships in the dev/test extras.
-Pass `-o addopts=''` as shown above for a quick run without coverage.
+`pytest` does not enable coverage by default. Running a targeted test file will not trigger
+the global 85% threshold. `make coverage` runs the full suite with coverage and enforces the
+floor defined once in `[tool.coverage.report]`. `make check` is the canonical CI gate.
 See docs/02 §7 for the full engineering standard.
 
 ## Design invariants
