@@ -1,0 +1,32 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for reuters replay.",
+  "source_id": "reuters",
+  "canonical_url": "https://www.reuters.com/fixture/synthetic-2026-11-12-art042/",
+  "publication_date": "2026-11-12",
+  "title": "SYNTHETIC FIXTURE - War Intensity developments",
+  "byline": "Fixture Reuters Correspondent",
+  "publication_name": "Reuters (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for Reuters (synthetic fixture). Date: 2026-11-12. “Defensive fortifications around the northern sector continue to absorb repeated tactical reconnaissance probes,” said Colonel Elena Rostova, operations officer. “Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,” said Dr. Sarah Jenkins, conflict resolution fellow.",
+  "quote_spans": [
+    {
+      "quote_text": "Defensive fortifications around the northern sector continue to absorb repeated tactical reconnaissance probes,",
+      "char_start": 69,
+      "char_end": 180,
+      "speaker": "Colonel Elena Rostova",
+      "attribution_span": "said Colonel Elena Rostova, operations officer",
+      "section_id": "war_intensity",
+      "dom_path": "json/quote_spans/0"
+    },
+    {
+      "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+      "char_start": 231,
+      "char_end": 349,
+      "speaker": "Dr. Sarah Jenkins",
+      "attribution_span": "said Dr. Sarah Jenkins, conflict resolution fellow",
+      "section_id": "peace_initiatives",
+      "dom_path": "json/quote_spans/1"
+    }
+  ]
+}

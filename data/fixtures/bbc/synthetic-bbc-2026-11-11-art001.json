@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for bbc replay.",
+  "source_id": "bbc",
+  "canonical_url": "https://www.bbc.co.uk/fixture/synthetic-2026-11-11-art001/",
+  "publication_date": "2026-11-11",
+  "title": "SYNTHETIC FIXTURE - International Support developments",
+  "byline": "Fixture BBC Correspondent",
+  "publication_name": "BBC News (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for BBC News (synthetic fixture). Date: 2026-11-11. “Allied partners finalized a bilateral security protocol guaranteeing expedited delivery of heavy ammunition supplies,” said Minister Claire Dubois, defense liaison.",
+  "quote_spans": [
+    {
+      "quote_text": "Allied partners finalized a bilateral security protocol guaranteeing expedited delivery of heavy ammunition supplies,",
+      "char_start": 70,
+      "char_end": 187,
+      "speaker": "Minister Claire Dubois",
+      "attribution_span": "said Minister Claire Dubois, defense liaison",
+      "section_id": "international_support",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

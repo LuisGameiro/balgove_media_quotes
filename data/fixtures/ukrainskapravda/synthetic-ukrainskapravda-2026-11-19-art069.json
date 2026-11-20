@@ -1,0 +1,24 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for ukrainskapravda replay.",
+  "source_id": "ukrainskapravda",
+  "canonical_url": "https://www.pravda.com.ua/fixture/synthetic-2026-11-19-art069/",
+  "publication_date": "2026-11-19",
+  "title": "SYNTHETIC FIXTURE - Sanctions developments",
+  "byline": "Fixture UP Reporter",
+  "publication_name": "Ukrayinska Pravda (synthetic fixture)",
+  "language": "uk",
+  "article_text": "Synthetic report for Ukrayinska Pravda (synthetic fixture). Date: 2026-11-19. “Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,” said Олександр Коваленко, речник енергетичного штабу.",
+  "quote_spans": [
+    {
+      "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+      "char_start": 79,
+      "char_end": 180,
+      "speaker": "Олександр Коваленко",
+      "attribution_span": "said Олександр Коваленко, речник енергетичного штабу",
+      "section_id": "sanctions",
+      "dom_path": "json/quote_spans/0",
+      "quote_text_en": "Restoration of energy infrastructure continues around the clock with support from international engineering teams,"
+    }
+  ]
+}

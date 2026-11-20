@@ -72,8 +72,12 @@ def _version_manifest(settings: Settings) -> dict[str, Any]:  # pragma: no cover
         "schema_path": str(settings.schema_path),
         "schema_sha256": _sha256_file(settings.schema_path),
         "prompt_version": settings.prompt_version,
-        "llm_model_snapshot": settings.llm_model_snapshot,
-        "inference_provider": "local-template-stand-in",
+        "llm_model_snapshot": (
+            settings.llm_model_snapshot if settings.llm_provider == "openrouter" else "unset"
+        ),
+        "inference_provider": (
+            "openrouter" if settings.llm_provider == "openrouter" else "local-template-stand-in"
+        ),
         "gold_set_version": settings.gold_set_version,
         "registry_sha256": _sha256_file(settings.sources_csv),
         "sections_sha256": _sha256_file(settings.sections_csv),

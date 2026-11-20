@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     )
 
     database_url: SecretStr = Field(
-        default=SecretStr("postgresql+psycopg://news:news@localhost:5432/news")
+        default=SecretStr("postgresql+psycopg://news:news@127.0.0.1:5432/news")
     )
     log_level: str = "INFO"
     log_json: bool = True
@@ -68,9 +68,17 @@ class Settings(BaseSettings):
     external_publication: bool = False  # DEC-02: internal-only by default
     persist_to_postgres: bool = False  # C4: Dagster persists run/audit rows only when enabled
 
-    # T4 will pin these; kept here so provenance columns have a value from day one.
+    # Inference provider is selected by environment only. There is no CLI flag.
+    # local keeps all runs offline; openrouter uses the OpenAI-compatible API.
+    llm_provider: str = "local"
     llm_model_snapshot: str = "unset"
     prompt_version: str = "standalone-inference-v1"
+    openrouter_api_key: SecretStr | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_app_url: str = "https://github.com/balgoveinnovations/media-quotes"
+    openrouter_app_title: str = "Media Quotes Collection System"
+    openrouter_timeout_seconds: float = 30.0
+    openrouter_max_retries: int = 2
 
     @field_validator(
         "digest_dir",
@@ -90,6 +98,24 @@ class Settings(BaseSettings):
     def _resolve_path(cls, value: object) -> Path:
         path = Path(str(value))
         return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @model_validator(mode="after")
+    def _validate_llm_provider(self) -> Settings:
+        provider = self.llm_provider.strip().lower()
+        if provider not in {"local", "openrouter"}:
+            raise ValueError("llm_provider must be 'local' or 'openrouter'")
+        self.llm_provider = provider
+        if provider != "openrouter":
+            return self
+        if self.openrouter_api_key is None or not self.openrouter_api_key.get_secret_value():
+            raise ValueError("OPENROUTER_API_KEY is required when LLM_PROVIDER=openrouter")
+        model = self.llm_model_snapshot.strip()
+        if not model or model.lower() in {"unset", "latest"}:
+            raise ValueError(
+                "LLM_MODEL_SNAPSHOT must be a pinned OpenRouter model id when "
+                "LLM_PROVIDER=openrouter"
+            )
+        return self
 
     @property
     def database_url_value(self) -> str:

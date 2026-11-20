@@ -1,0 +1,32 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for reuters replay.",
+  "source_id": "reuters",
+  "canonical_url": "https://www.reuters.com/fixture/synthetic-2026-11-16-art036/",
+  "publication_date": "2026-11-16",
+  "title": "SYNTHETIC FIXTURE - War Intensity developments",
+  "byline": "Fixture Reuters Correspondent",
+  "publication_name": "Reuters (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for Reuters (synthetic fixture). Date: 2026-11-16. “Frontline engagements have intensified across eastern axes with sustained artillery duels over key transit nodes,” said General Marcus Vance, military spokesperson. “Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,” said Special Envoy Roberto Gomez, mediation council.",
+  "quote_spans": [
+    {
+      "quote_text": "Frontline engagements have intensified across eastern axes with sustained artillery duels over key transit nodes,",
+      "char_start": 69,
+      "char_end": 182,
+      "speaker": "General Marcus Vance",
+      "attribution_span": "said General Marcus Vance, military spokesperson",
+      "section_id": "war_intensity",
+      "dom_path": "json/quote_spans/0"
+    },
+    {
+      "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+      "char_start": 235,
+      "char_end": 346,
+      "speaker": "Special Envoy Roberto Gomez",
+      "attribution_span": "said Special Envoy Roberto Gomez, mediation council",
+      "section_id": "peace_initiatives",
+      "dom_path": "json/quote_spans/1"
+    }
+  ]
+}

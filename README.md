@@ -82,15 +82,47 @@ compatibility directory only.
 
 **Works today (T1 foundation):**
 
-```sh
-cp .env.example .env              # optional; secrets come from the environment
-uv sync --all-extras --dev
-docker compose up -d
+**PowerShell / Windows (recommended commands):**
+
+```powershell
+Copy-Item .env.example .env        # local dev defaults; replace secrets for real deployments
+py -m pip install uv              # only if `uv` is not on PATH; or use the official PowerShell installer
+uv sync --frozen --group dev
+docker compose up -d --wait
 python -m media_quotes.bootstrap  # Alembic `upgrade head`, then the registry sync
-mq doctor                         # or: python -m media_quotes doctor
+python -m media_quotes doctor
 pytest
-make check                        # docs QA, ruff, mypy, tests, build, CLI smoke
 ```
+
+If `uv` is not installed and the project virtualenv is already active, skip the `uv` line and
+use `python` directly. For an env-var-only flag in PowerShell, use `$env:NAME="value"`, for
+example:
+
+```powershell
+$env:PERSIST_TO_POSTGRES = "true"
+python -m media_quotes run --date 2026-11-19
+```
+
+Equivalent Bash/macOS form for the same flag: `PERSIST_TO_POSTGRES=true python -m media_quotes run --date 2026-11-19`.
+
+## OpenRouter inference
+
+Inference provider selection is environment-driven; there is no CLI flag. The default is
+`LLM_PROVIDER=local`, which is deterministic and makes no network call. Set
+`LLM_PROVIDER=openrouter` to generate section summaries through OpenRouter's
+OpenAI-compatible Chat Completions API. Real keys belong only in `.env`, never in source code.
+
+```powershell
+$env:LLM_PROVIDER = "openrouter"
+$env:LLM_MODEL_SNAPSHOT = "openai/gpt-4o-mini-2024-07-18"
+$env:OPENROUTER_API_KEY = "your-key"
+python -m media_quotes run --date 2026-11-19
+```
+
+`LLM_MODEL_SNAPSHOT` must be an explicit OpenRouter model id, not `unset` or `latest`.
+`OPENROUTER_BASE_URL`, `OPENROUTER_APP_URL`, `OPENROUTER_APP_TITLE`,
+`OPENROUTER_TIMEOUT_SECONDS`, and `OPENROUTER_MAX_RETRIES` are also configurable.
+OpenRouter never changes quote selection, deterministic verification, or the T0 source gate.
 
 Extras: `test` (pytest/VCR.py/syrupy/jsonschema), `eval` (Pydantic Evals/Ragas), `render`
 (Jinja2), `dashboard` (Streamlit/pandas), `orchestration` (Dagster), `extraction`

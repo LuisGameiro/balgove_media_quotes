@@ -1,0 +1,24 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for tass replay.",
+  "source_id": "tass",
+  "canonical_url": "https://tass.com/fixture/synthetic-2026-11-10-art010/",
+  "publication_date": "2026-11-10",
+  "title": "SYNTHETIC FIXTURE - Resources developments",
+  "byline": "Fixture TASS Desk",
+  "publication_name": "TASS (synthetic fixture)",
+  "language": "ru",
+  "article_text": "Synthetic report for TASS (synthetic fixture). Date: 2026-11-10. “Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,” said Михаил Васильев, аналитик экономического департамента.",
+  "quote_spans": [
+    {
+      "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+      "char_start": 66,
+      "char_end": 178,
+      "speaker": "Михаил Васильев",
+      "attribution_span": "said Михаил Васильев, аналитик экономического департамента",
+      "section_id": "resources",
+      "dom_path": "json/quote_spans/0",
+      "quote_text_en": "Trade and economic ties with regional partners demonstrate stability amid external restrictions,"
+    }
+  ]
+}

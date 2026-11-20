@@ -152,8 +152,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "retention":
             return _do_retention(settings, dry_run=bool(args.dry_run))
         if command == "restore-drill":
+            report_date = _parse_report_date(getattr(args, "date", None), settings)
             reference = getattr(args, "reference", None)
-            return _do_restore_drill(settings, reference=Path(reference) if reference else None)
+            return _do_restore_drill(
+                settings,
+                report_date=report_date,
+                reference=Path(reference) if reference else None,
+            )
         if command == "sources":
             return _do_sources(
                 settings,

@@ -129,7 +129,7 @@ def _do_digest(
         window_end=report_date,
         out_path=Path(out) if out else settings.digest_dir / f"{report_date.isoformat()}.md",
         sections_csv=settings.sections_csv,
-        provider=make_provider("local"),
+        provider=make_provider(settings),
         notice=_NOTICE,
     )
     print(f"Digest {len(records)} quote(s): {path}")

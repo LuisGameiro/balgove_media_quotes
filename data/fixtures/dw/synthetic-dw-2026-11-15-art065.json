@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for dw replay.",
+  "source_id": "dw",
+  "canonical_url": "https://www.dw.com/fixture/synthetic-2026-11-15-art065/",
+  "publication_date": "2026-11-15",
+  "title": "SYNTHETIC FIXTURE - Other developments",
+  "byline": "Fixture DW Analyst",
+  "publication_name": "Deutsche Welle (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for Deutsche Welle (synthetic fixture). Date: 2026-11-15. “Civilian municipal utilities restored district heating to eighty percent of residential zones before nightfall,” said Mayor Oksana Boyko, regional administration.",
+  "quote_spans": [
+    {
+      "quote_text": "Civilian municipal utilities restored district heating to eighty percent of residential zones before nightfall,",
+      "char_start": 76,
+      "char_end": 187,
+      "speaker": "Mayor Oksana Boyko",
+      "attribution_span": "said Mayor Oksana Boyko, regional administration",
+      "section_id": "other",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

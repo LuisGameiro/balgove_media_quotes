@@ -6,7 +6,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from media_quotes.config import Settings
 from media_quotes.exceptions import ConfigError
 from media_quotes.llm import LocalStandInProvider, make_provider
 from media_quotes.llm_live import (
@@ -124,9 +126,10 @@ def test_schema_hash_reads_file(tmp_path: Path) -> None:
 
 
 def test_make_provider_resolution() -> None:
-    p = make_provider("local")
+    settings = Settings(_env_file=None)
+    p = make_provider(settings)
     assert isinstance(p, LocalStandInProvider)
     inf = p.infer(section_id="war_intensity", section_name="War Intensity", quote_texts=["q1"])
     assert "STAND-IN INFERENCE" in inf
-    with pytest.raises(ConfigError, match="unavailable"):
-        make_provider("unsupported_provider")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, llm_provider="unsupported_provider")

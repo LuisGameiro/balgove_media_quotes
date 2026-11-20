@@ -2,8 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
+      # Local-development defaults only. Replace values in .env for shared deployments.
       POSTGRES_USER: ${POSTGRES_USER:-news}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-news}
       POSTGRES_DB: ${POSTGRES_DB:-news}
     ports:
       - "5432:5432"

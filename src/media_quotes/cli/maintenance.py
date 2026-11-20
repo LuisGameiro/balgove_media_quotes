@@ -100,16 +100,25 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     return EXIT_OK
 
 
-def _do_restore_drill(settings: Settings, *, reference: Path | None = None) -> int:
+def _do_restore_drill(
+    settings: Settings,
+    *,
+    report_date: date | None = None,
+    reference: Path | None = None,
+) -> int:
     """Compare the latest derived export with a reference export (identity + hash)."""
-    today = settings.report_date
+    today = report_date or settings.report_date
     current_path = local_store_path(settings.export_dir, today)
+    files = sorted(settings.export_dir.glob("quotes-*.jsonl"), reverse=True)
     if reference is None:
-        files = sorted(settings.export_dir.glob("quotes-*.jsonl"), reverse=True)
         if len(files) < 2:
             print("restore drill requires two exports; pass --reference PATH")
             return EXIT_FAILURE
+        current_path = files[0]
         reference = files[1]
+    elif not current_path.is_file() and files:
+        current_path = files[0]
+
     if not current_path.is_file() or not reference.is_file():
         print(f"restore drill missing export: {current_path} or {reference}")
         return EXIT_FAILURE

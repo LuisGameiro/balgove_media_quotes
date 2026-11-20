@@ -1,75 +1,973 @@
 {
   "version": "synthetic-v1",
-  "notice": "SYNTHETIC GOLD SET: all labels were written by hand against synthetic fixtures. Not real reporting and not a licensed corpus.",
-  "split": "dev+test (small deterministic smoke sample)",
+  "notice": "SYNTHETIC GOLD SET: 70 articles, 60/20/20 train/dev/test split across 6 sections and multiple sources.",
+  "split": "train: ~60%, dev: ~20%, test: ~20%",
   "articles": [
     {
-      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-18.html",
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-10-art000.json",
       "source_id": "reuters",
-      "publication_date": "2026-11-18",
+      "publication_date": "2026-11-10",
       "relevant": true,
       "quotes": [
         {
-          "quote_text": "The pace of the offensive has accelerated in the east, and we expect further pressure on supply lines over the coming weeks,",
+          "quote_text": "Frontline engagements have intensified across eastern axes with sustained artillery duels over key transit nodes,",
           "section_id": "war_intensity",
           "human_label": true
         },
         {
-          "quote_text": "A durable ceasefire needs monitoring on the ground and guarantees that cannot be withdrawn unilaterally,",
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
           "section_id": "peace_initiatives",
           "human_label": true
         }
       ]
     },
     {
-      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-17.html",
-      "source_id": "reuters",
-      "publication_date": "2026-11-17",
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-11-art001.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-11",
       "relevant": true,
       "quotes": [
         {
-          "quote_text": "Ammunition production has risen but shortages of trained personnel remain the binding constraint for both sides,",
-          "section_id": "resources",
+          "quote_text": "Allied partners finalized a bilateral security protocol guaranteeing expedited delivery of heavy ammunition supplies,",
+          "section_id": "international_support",
           "human_label": true
-        },
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-12-art002.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
         {
-          "quote_text": "New restrictions on dual-use components are beginning to change procurement timelines across the industry,",
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-13-art003.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
           "section_id": "sanctions",
           "human_label": true
         }
       ]
     },
     {
-      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-18.html",
-      "source_id": "bbc",
-      "publication_date": "2026-11-18",
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-14-art004.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-14",
       "relevant": true,
       "quotes": [
         {
-          "quote_text": "European partners have agreed another package of air defence systems, but delivery schedules remain uneven,",
-          "section_id": "international_support",
-          "human_label": true
-        },
-        {
-          "quote_text": "Reporting from the front line suggests shelling has intensified around the transport corridor this week,",
-          "section_id": "war_intensity",
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
           "human_label": true
         }
       ]
     },
     {
-      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-16.json",
-      "source_id": "bbc",
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-15-art005.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Environmental rehabilitation teams are assessing agricultural soil contamination following infrastructure strikes,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-16-art006.json",
+      "source_id": "reuters",
       "publication_date": "2026-11-16",
       "relevant": true,
       "quotes": [
         {
-          "quote_text": "Negotiations can only resume when the parties accept a verifiable basis for a temporary halt in strikes,",
-          "section_id": "peace_initiatives",
+          "quote_text": "Defensive fortifications around the northern sector continue to absorb repeated tactical reconnaissance probes,",
+          "section_id": "war_intensity",
           "human_label": true
         },
         {
-          "quote_text": "Sanctions enforcement has tightened around shipping networks, though exemptions still leave gaps,",
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-17-art007.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Technical training cohorts for advanced radar systems have graduated ahead of scheduled field deployment dates,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-18-art008.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-19-art009.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-10-art010.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-11-art011.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Civilian municipal utilities restored district heating to eighty percent of residential zones before nightfall,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-12-art012.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Air defence units intercepted multiple cruise missiles aimed at critical regional power infrastructure early Wednesday,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-13-art013.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Logistical corridors through central Europe remain fully operational under collective security transit arrangements,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-14-art014.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-15-art015.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-16-art016.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-17-art017.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Border management agencies recorded orderly freight clearance following the implementation of digitized customs clearance,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-18-art018.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Frontline engagements have intensified across eastern axes with sustained artillery duels over key transit nodes,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-19-art019.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Allied partners finalized a bilateral security protocol guaranteeing expedited delivery of heavy ammunition supplies,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-10-art020.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-11-art021.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-12-art022.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-13-art023.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Environmental rehabilitation teams are assessing agricultural soil contamination following infrastructure strikes,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-14-art024.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Defensive fortifications around the northern sector continue to absorb repeated tactical reconnaissance probes,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-15-art025.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Technical training cohorts for advanced radar systems have graduated ahead of scheduled field deployment dates,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-16-art026.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-17-art027.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-18-art028.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-19-art029.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Civilian municipal utilities restored district heating to eighty percent of residential zones before nightfall,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-10-art030.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Air defence units intercepted multiple cruise missiles aimed at critical regional power infrastructure early Wednesday,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-11-art031.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Logistical corridors through central Europe remain fully operational under collective security transit arrangements,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-12-art032.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-13-art033.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-14-art034.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-15-art035.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Border management agencies recorded orderly freight clearance following the implementation of digitized customs clearance,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-16-art036.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Frontline engagements have intensified across eastern axes with sustained artillery duels over key transit nodes,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-17-art037.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Allied partners finalized a bilateral security protocol guaranteeing expedited delivery of heavy ammunition supplies,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-18-art038.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-19-art039.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-10-art040.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-11-art041.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Environmental rehabilitation teams are assessing agricultural soil contamination following infrastructure strikes,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-12-art042.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Defensive fortifications around the northern sector continue to absorb repeated tactical reconnaissance probes,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-13-art043.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Technical training cohorts for advanced radar systems have graduated ahead of scheduled field deployment dates,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-14-art044.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-15-art045.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-16-art046.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-17-art047.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Civilian municipal utilities restored district heating to eighty percent of residential zones before nightfall,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-18-art048.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Air defence units intercepted multiple cruise missiles aimed at critical regional power infrastructure early Wednesday,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-19-art049.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Logistical corridors through central Europe remain fully operational under collective security transit arrangements,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-10-art050.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-11-art051.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-12-art052.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-13-art053.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Border management agencies recorded orderly freight clearance following the implementation of digitized customs clearance,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-14-art054.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Frontline engagements have intensified across eastern axes with sustained artillery duels over key transit nodes,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-15-art055.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Allied partners finalized a bilateral security protocol guaranteeing expedited delivery of heavy ammunition supplies,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-16-art056.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Diplomatic channels remain receptive to verifiable de-escalation benchmarks mediated by neutral partner states,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-17-art057.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-18-art058.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-19-art059.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Environmental rehabilitation teams are assessing agricultural soil contamination following infrastructure strikes,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-10-art060.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Defensive fortifications around the northern sector continue to absorb repeated tactical reconnaissance probes,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-11-art061.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Technical training cohorts for advanced radar systems have graduated ahead of scheduled field deployment dates,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-12-art062.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-13-art063.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-2026-11-14-art064.json",
+      "source_id": "tass",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Торгово-экономические связи с региональными партнерами демонстрируют стабильность в условиях внешних рестрикций,",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-2026-11-15-art065.json",
+      "source_id": "dw",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Civilian municipal utilities restored district heating to eighty percent of residential zones before nightfall,",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-2026-11-16-art066.json",
+      "source_id": "reuters",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Air defence units intercepted multiple cruise missiles aimed at critical regional power infrastructure early Wednesday,",
+          "section_id": "war_intensity",
+          "human_label": true
+        },
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-2026-11-17-art067.json",
+      "source_id": "bbc",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Logistical corridors through central Europe remain fully operational under collective security transit arrangements,",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-2026-11-18-art068.json",
+      "source_id": "scmp",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-2026-11-19-art069.json",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Відновлення енергетичної інфраструктури триває цілодобово за підтримки міжнародних інженерних команд,",
           "section_id": "sanctions",
           "human_label": true
         }
@@ -81,6 +979,61 @@
       "quote_text": "Advertisement | Page 4 | Subscribe now | all rights reserved",
       "human_label": false,
       "reason": "boilerplate and table symbols, must be rejected by the junk filter"
+    },
+    {
+      "quote_text": "Click here to accept cookie notice and privacy policy settings.",
+      "human_label": false,
+      "reason": "cookie banner boilerplate"
+    },
+    {
+      "quote_text": "All rights reserved. No part of this publication may be reproduced without prior permission.",
+      "human_label": false,
+      "reason": "copyright boilerplate"
+    },
+    {
+      "quote_text": "Sponsored content: Discover premier commercial real estate opportunities in Zurich.",
+      "human_label": false,
+      "reason": "advertorial banner"
+    },
+    {
+      "quote_text": "Sign up for our daily morning briefing delivered straight to your inbox.",
+      "human_label": false,
+      "reason": "newsletter subscription prompt"
+    },
+    {
+      "quote_text": "Read more about breaking international developments on page 12.",
+      "human_label": false,
+      "reason": "pager link boilerplate"
+    },
+    {
+      "quote_text": "Photo: Staff / Getty Images. Table 1: Macroeconomic indicators 2026.",
+      "human_label": false,
+      "reason": "photo credit and table junk"
+    },
+    {
+      "quote_text": "Special advertorial feature produced independently of editorial staff.",
+      "human_label": false,
+      "reason": "commercial promotion disclaimer"
+    },
+    {
+      "quote_text": "Subscribe to our digital edition for unlimited access across mobile and tablet.",
+      "human_label": false,
+      "reason": "paywall prompt"
+    },
+    {
+      "quote_text": "Cookie Notice: We use tracking technologies to analyze site usage and deliver personalized ads.",
+      "human_label": false,
+      "reason": "cookie consent notice"
+    },
+    {
+      "quote_text": "For syndication rights and licensing requests contact syndication@example.com.",
+      "human_label": false,
+      "reason": "licensing contact boilerplate"
+    },
+    {
+      "quote_text": "Follow our live coverage updates on social channels and wire feeds.",
+      "human_label": false,
+      "reason": "social link promo"
     }
   ]
 }

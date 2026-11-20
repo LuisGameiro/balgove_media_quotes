@@ -19,7 +19,8 @@ FIXTURE = Path(__file__).resolve().parents[2] / "data/gold_set/synthetic-v1.json
 def test_load_real_fixture() -> None:
     gold = load_gold_set(FIXTURE)
     assert gold.version == "synthetic-v1"
-    assert len(gold.articles) == 4
+    assert len(gold.articles) >= 60
+    assert len(gold.negative_candidates) >= 10
     assert all(quote.human_label for article in gold.articles for quote in article.quotes)
 
 
@@ -28,6 +29,9 @@ def test_split_is_deterministic_and_exhaustive() -> None:
     split = split_articles(gold)
     total = sum(len(group) for group in split.values())
     assert total == len(gold.articles)
+    assert len(split["train"]) > 0
+    assert len(split["dev"]) > 0
+    assert len(split["test"]) > 0
     for article in gold.articles:
         assert split_for(article.article_ref, gold.version) in {"train", "dev", "test"}
     # Repeating with the same version yields identical membership.

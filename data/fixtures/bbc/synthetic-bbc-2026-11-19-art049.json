@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for bbc replay.",
+  "source_id": "bbc",
+  "canonical_url": "https://www.bbc.co.uk/fixture/synthetic-2026-11-19-art049/",
+  "publication_date": "2026-11-19",
+  "title": "SYNTHETIC FIXTURE - International Support developments",
+  "byline": "Fixture BBC Correspondent",
+  "publication_name": "BBC News (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for BBC News (synthetic fixture). Date: 2026-11-19. “Logistical corridors through central Europe remain fully operational under collective security transit arrangements,” said Coordinator Hans Weber, logistics taskforce.",
+  "quote_spans": [
+    {
+      "quote_text": "Logistical corridors through central Europe remain fully operational under collective security transit arrangements,",
+      "char_start": 70,
+      "char_end": 186,
+      "speaker": "Coordinator Hans Weber",
+      "attribution_span": "said Coordinator Hans Weber, logistics taskforce",
+      "section_id": "international_support",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

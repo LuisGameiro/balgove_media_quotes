@@ -61,9 +61,11 @@ never written without exact offsets from the verifier.
 ## 4. Phase D — T4/T5 reasoning and obsolescence (2–3 sessions)
 
 **D progress:** `llm_live.py` (pinned model, cache-first, strict JSON schema, refusal/incomplete,
-injected client), `batch.py` (deterministic `custom_id` + Batch JSONL), `curation.py` (section
-allow-list, cross-outlet dedup, `[Under Review]` badges) and `rights_guard.py` (DEC-10 limits
-before rendering) are implemented with offline tests.
+injected client), `llm_openrouter.py` (env-selected `LLM_PROVIDER=openrouter`, OpenAI-compatible
+Chat Completions client, pinned OpenRouter model id, JSON inference validation), `batch.py`
+(deterministic `custom_id` + Batch JSONL), `curation.py` (section allow-list, cross-outlet dedup,
+`[Under Review]` badges) and `rights_guard.py` (DEC-10 limits before rendering) are implemented
+with offline tests. There is no CLI flag for provider selection.
 
 | Step | Work | Exit check |
 |---|---|---|

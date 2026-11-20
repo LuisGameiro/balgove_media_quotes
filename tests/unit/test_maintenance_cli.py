@@ -53,6 +53,14 @@ def test_review_queue_list_and_decide(tmp_path: Path) -> None:
     assert payload["flags"][0]["state"] == "confirmed"
 
 
+def test_review_queue_missing_or_unknown_quote(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    settings.audit_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ConfigError, match="--quote-id is required"):
+        _do_review(settings, action="decide", quote_id=None)
+    assert _do_review(settings, action="decide", quote_id="Q-NONEXISTENT") == 1
+
+
 def test_review_unknown_action(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         _do_review(settings_for(tmp_path), action="unknown")
@@ -64,8 +72,67 @@ def test_retention_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert "partitions_to_detach" in out
 
 
+def test_retention_live_attempt(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _do_retention(settings_for(tmp_path), dry_run=False) == 0
+    out = capsys.readouterr().out
+    assert "Live retention job is not available" in out
+
+
 def test_restore_drill_needs_two_exports(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _do_restore_drill(settings_for(tmp_path)) == 1
     assert "--reference" in capsys.readouterr().out
+
+
+def test_restore_drill_with_two_files_and_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = settings_for(tmp_path)
+    settings.export_dir.mkdir(parents=True, exist_ok=True)
+    file1 = settings.export_dir / "quotes-2026-11-19.jsonl"
+    file2 = settings.export_dir / "quotes-2026-11-18.jsonl"
+    row = {
+        "quote_id": "Q-20261118-0001",
+        "quote_text_original": "Valid quote text here.",
+        "quote_html": "",
+        "quote_text_en": "",
+        "source_id": "reuters",
+        "source_name": "Reuters",
+        "publication_name": "Reuters fixture",
+        "source_tier": 1,
+        "source_country_region": "Global",
+        "source_type": "independent",
+        "rights_status": "blocked",
+        "access_mode": "scraped_prohibited",
+        "license_reference": "",
+        "discovery_method": "sitemap",
+        "claim_only": False,
+        "original_reporting_flag": "first-hand",
+        "source_language": "en",
+        "publication_date": "2026-11-18",
+        "article_name": "Test article",
+        "article_author": "Reporter",
+        "article_url": "https://example.com/test",
+        "extraction_date": "2026-11-18T12:00:00Z",
+        "section_id": "war_intensity",
+        "is_obsolete": False,
+        "obsolete_reason": "",
+        "content_hash": "a" * 64,
+        "verification": {
+            "verbatim_match": True,
+            "metadata_verified": True,
+            "method": "nfc_exact_span_v1",
+            "verified_at": "2026-11-18T12:00:00Z",
+        },
+        "notes": "",
+    }
+    data = json.dumps(row) + "\n"
+    file1.write_text(data, encoding="utf-8")
+    file2.write_text(data, encoding="utf-8")
+
+    assert _do_restore_drill(settings) == 0
+    assert "PASS" in capsys.readouterr().out
+
+    assert _do_restore_drill(settings, reference=file2) == 0
+    assert "PASS" in capsys.readouterr().out

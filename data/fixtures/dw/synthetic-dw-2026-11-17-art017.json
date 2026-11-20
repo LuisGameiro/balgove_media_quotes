@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for dw replay.",
+  "source_id": "dw",
+  "canonical_url": "https://www.dw.com/fixture/synthetic-2026-11-17-art017/",
+  "publication_date": "2026-11-17",
+  "title": "SYNTHETIC FIXTURE - Other developments",
+  "byline": "Fixture DW Analyst",
+  "publication_name": "Deutsche Welle (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for Deutsche Welle (synthetic fixture). Date: 2026-11-17. “Border management agencies recorded orderly freight clearance following the implementation of digitized customs clearance,” said Inspector Richard Davies, customs authority.",
+  "quote_spans": [
+    {
+      "quote_text": "Border management agencies recorded orderly freight clearance following the implementation of digitized customs clearance,",
+      "char_start": 76,
+      "char_end": 198,
+      "speaker": "Inspector Richard Davies",
+      "attribution_span": "said Inspector Richard Davies, customs authority",
+      "section_id": "other",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

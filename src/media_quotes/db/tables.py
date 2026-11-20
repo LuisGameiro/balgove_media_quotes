@@ -4,7 +4,7 @@ The authoritative DDL lives in db/schema.sql; these definitions exist only so SQ
 can build INSERT statements for the registry.
 """
 
-from sqlalchemy import JSON, Boolean, Column, Date, Integer, MetaData, String, Table
+from sqlalchemy import JSON, Boolean, Column, Date, Integer, MetaData, String, Table, Uuid
 
 metadata = MetaData()
 
@@ -35,7 +35,7 @@ sources_table = Table(
 articles_table = Table(
     "articles",
     metadata,
-    Column("article_id", String, primary_key=True),
+    Column("article_id", Uuid(as_uuid=True), primary_key=True),
     Column("source_id", String, nullable=False),
     Column("canonical_url", String, nullable=False),
     Column("title", String, nullable=True),
@@ -49,9 +49,9 @@ articles_table = Table(
 quotes_table = Table(
     "quotes",
     metadata,
-    Column("quote_id", String, primary_key=True),
+    Column("quote_id", Uuid(as_uuid=True), primary_key=True),
     Column("canonical_quote_id", String, nullable=False),
-    Column("article_id", String, nullable=False),
+    Column("article_id", Uuid(as_uuid=True), nullable=False),
     Column("quote_text_raw", String, nullable=False),
     Column("quote_text_normalised", String, nullable=False),
     Column("char_start", Integer, nullable=False),
@@ -69,7 +69,7 @@ quotes_table = Table(
 eval_runs_table = Table(
     "eval_runs",
     metadata,
-    Column("eval_id", String, primary_key=True),
+    Column("eval_id", Uuid(as_uuid=True), primary_key=True),
     Column("gold_set_version", String, nullable=False),
     Column("run_id", String, nullable=False),
     Column("report_date", Date, nullable=False),
@@ -82,7 +82,7 @@ eval_runs_table = Table(
 pipeline_runs_table = Table(
     "pipeline_runs",
     metadata,
-    Column("run_id", String, primary_key=True),
+    Column("run_id", Uuid(as_uuid=True), primary_key=True),
     Column("pipeline", String, nullable=False),
     Column("partition_date", Date, nullable=True),
     Column("status", String, nullable=False),
@@ -93,7 +93,7 @@ audit_events_table = Table(
     "audit_events",
     metadata,
     Column("event_id", Integer, primary_key=True, autoincrement=True),
-    Column("run_id", String, nullable=True),
+    Column("run_id", Uuid(as_uuid=True), nullable=True),
     Column("trace_id", String, nullable=True),
     Column("step", String, nullable=False),
     Column("entity_type", String, nullable=True),
@@ -117,7 +117,7 @@ decision_cache_table = Table(
 gold_set_labels_table = Table(
     "gold_set_labels",
     metadata,
-    Column("label_id", String, primary_key=True),
+    Column("label_id", Uuid(as_uuid=True), primary_key=True),
     Column("gold_set_version", String, nullable=False),
     Column("split", String, nullable=False),
     Column("article_ref", String, nullable=False),

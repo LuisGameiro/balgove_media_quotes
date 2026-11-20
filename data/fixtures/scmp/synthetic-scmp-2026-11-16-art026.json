@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for scmp replay.",
+  "source_id": "scmp",
+  "canonical_url": "https://www.scmp.com/fixture/synthetic-2026-11-16-art026/",
+  "publication_date": "2026-11-16",
+  "title": "SYNTHETIC FIXTURE - Peace Initiatives developments",
+  "byline": "Fixture SCMP Analyst",
+  "publication_name": "South China Morning Post (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for South China Morning Post (synthetic fixture). Date: 2026-11-16. “Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,” said Dr. Sarah Jenkins, conflict resolution fellow.",
+  "quote_spans": [
+    {
+      "quote_text": "Any durable cessation of hostilities requires reciprocal observation posts and legally binding arbitration guarantees,",
+      "char_start": 86,
+      "char_end": 204,
+      "speaker": "Dr. Sarah Jenkins",
+      "attribution_span": "said Dr. Sarah Jenkins, conflict resolution fellow",
+      "section_id": "peace_initiatives",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

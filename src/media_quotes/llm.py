@@ -1,16 +1,19 @@
 """Injectable inference boundary.
 
-Blocked/degraded mode uses a deterministic local stand-in; no provider SDK is imported and no
-network call is made. A real provider can be supplied later by implementing ``InferenceProvider``
-and passing it to the digest renderer.
+Provider selection comes from the environment only. Blocked/degraded mode uses a
+deterministic local stand-in by default; ``LLM_PROVIDER=openrouter`` selects the
+OpenAI-compatible OpenRouter client. No CLI flag changes the provider.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .exceptions import ConfigError
+
+if TYPE_CHECKING:
+    from .config import Settings
 
 _STANDIN = {
     "war_intensity": (
@@ -55,13 +58,17 @@ class LocalStandInProvider:
         )
 
 
-def make_provider(name: str = "local") -> InferenceProvider:
-    """Resolve a provider by name; live providers are disabled while sources are blocked."""
-    if name in {"local", "stand-in", "none", ""}:
+def make_provider(settings: Settings) -> InferenceProvider:
+    """Resolve the provider configured in the environment via ``Settings``."""
+    provider = settings.llm_provider.strip().lower()
+    if provider in {"local", "stand-in", "none", ""}:
         return LocalStandInProvider()
+    if provider == "openrouter":
+        from .llm_openrouter import OpenRouterInferenceProvider
+
+        return OpenRouterInferenceProvider(settings)
     raise ConfigError(
-        f"inference provider '{name}' is unavailable in blocked/degraded mode; "
-        "implement InferenceProvider and inject it directly"
+        f"inference provider '{provider}' is unavailable; set LLM_PROVIDER to local or openrouter"
     )
 
 

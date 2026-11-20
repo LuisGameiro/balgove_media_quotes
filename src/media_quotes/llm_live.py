@@ -84,7 +84,11 @@ class PinnedOpenAIClient:
         schema_hash_value: str,
         cache_lookup: Callable[[str], LLMDecision | None] | None = None,
         cache_write: Callable[[str, LLMDecision], None] | None = None,
+        api_style: str = "responses",
     ) -> None:
+        if api_style not in {"responses", "chat"}:
+            raise ConfigError("api_style must be 'responses' or 'chat'")
+        self.api_style = api_style
         if not model_snapshot or model_snapshot in {"unset", "latest"}:
             raise ConfigError("LLM model snapshot must be pinned (no 'unset'/'latest')")
         self.client = client
@@ -106,22 +110,42 @@ class PinnedOpenAIClient:
         if contains_instruction_override(request.user_prompt):
             raise ConfigError("untrusted text contains instruction-override patterns")
 
-        response = self.client.responses.create(
-            model=self.model_snapshot,
-            instructions=request.system_prompt,
-            input=request.user_prompt,
-            temperature=float(request.decoding_params.get("temperature", 0.0)),
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "structured_decision",
-                    "strict": True,
-                }
-            },
-        )
-        raw = getattr(response, "output_text", None) or ""
-        refusal = "refus" in raw.casefold()
-        incomplete = getattr(response, "status", "") == "incomplete"
+        if self.api_style == "chat":
+            response = self.client.chat.completions.create(
+                model=self.model_snapshot,
+                messages=[
+                    {"role": "system", "content": request.system_prompt},
+                    {"role": "user", "content": request.user_prompt},
+                ],
+                temperature=float(request.decoding_params.get("temperature", 0.0)),
+                response_format={"type": "json_object"},
+            )
+            choice = response.choices[0]
+            message = getattr(choice, "message", None)
+            raw = str(getattr(message, "content", None) or "")
+            refusal = bool(getattr(message, "refusal", None)) or "refus" in raw.casefold()
+            incomplete = str(getattr(choice, "finish_reason", "")) in {
+                "length",
+                "content_filter",
+                "incomplete",
+            }
+        else:
+            response = self.client.responses.create(
+                model=self.model_snapshot,
+                instructions=request.system_prompt,
+                input=request.user_prompt,
+                temperature=float(request.decoding_params.get("temperature", 0.0)),
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "structured_decision",
+                        "strict": True,
+                    }
+                },
+            )
+            raw = getattr(response, "output_text", None) or ""
+            refusal = "refus" in raw.casefold()
+            incomplete = getattr(response, "status", "") == "incomplete"
         decision = LLMDecision(
             output={} if refusal or incomplete else {"text": str(raw)},
             refusal=refusal,

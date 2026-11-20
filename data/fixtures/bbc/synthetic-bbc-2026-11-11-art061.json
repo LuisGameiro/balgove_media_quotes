@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for bbc replay.",
+  "source_id": "bbc",
+  "canonical_url": "https://www.bbc.co.uk/fixture/synthetic-2026-11-11-art061/",
+  "publication_date": "2026-11-11",
+  "title": "SYNTHETIC FIXTURE - International Support developments",
+  "byline": "Fixture BBC Correspondent",
+  "publication_name": "BBC News (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for BBC News (synthetic fixture). Date: 2026-11-11. “Technical training cohorts for advanced radar systems have graduated ahead of scheduled field deployment dates,” said Ambassador Lars Lindqvist, military cooperation envoy.",
+  "quote_spans": [
+    {
+      "quote_text": "Technical training cohorts for advanced radar systems have graduated ahead of scheduled field deployment dates,",
+      "char_start": 70,
+      "char_end": 181,
+      "speaker": "Ambassador Lars Lindqvist",
+      "attribution_span": "said Ambassador Lars Lindqvist, military cooperation envoy",
+      "section_id": "international_support",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

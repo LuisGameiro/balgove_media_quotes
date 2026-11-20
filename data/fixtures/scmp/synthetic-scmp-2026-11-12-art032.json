@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for scmp replay.",
+  "source_id": "scmp",
+  "canonical_url": "https://www.scmp.com/fixture/synthetic-2026-11-12-art032/",
+  "publication_date": "2026-11-12",
+  "title": "SYNTHETIC FIXTURE - Peace Initiatives developments",
+  "byline": "Fixture SCMP Analyst",
+  "publication_name": "South China Morning Post (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for South China Morning Post (synthetic fixture). Date: 2026-11-12. “Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,” said Undersecretary Maria Rossi, diplomatic mission.",
+  "quote_spans": [
+    {
+      "quote_text": "Preliminary discussions in Geneva focused on humanitarian corridors and civilian infrastructure protection agreements,",
+      "char_start": 86,
+      "char_end": 204,
+      "speaker": "Undersecretary Maria Rossi",
+      "attribution_span": "said Undersecretary Maria Rossi, diplomatic mission",
+      "section_id": "peace_initiatives",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}

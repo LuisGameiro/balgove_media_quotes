@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import TYPE_CHECKING, Any
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,11 @@ if TYPE_CHECKING:
     from ..registry import SourceRegistryRow
 
 
+def _jsonable(value: Any) -> Any:
+    """Convert dates, UUIDs and models into JSONB-safe Python values."""
+    return json.loads(json.dumps(value, default=str))
+
+
 def record_eval_run(
     session: Session,
     *,
@@ -41,13 +47,14 @@ def record_eval_run(
 ) -> str:
     """Append one evaluation result; eval ids are stable per gold set + date."""
     eval_id = _run_uuid(f"eval:{gold_set_version}:{report_date.isoformat()}")
+    eval_id_str = str(eval_id)
     statement = pg_insert(eval_runs_table).values(
         eval_id=eval_id,
         gold_set_version=gold_set_version,
         run_id=f"eval-{gold_set_version}",
         report_date=report_date,
-        metrics=metrics,
-        thresholds=thresholds,
+        metrics=_jsonable(metrics),
+        thresholds=_jsonable(thresholds),
         passed=passed,
         trace_id=trace_id,
     )
@@ -55,7 +62,7 @@ def record_eval_run(
     session.execute(statement)
     if commit:
         session.commit()
-    return eval_id
+    return eval_id_str
 
 
 def sync_gold_set_labels(session: Session, gold_set: GoldSet, *, commit: bool = True) -> int:
@@ -141,7 +148,7 @@ def persist_articles_and_quotes(
     `offsets` is keyed by canonical quote id and must carry char_start/char_end plus the
     article text hash; without it the quote row is skipped (never invent offsets).
     """
-    article_values: dict[str, dict[str, Any]] = {}
+    article_values: dict[UUID, dict[str, Any]] = {}
     quote_values: list[dict[str, Any]] = []
     for record in records:
         detail = offsets.get(record.quote_id)
@@ -174,12 +181,14 @@ def persist_articles_and_quotes(
                 "extraction_method": "nfc_exact_span_v1",
                 "extractor_version": extractor_version,
                 "verification_status": "verified",
-                "verification_details": record.verification.model_dump(),
-                "quote_metadata": {
-                    "source_id": record.source_id,
-                    "section_id": record.section_id,
-                    "claim_only": record.claim_only,
-                },
+                "verification_details": _jsonable(record.verification.model_dump(mode="json")),
+                "quote_metadata": _jsonable(
+                    {
+                        "source_id": record.source_id,
+                        "section_id": record.section_id,
+                        "claim_only": record.claim_only,
+                    }
+                ),
             }
         )
     inserted_articles = 0
@@ -187,21 +196,21 @@ def persist_articles_and_quotes(
         statement = pg_insert(articles_table).values(list(article_values.values()))
         statement = statement.on_conflict_do_nothing(index_elements=["article_id"])
         result = session.execute(statement)
-        inserted_articles = getattr(result, "rowcount", 0) or 0
+        inserted_articles = max(getattr(result, "rowcount", 0) or 0, 0)
     inserted_quotes = 0
     if quote_values:
         statement = pg_insert(quotes_table).values(quote_values)
         statement = statement.on_conflict_do_nothing(index_elements=["quote_id"])
         result = session.execute(statement)
-        inserted_quotes = getattr(result, "rowcount", 0) or 0
+        inserted_quotes = max(getattr(result, "rowcount", 0) or 0, 0)
     if commit:
         session.commit()
     return inserted_articles, inserted_quotes
 
 
-def _run_uuid(run_id: str) -> str:
-    """Derive a stable UUID from the string run ids used by the CLI."""
-    return str(uuid5(NAMESPACE_URL, run_id))
+def _run_uuid(run_id: str) -> UUID:
+    """Derive a stable UUID from the string ids used by the CLI."""
+    return uuid5(NAMESPACE_URL, run_id)
 
 
 def start_pipeline_run(
@@ -239,12 +248,10 @@ def finish_pipeline_run(
     """Terminal run state (running→succeeded/failed/partial) with final stats."""
     if status not in {"succeeded", "failed", "partial"}:
         raise ValueError(f"invalid terminal run status: {status}")
-    statement = pg_insert(pipeline_runs_table).values(
-        run_id=_run_uuid(run_id), status=status, stats=stats
-    )
-    statement = statement.on_conflict_do_update(
-        index_elements=["run_id"],
-        set_={"status": statement.excluded.status, "stats": statement.excluded.stats},
+    statement = (
+        update(pipeline_runs_table)
+        .where(pipeline_runs_table.c.run_id == _run_uuid(run_id))
+        .values(status=status, stats=_jsonable(stats))
     )
     session.execute(statement)
     if commit:
@@ -272,7 +279,7 @@ def append_audit_events(
                 "entity_type": event.get("entity_type"),
                 "entity_id": event.get("entity_id"),
                 "status": str(event.get("status") or "unknown"),
-                "details": event.get("details") or _event_details(event),
+                "details": _jsonable(event.get("details") or _event_details(event)),
             }
         )
     session.execute(audit_events_table.insert().values(values))

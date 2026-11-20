@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from media_quotes.config import Settings
 from media_quotes.db.engine import make_session_factory, session_scope
 from media_quotes.db.repository import (
     DecisionCacheEntry,
+    _run_uuid,
     append_audit_events,
     finish_pipeline_run,
     get_decision_cache,
@@ -25,8 +27,31 @@ from media_quotes.db.repository import (
     sync_sources,
     upsert_decision_cache,
 )
+from media_quotes.db.tables import (
+    articles_table,
+    audit_events_table,
+    eval_runs_table,
+    gold_set_labels_table,
+    pipeline_runs_table,
+    quotes_table,
+)
 from media_quotes.gold_set import GoldArticle, GoldQuoteLabel, GoldSet
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
+
+
+def test_uuid_backed_columns_use_uuid_types() -> None:
+    columns = [
+        pipeline_runs_table.c.run_id,
+        articles_table.c.article_id,
+        quotes_table.c.quote_id,
+        quotes_table.c.article_id,
+        eval_runs_table.c.eval_id,
+        audit_events_table.c.run_id,
+        gold_set_labels_table.c.label_id,
+    ]
+    assert all(column.type.python_type is UUID for column in columns)
+    assert isinstance(_run_uuid("run-1"), UUID)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCES_CSV = REPO_ROOT / "data" / "sources.csv"

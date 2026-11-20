@@ -69,11 +69,14 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
             if not label.human_label or position < 0:
                 continue
             labels += 1
+            span = by_text.get(normalise_text(quote_text), {})
             candidate = QuoteCandidate(
                 quote_text=quote_text,
                 article_id=uuid5(NAMESPACE_URL, ref),
                 char_start=position,
                 char_end=position + len(quote_text),
+                speaker=span.get("speaker"),
+                attribution_span=span.get("attribution_span"),
             )
             policy_flags = dict(adapter.policy_flags())
             policy_flags["original_reporting_flag"] = "first-hand"
@@ -92,7 +95,6 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
                 article_verified += 1
                 spans_ok += int(result.checks.get("span_match", False))
                 metadata_ok += int(result.checks.get("metadata_non_empty", False))
-                span = by_text.get(normalise_text(quote_text), {})
                 sections_ok += int(str(span.get("section_id") or "") == str(label.section_id))
         if article_verified:
             articles_ok += 1

@@ -63,7 +63,7 @@ def build_definitions() -> dg.Definitions:
             window_end=report_date,
             out_path=settings.digest_dir / f"{report_date.isoformat()}.md",
             sections_csv=settings.sections_csv,
-            provider=make_provider("local"),
+            provider=make_provider(settings),
             obsolescence_flags=review_flags,
             review_badges=review_badges,
             notice=_NOTICE,

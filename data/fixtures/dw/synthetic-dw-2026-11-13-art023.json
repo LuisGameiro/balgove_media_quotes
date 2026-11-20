@@ -1,0 +1,23 @@
+{
+  "fixture": true,
+  "notice": "SYNTHETIC FIXTURE for dw replay.",
+  "source_id": "dw",
+  "canonical_url": "https://www.dw.com/fixture/synthetic-2026-11-13-art023/",
+  "publication_date": "2026-11-13",
+  "title": "SYNTHETIC FIXTURE - Other developments",
+  "byline": "Fixture DW Analyst",
+  "publication_name": "Deutsche Welle (synthetic fixture)",
+  "language": "en",
+  "article_text": "Synthetic report for Deutsche Welle (synthetic fixture). Date: 2026-11-13. “Environmental rehabilitation teams are assessing agricultural soil contamination following infrastructure strikes,” said Ecologist Anna Lindemann, reconstruction monitoring team.",
+  "quote_spans": [
+    {
+      "quote_text": "Environmental rehabilitation teams are assessing agricultural soil contamination following infrastructure strikes,",
+      "char_start": 76,
+      "char_end": 190,
+      "speaker": "Ecologist Anna Lindemann",
+      "attribution_span": "said Ecologist Anna Lindemann, reconstruction monitoring team",
+      "section_id": "other",
+      "dom_path": "json/quote_spans/0"
+    }
+  ]
+}
