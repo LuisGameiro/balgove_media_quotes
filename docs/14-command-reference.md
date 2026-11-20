@@ -1,134 +1,130 @@
-# 14 — Command reference
+# 14 — Command and script reference
 
-Every command available in this repository, with the exact flags that exist in code.
-PowerShell is the primary shell; `check` is the full local gate (see root README / §8 below).
-Commands come from: `pyproject.toml` (`[project.scripts]`, dev tools), `Makefile`, `scripts/`,
-`src/media_quotes/cli/app.py`, `docker-compose.yml`, and the optional Dagster extra.
-
-**Notation:** run from the repository root `C:\Users\lgame\Desktop\balgoveinnovations` unless a
-different directory is shown. `mq` is installed as `mq = "media_quotes.cli:main"`; if it is not
-on PATH, use `python -m media_quotes.cli` instead — both run the same parser.
+Single-source cheatsheet for running, verifying, testing, and developing the Media
+Quotes pipeline on Windows PowerShell. All paths and commands assume PowerShell from
+the repository root.
 
 ---
 
-## 1. Environment setup (one-time)
+## 1. Quality gate and CI (run first, run always)
 
 ```powershell
-Copy-Item .env.example .env          # then EDIT .env; never commit real secrets
-py -m pip install uv                 # only if uv is missing
-uv sync --frozen --group dev         # installs the locked dev dependency group
-uv sync --frozen --all-extras        # full install (Dagster, Streamlit, extraction, LLM, …)
-docker compose up -d --wait          # local PostgreSQL 16 service
-python -m media_quotes.bootstrap     # Alembic upgrade head (0001→0002→0003) + sources.csv sync
+powershell -ExecutionPolicy Bypass -File scripts/check.ps1
 ```
 
-Existing venv alternative (no uv): `python -m pip install -e ".[dev,test]"`.
-Windows shell helper (one-time, adds `check` to both PowerShell profiles):
+Or add to your PowerShell profile (`$PROFILE`) for the one-word shortcut:
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install_check_profile.ps1
+function check { powershell -ExecutionPolicy Bypass -File (Join-Path (Get-Location) "scripts\check.ps1") }
 ```
 
----
-
-## 2. Quality gate
-
-| Purpose | PowerShell / cross-platform |
-|---|---|
-| Full gate | `check` (profile function) or `powershell -ExecutionPolicy Bypass -File scripts/check.ps1` or `make check` (Git Bash / WSL with make installed) |
-| Docs QA only | `python scripts/docs_qa.py` / `make docs-qa` |
-| Format check | `python -m ruff format --check .` / `make format-check` |
-| Auto-format | `python -m ruff format .` / `make format` |
-| Lint | `python -m ruff check .` / `make lint` |
-| Strict types | `python -m mypy --strict src/` / `make typecheck` |
-| Tests + coverage | `python -m pytest --cov=media_quotes --cov-fail-under=85` / `make test` |
-| Build wheel + sdist | `python -m build` / `make build` |
-| CLI smoke | `python -m media_quotes --help` and `python -m media_quotes.cli --help` / `make smoke` |
-| Data-asset validation | `python scripts/validate_data.py` |
-| Make help / clean | `make help`, `make clean` |
+Steps executed:
+1. `docs_qa.py` — 41 requirement/cross-doc assertions.
+2. `ruff format --check src tests scripts` — zero diffs.
+3. `ruff check src tests scripts` — zero lint warnings.
+4. `mypy src tests scripts` — strict type checking.
+5. `pytest --cov=media_quotes --cov-fail-under=85` — 210+ tests, >=85% coverage.
+6. `python -m build` — wheel and sdist into `dist/`.
+7. `smoke_test.py` — clean venv install from built wheel + CLI sanity check.
 
 ---
 
-## 3. CLI (`mq`) — all commands
+## 2. CLI commands (`media_quotes.cli` / `mq`)
 
-### 3.1 Shared flags (available on every subcommand)
+The CLI entrypoint is `python -m media_quotes` (or `mq` if installed in editable mode).
 
-`--offline` (fixture replay, no network) · `--dry-run` (plan, write nothing) ·
-`--date YYYY-MM-DD` (report date; default from `.env`/today) · `--run-id ID` ·
-`--trace-id ID` · `--out PATH` · `--verbose`
-
-Exit codes: `0` success · `1` validation/threshold failure · `2` partial success with
-coverage gaps · `3` config / T0-gate / budget error (mapped in `cli/app.py`).
-
-### 3.2 Core commands
-
-| Command | Purpose | Command-specific flags |
+| Command | Purpose | Typical invocation |
 |---|---|---|
-| `mq doctor` | Validate config, registry/T0 gate, schema, version manifest; no network | — |
-| `mq validate` | Alias for `doctor` | — |
-| `mq bootstrap` | Alembic `upgrade head` + sync `sources.csv` to Postgres | — |
-| `mq run` | Full offline fixture-replay pipeline → JSONL store, digest, logs, audit | — (persists to Postgres only when `PERSIST_TO_POSTGRES=true`) |
-| `mq audit` | Deterministic audit report (JSON + MD) for a run/date | `--run-id`, `--out` |
-| `mq digest` | Regenerate `digests/YYYY-MM-DD.md` from the local store | `--out` |
-| `mq logs` | Correlated structured logs for a run | **requires `--run-id`**; optional `--trace-id` |
-| `mq eval` | Gold-set metrics (recall/span/κ etc.) | `--gold-set VERSION` (default `synthetic-v1`); persists to Postgres when enabled |
-| `mq sources` | Print the registry and T0 rights state | `--tier 1|2|3|4`, `--rights-status STATUS` |
-| `mq version` | Print the version manifest | — |
-| `mq export` | Derived JSONL export | `--out PATH` |
-| `mq backfill` | Bounded offline backfill estimate + budget gate | `--from YYYY-MM-DD`, `--to YYYY-MM-DD`, `--max-cost N` |
-| `mq dashboard` | Streamlit guidance / launch when installed | — |
-| `mq review` | Obsolescence review queue | `--action list|decide`, `--quote-id ID`, `--verdict confirmed|rejected|escalated`, `--reason-code TEXT` |
-| `mq retention` | Retention + lock readiness plan; no DDL/rows touched | uses shared `--dry-run` |
-| `mq restore-drill` | Compare two derived exports (quote id + content hash) | `--reference PATH` (otherwise the two newest exports) |
+| `run` | Daily collection pipeline (discover, fetch, verify, dedupe, digest, export) | `python -m media_quotes run --offline --date 2026-11-19` |
+| `run` (dry run) | Verify pipeline without writing files | `python -m media_quotes run --offline --dry-run --date 2026-11-19` |
+| `eval` | Evaluate synthetic gold set against precision/recall contracts | `python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` |
+| `eval` (splits) | Evaluate on a specific split (`train`, `dev`, `test`, or `all`) | `python -m media_quotes eval --gold-set synthetic-v1 --split test --date 2026-11-19` |
+| `audit` | View audit trail and coverage report | `python -m media_quotes audit --date 2026-11-19` |
+| `logs` | Stream structured JSON logs with trace correlation | `python -m media_quotes logs --run-id <run-id>` |
+| `review` | Human-in-the-loop obsolescence review queue | `python -m media_quotes review --action list` |
+| `retention` | Check/apply retention policy on partitions and blobs | `python -m media_quotes retention --dry-run` |
+| `restore-drill` | Verify backup export against a reference export | `python -m media_quotes restore-drill --reference var/export/quotes-2026-11-18.jsonl` |
+| `sources` | List configured news sources and tier status | `python -m media_quotes sources` |
+| `sources` (filtered) | Filter by tier | `python -m media_quotes sources --tier 1` |
+| `version` | Print package version, commit hash, and schema version | `python -m media_quotes version` |
+| `doctor` | Self-diagnostic check (DB connection, paths, T0 rights gate) | `python -m media_quotes doctor` |
+| `backfill` | Replay historical partitions with cost guardrails | `python -m media_quotes backfill --from 2026-10-01 --to 2026-11-19 --dry-run` |
 
-Examples:
+---
+
+## 3. Database bootstrap and migrations
+
 ```powershell
-python -m media_quotes run --dry-run --date 2026-11-19
-python -m media_quotes audit --date 2026-11-19 --run-id run-3300d30f1c8e
-python -m media_quotes logs --run-id run-3300d30f1c8e
+# 1. Start local Postgres container
+docker compose up -d --wait
+
+# 2. Run schema bootstrap (applies schema.sql + seed data)
+python -m media_quotes.bootstrap
+
+# 3. Verify database health and schema version
+python -m media_quotes doctor
+```
+
+---
+
+## 4. Evaluation and gold set
+
+```powershell
+# Full gold-set evaluation (synthetic-v1: 70 articles across 6 sources)
 python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19
-python -m media_quotes backfill --from 2026-10-01 --to 2026-11-19 --max-cost 100 --dry-run
-python -m media_quotes sources --tier 2
-python -m media_quotes review --action list
-python -m media_quotes review --action decide --quote-id Q-20261118-0001 --verdict confirmed --reason-code first-hand-supersession
-python -m media_quotes retention --dry-run
-python -m media_quotes restore-drill --reference var/export/2026-11-18.jsonl
+
+# Evaluate individual split
+python -m media_quotes eval --gold-set synthetic-v1 --split train --date 2026-11-19
+python -m media_quotes eval --gold-set synthetic-v1 --split dev --date 2026-11-19
+python -m media_quotes eval --gold-set synthetic-v1 --split test --date 2026-11-19
+```
+
+Contract thresholds enforced:
+- Precision: $\ge 0.98$
+- Recall: $\ge 0.95$
+- False quote rate: $= 0$
+- Character offset accuracy: $1.0$ (exact)
+
+---
+
+## 5. Offline replay and restore drills
+
+```powershell
+# Step 1: Run day 1
+python -m media_quotes run --offline --date 2026-11-18
+
+# Step 2: Run day 2
+python -m media_quotes run --offline --date 2026-11-19
+
+# Step 3: Run restore drill comparing the two daily exports
+python -m media_quotes restore-drill --reference var/export/quotes-2026-11-18.jsonl
 ```
 
 ---
 
-## 4. Scripts in `scripts/`
-
-| Script | Purpose | Invocation |
-|---|---|---|
-| `docs_qa.py` | Documentation consistency checks (CHK-08) | `python scripts/docs_qa.py [--root PATH]` |
-| `validate_data.py` | Registry / schema / data-asset validation | `python scripts/validate_data.py` |
-| `check.ps1` | Windows full gate | `powershell -ExecutionPolicy Bypass -File scripts/check.ps1` |
-| `install_check_profile.ps1` | Installs the `check` PowerShell function (one-time) | `powershell -ExecutionPolicy Bypass -File scripts/install_check_profile.ps1` |
-| `generate_gold_fixtures.py` | Generate synthetic gold-set/fixture data | `python scripts/generate_gold_fixtures.py --help` (check current flags before use) |
-
----
-
-## 5. Python module entry points
+## 6. Development and testing shortcuts
 
 ```powershell
-python -m media_quotes --help           # top-level entry point (same CLI)
-python -m media_quotes.cli --help       # explicit package entry point
-python -m media_quotes.bootstrap        # Alembic migrations + registry sync
-python -m pytest                        # full test suite (with coverage from pyproject)
-python -m ruff check .                  # lint
-python -m mypy --strict src/            # type-check
-python -m build                         # wheel + sdist into dist/
-```
+# Run all unit tests
+pytest tests/unit/ -v
 
----
+# Run OpenRouter / LLM gateway unit tests (no network calls made)
+pytest tests/unit/test_openrouter.py tests/unit/test_llm_live.py -v
 
-## 6. Docker Compose
+# Run integration tests (requires Postgres)
+pytest tests/integration/ -v
 
-```powershell
-docker compose up -d --wait   # start local Postgres
-docker compose ps             # service status
-docker compose logs -f postgres  # service name from docker-compose.yml
-docker compose down           # stop; add -v to remove volumes (destroys local DB)
+# Format and lint check only
+ruff check src tests scripts
+ruff format --check src tests scripts
+
+# Type check only
+mypy src tests scripts
+
+# Docs QA check only
+python scripts/docs_qa.py
+
+# Validate schema of data files
+python scripts/validate_data.py
 ```
 
 ---
@@ -136,6 +132,7 @@ docker compose down           # stop; add -v to remove volumes (destroys local D
 ## 7. Dagster (orchestration)
 
 ```powershell
+$env:DAGSTER_HOME = "$PWD\var\dagster"
 dagster dev -m media_quotes.orchestration
 ```
 Definitions: `daily_quotes_digest`, `DailyPartitionsDefinition(start_date="2026-10-01")`,
@@ -149,23 +146,14 @@ rights gate is satisfied for those outlets.
 
 ---
 
-## 8. `.env` reference (local only; gitignored)
+## 8. Docker operations
 
-| Variable | Default / purpose |
-|---|---|
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | local Compose credentials (local-only) |
-| `DATABASE_URL` | SQLAlchemy URL (e.g. `postgresql+psycopg://news:news@127.0.0.1:5432/news`) |
-| `LOG_LEVEL`, `LOG_JSON`, `OTEL_ENABLED` | logging / tracing toggles |
-| `LLM_PROVIDER` | `local` (offline, default) or `openrouter` (live section inference only) |
-| `LLM_MODEL_SNAPSHOT` | pinned model id; required for `openrouter`; never `unset`/`latest` |
-| `OPENROUTER_API_KEY` | required for `openrouter`; **rotate immediately if ever exposed** |
-| `OPENROUTER_BASE_URL`, `OPENROUTER_APP_URL`, `OPENROUTER_APP_TITLE`, `OPENROUTER_TIMEOUT_SECONDS`, `OPENROUTER_MAX_RETRIES` | optional OpenRouter settings, all have defaults |
-| `PERSIST_TO_POSTGRES` | `true` enables Postgres writes in `mq run` / `mq eval` / Dagster; default `false` (file-only) |
-| `REPORT_DATE`, `BACKFILL_START`, `REPORT_WINDOW_DAYS` | date controls (`--date` overrides at the CLI) |
-| `MAX_QUOTE_WORDS`, `ATTRIBUTION_FORMAT`, `LICENCE_TERRITORY`, `EXTERNAL_PUBLICATION` | DEC-10 rights limits; renderer enforces them |
-
-Provider selection is env-only (no CLI flag). Live inference changes only the 1–2 sentence
-section summaries — never verification, quote selection or the T0 gate.
+```powershell
+docker compose up -d --wait   # start local Postgres
+docker compose ps             # service status
+docker compose logs -f postgres  # service name from docker-compose.yml
+docker compose down           # stop; add -v to remove volumes (destroys local DB)
+```
 
 ---
 
@@ -236,6 +224,7 @@ Optional: `docker compose logs -f postgres` to inspect DB startup.
 ### Phase 4 — Dagster (the next genuinely new test)
 
 ```powershell
+$env:DAGSTER_HOME = "$PWD\var\dagster"
 dagster dev -m media_quotes.orchestration
 ```
 In the Dagster UI (http://localhost:3000): select asset **`daily_quotes_digest`**, partition
@@ -243,8 +232,7 @@ In the Dagster UI (http://localhost:3000): select asset **`daily_quotes_digest`*
 `status`, `quotes`, `coverage`, `gaps`, `rejected`. The asset calls the same offline `_collect`
 logic and, with `PERSIST_TO_POSTGRES=true`, writes a `pipeline_runs` row plus audit events.
 If Dagster is missing: `uv sync --frozen --all-extras` (or
-`python -m pip install -e ".[orchestration]"`). Ignore the local `.tmp_dagster_home_*`
-runtime directory (gitignored under `var/dagster/`).
+`python -m pip install -e ".[orchestration]"`).
 
 ### Phase 5 — Track A rights (stakeholder action)
 

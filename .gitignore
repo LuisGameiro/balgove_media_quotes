@@ -15,13 +15,16 @@ htmlcov/
 dist/
 build/
 .venv-smoke/
+.tmp_dagster_home_*
 
 # Runtime artifacts
 var/blobs/*
 !var/blobs/.gitkeep
 var/audit/*
 !var/audit/.gitkeep
-var/dagster/
+var/dagster/*
+!var/dagster/.gitkeep
+!var/dagster/dagster.yaml
 var/export/*
 !var/export/.gitkeep
 var/logs/*

@@ -31,6 +31,7 @@ def build_definitions() -> dg.Definitions:
     def daily_quotes_digest(context) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         settings: Settings = get_settings()
         report_date: date = date.fromisoformat(context.partition_key)
+        run_id = f"dagster-{report_date.isoformat()}"
         # Imported inside the asset to keep CLI-helper tests independent of Dagster.
         from .cli.common import _NOTICE, _window
         from .cli.run import _collect, _load_review_flags
@@ -41,7 +42,7 @@ def build_definitions() -> dg.Definitions:
         from .rights_guard import apply_rights_limits
 
         records, coverage, gaps, events, rejected, offsets = _collect(
-            settings, run_id=f"run-dagster-{report_date.isoformat()}", report_date=report_date
+            settings, run_id=run_id, report_date=report_date
         )
         rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
         records = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
@@ -89,7 +90,6 @@ def build_definitions() -> dg.Definitions:
             )
 
             engine = create_db_engine(settings)
-            run_id = f"dagster-{report_date.isoformat()}"
             with make_session_factory(engine)() as session:
                 start_pipeline_run(
                     session, run_id=run_id, pipeline="dagster-daily", partition_date=report_date
@@ -110,3 +110,6 @@ def build_definitions() -> dg.Definitions:
         return summary
 
     return dg.Definitions(assets=[daily_quotes_digest])
+
+
+defs: dg.Definitions = build_definitions()

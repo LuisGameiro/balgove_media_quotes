@@ -1,0 +1,3 @@
+# Dagster instance configuration
+telemetry:
+  enabled: false
