@@ -1,4 +1,4 @@
-"""Idempotent database writes for the source registry."""
+"""Idempotent database writes for the source registry, articles, quotes, and governance tables."""
 
 from __future__ import annotations
 
@@ -12,13 +12,17 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from ..text_utils import normalise_text
 from .tables import (
     articles_table,
     audit_events_table,
     decision_cache_table,
+    digests_table,
     eval_runs_table,
     gold_set_labels_table,
+    obsolescence_flags_table,
     pipeline_runs_table,
+    quote_classifications_table,
     quotes_table,
     sources_table,
 )
@@ -27,6 +31,7 @@ if TYPE_CHECKING:
     from ..gold_set import GoldSet
     from ..models import ExportQuoteRecord
     from ..registry import SourceRegistryRow
+    from ..risk_controls.models import ObsolescenceFlag
 
 
 def _jsonable(value: Any) -> Any:
@@ -156,7 +161,7 @@ def persist_articles_and_quotes(
     """
     article_values: dict[UUID, dict[str, Any]] = {}
     quote_values: list[dict[str, Any]] = []
-    seen_spans: set[tuple[UUID, int, int]] = set()
+    seen_spans: set[tuple[UUID, str, int, int]] = set()
 
     for record in records:
         detail = offsets.get(record.quote_id)
@@ -165,7 +170,8 @@ def persist_articles_and_quotes(
         article_id = _run_uuid(f"article:{record.article_url}")
         char_start = int(detail["char_start"])
         char_end = int(detail["char_end"])
-        span_key = (article_id, char_start, char_end)
+        norm_text = normalise_text(record.quote_text_original)
+        span_key = (article_id, norm_text, char_start, char_end)
 
         article_values[article_id] = {
             "article_id": article_id,
@@ -174,9 +180,24 @@ def persist_articles_and_quotes(
             "title": record.article_name,
             "publication_date": record.publication_date,
             "language": record.source_language,
+            "raw_blob_ref": detail.get("raw_blob_ref"),
+            "extracted_text": detail.get("extracted_text"),
+            "extraction_method": detail.get("extraction_method") or "fixture_html_v1",
+            "extractor_version": detail.get("extractor_version") or extractor_version,
             "content_hash": detail.get("content_hash", record.content_hash),
             "status": "verified",
-            "extractor_version": extractor_version,
+            "article_metadata": _jsonable(
+                {
+                    "byline": record.article_author,
+                    "publication_name": record.publication_name,
+                    "source_tier": record.source_tier,
+                    "rights_status": record.rights_status,
+                    "access_mode": record.access_mode,
+                    "license_reference": record.license_reference,
+                    "discovery_method": record.discovery_method,
+                    **(detail.get("article_metadata") or {}),
+                }
+            ),
         }
 
         if span_key in seen_spans:
@@ -189,7 +210,7 @@ def persist_articles_and_quotes(
                 "canonical_quote_id": record.quote_id,
                 "article_id": article_id,
                 "quote_text_raw": record.quote_text_original,
-                "quote_text_normalised": record.quote_text_original,
+                "quote_text_normalised": norm_text,
                 "char_start": char_start,
                 "char_end": char_end,
                 "dom_path": detail.get("dom_path"),
@@ -211,7 +232,15 @@ def persist_articles_and_quotes(
     inserted_articles = 0
     if article_values:
         statement = pg_insert(articles_table).values(list(article_values.values()))
-        statement = statement.on_conflict_do_nothing(index_elements=["article_id"])
+        statement = statement.on_conflict_do_update(
+            index_elements=["article_id"],
+            set_={
+                "extracted_text": statement.excluded.extracted_text,
+                "raw_blob_ref": statement.excluded.raw_blob_ref,
+                "extraction_method": statement.excluded.extraction_method,
+                "article_metadata": statement.excluded.article_metadata,
+            },
+        )
         result = session.execute(statement)
         inserted_articles = _inserted_count(result, len(article_values))
     inserted_quotes = 0
@@ -225,6 +254,160 @@ def persist_articles_and_quotes(
     if commit:
         session.commit()
     return inserted_articles, inserted_quotes
+
+
+def persist_quote_classifications(
+    session: Session,
+    records: list[ExportQuoteRecord],
+    offsets: dict[str, dict[str, Any]],
+    *,
+    assigned_by: str = "rule",
+    commit: bool = True,
+) -> int:
+    """Idempotently persist section classifications for verified quotes."""
+    if assigned_by not in {"llm", "human", "rule"}:
+        raise ValueError(f"invalid assigned_by: {assigned_by}")
+
+    existing_quote_ids: set[UUID] = set()
+    rows: list[dict[str, Any]] = []
+    seen_classifications: set[UUID] = set()
+
+    for record in records:
+        detail = offsets.get(record.quote_id)
+        if not detail:
+            continue
+        article_id = _run_uuid(f"article:{record.article_url}")
+        char_start = int(detail["char_start"])
+        char_end = int(detail["char_end"])
+        quote_uuid = _run_uuid(f"quote:{article_id}:{char_start}:{char_end}")
+        existing_quote_ids.add(quote_uuid)
+
+        classification_id = _run_uuid(
+            f"classification:{quote_uuid}:{record.section_id}:{assigned_by}"
+        )
+        if classification_id in seen_classifications:
+            continue
+        seen_classifications.add(classification_id)
+        rows.append(
+            {
+                "classification_id": classification_id,
+                "quote_id": quote_uuid,
+                "section": record.section_id,
+                "rationale": f"Assigned to section '{record.section_id}' via {assigned_by}",
+                "decision_id": None,
+                "assigned_by": assigned_by,
+            }
+        )
+
+    if not rows:
+        return 0
+    # Resolve which quote_ids exist; ON CONFLICT may have skipped duplicate spans.
+    db_quotes = set(
+        session.execute(
+            select(quotes_table.c.quote_id).where(quotes_table.c.quote_id.in_(existing_quote_ids))
+        )
+        .scalars()
+        .all()
+    )
+    if db_quotes:
+        rows = [row for row in rows if row["quote_id"] in db_quotes]
+    if not rows:
+        return 0
+
+    statement = pg_insert(quote_classifications_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["classification_id"])
+    result = session.execute(statement)
+    if commit:
+        session.commit()
+    return _inserted_count(result, len(rows))
+
+
+def persist_digest_manifest(
+    session: Session,
+    *,
+    digest_date: date,
+    window_start: date,
+    window_end: date,
+    md_path: str,
+    records: list[ExportQuoteRecord],
+    commit: bool = True,
+) -> str:
+    """Idempotently upsert the daily Markdown digest manifest into the `digests` table."""
+    digest_id = _run_uuid(f"digest:{digest_date.isoformat()}")
+    sections: dict[str, list[str]] = {}
+    for rec in records:
+        sections.setdefault(rec.section_id, []).append(rec.quote_id)
+    manifest = {
+        "total_quotes": len(records),
+        "quote_ids": [rec.quote_id for rec in records],
+        "sections": sections,
+    }
+    statement = pg_insert(digests_table).values(
+        digest_id=digest_id,
+        digest_date=digest_date,
+        window_start=window_start,
+        window_end=window_end,
+        md_path=md_path,
+        manifest=_jsonable(manifest),
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=["digest_date"],
+        set_={
+            "window_start": statement.excluded.window_start,
+            "window_end": statement.excluded.window_end,
+            "md_path": statement.excluded.md_path,
+            "manifest": statement.excluded.manifest,
+        },
+    )
+    session.execute(statement)
+    if commit:
+        session.commit()
+    return str(digest_id)
+
+
+def persist_obsolescence_flags(
+    session: Session,
+    flags: list[ObsolescenceFlag],
+    *,
+    commit: bool = True,
+) -> int:
+    """Sync human-in-the-loop obsolescence flags to PostgreSQL when matching quotes exist."""
+    if not flags:
+        return 0
+    canonical_ids = {flag.evidence.old_quote_id for flag in flags}
+    mapping = dict(
+        session.execute(
+            select(quotes_table.c.canonical_quote_id, quotes_table.c.quote_id).where(
+                quotes_table.c.canonical_quote_id.in_(canonical_ids)
+            )
+        ).all()
+    )
+    rows: list[dict[str, Any]] = []
+    for flag in flags:
+        quote_uuid = mapping.get(flag.evidence.old_quote_id)
+        if not quote_uuid:
+            continue
+        flag_id = _run_uuid(
+            f"obs-flag:{flag.evidence.old_quote_id}:{flag.evidence.decision_id}:{flag.state}"
+        )
+        rows.append(
+            {
+                "flag_id": flag_id,
+                "quote_id": quote_uuid,
+                "is_obsolete": flag.state == "confirmed",
+                "reason": f"[{flag.state}] {flag.reason_code or flag.evidence.rationale}",
+                "superseded_by": [],
+                "decision_id": None,
+            }
+        )
+    if not rows:
+        return 0
+    statement = pg_insert(obsolescence_flags_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["flag_id"])
+    result = session.execute(statement)
+    if commit:
+        session.commit()
+    return _inserted_count(result, len(rows))
 
 
 def _run_uuid(run_id: str) -> UUID:

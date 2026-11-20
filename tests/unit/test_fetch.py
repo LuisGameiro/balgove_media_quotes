@@ -15,6 +15,14 @@ from media_quotes.registry import load_sources_csv
 
 CSV = Path(__file__).resolve().parents[2] / "data/sources.csv"
 ROW = next(row for row in load_sources_csv(CSV) if row.source_id == "guardian_api")
+UNAPPROVED = ROW.model_copy(
+    update={
+        "enabled": False,
+        "rights_status": "pending_counsel_review",
+        "access_mode": "pending_review",
+        "license_reference": None,
+    }
+)
 APPROVED = ROW.model_copy(
     update={
         "enabled": True,
@@ -46,7 +54,7 @@ def test_t0_gate_and_track_a_approval_required() -> None:
     with pytest.raises(SourceNotPermitted, match="Track A"):
         assert_fetch_permitted(APPROVED, track_a_approved=False)
     with pytest.raises(SourceNotPermitted):
-        assert_fetch_permitted(ROW, track_a_approved=True)
+        assert_fetch_permitted(UNAPPROVED, track_a_approved=True)
 
 
 def test_fetch_bytes_uses_mock_transport_and_returns_hash() -> None:

@@ -204,9 +204,10 @@ Targets are planning placeholders until T2 measurement; record any change in [08
 ## 5. Command interface (offline fixture-replay CLI implemented today; full live pipeline in T9)
 
 One entry point, `mq` (`python -m media_quotes.cli` via `src/media_quotes/__main__.py`,
-plus a console script declared in `[project.scripts]`). All 12 subcommands (`doctor`, `validate`,
-`bootstrap`, `run`, `audit`, `logs`, `eval`, `backfill`, `digest`, `export`, `sources`,
-`version`, `dashboard`) are implemented today in deterministic offline fixture-replay mode;
+plus a console script declared in `[project.scripts]`). All implemented subcommands (`doctor`,
+`validate`, `bootstrap`, `run`, `audit`, `logs`, `eval`, `backfill`, `digest`, `export`, `sources`,
+`version`, `dashboard`, `dagster`, `review`, `retention`, `restore-drill`) are available today in
+deterministic offline fixture-replay mode; `dagster` prints setup guidance for the optional asset.
 T9 wires `run`, `audit`, `logs`, `eval`, and `backfill` to live Postgres, Dagster partitions,
 and the pinned OpenAI provider. `mq --help` and an import smoke test run in CI (CHK-10).
 
@@ -233,13 +234,14 @@ error resumes from the last successful step and never overwrites append-only row
 | `mq sources [--tier N] [--rights-status …]` | List the registry (mirrored from `sources.csv`) with rights status, access mode and coverage summary — the T0 state at a glance. |
 | `mq version` | Print the version manifest (app/CLI, schema hash, prompt version, pinned model snapshot, `gold_set_version`). |
 | `mq dashboard` | Launch Streamlit dashboard. |
+| `mq dagster` | Print Dagster asset, partition, schedule and persistence guidance; start the UI with `scripts/run_dagster.ps1`. |
 | `mq review --action list/decide [--quote-id …]` | Obsolescence review queue: list pending flags or record a human verdict (CHK-15). |
 | `mq retention [--dry-run]` | Print retention/lock readiness plan; no DDL/rows touched (CHK-17 groundwork). |
 | `mq restore-drill [--reference PATH]` | Compare derived exports by quote id + content hash (CHK-17/F2). |
 | `make audit`, `make logs`, `make run` | Thin wrappers for non-Python users. |
 
 `media_quotes.validation` is wired into the implemented `mq doctor`/`mq validate` commands and
-`scripts/validate_data.py`. All 12 CLI subcommands function in offline fixture replay;
+`scripts/validate_data.py`. All CLI subcommands function in offline fixture replay;
 T9 provides the live database, Dagster asset scheduling, and external LLM connections.
 
 ## 6. Not adopted

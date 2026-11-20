@@ -23,6 +23,12 @@ def pytest_configure(config: Config) -> None:
         message=r"datetime\.utcnow\(\) is deprecated",
         category=DeprecationWarning,
     )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"datetime\.datetime\.utcfromtimestamp\(\) is deprecated.*",
+        category=DeprecationWarning,
+    )
+
     # trafilatura imports urllib3 SOCKS support; PySocks is optional and unused offline.
     warnings.filterwarnings(
         "ignore",

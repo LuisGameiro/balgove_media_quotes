@@ -323,7 +323,7 @@ def check_engineering_standards(docs: Docs) -> list[CheckResult]:
 
 def check_registry_rows(docs: Docs) -> list[CheckResult]:
     srcs = (docs.root / "data/sources.csv").read_text(encoding="utf-8")
-    ok = srcs.count("\n") >= MIN_REGISTRY_ROWS and '"reuters"' in srcs
+    ok = srcs.count("\n") >= MIN_REGISTRY_ROWS and ('"reuters"' in srcs or "\nreuters," in srcs)
     return [result("registry rows", ok)]
 
 
@@ -464,7 +464,13 @@ def check_headings(docs: Docs) -> list[CheckResult]:
     jumps: list[str] = []
     for file in docs.files:
         previous = 0
+        in_fence = False
         for number, line in enumerate(docs.texts[file.as_posix()].splitlines(), 1):
+            if line.strip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
             match = HEADING_RE.match(line)
             if match:
                 level = len(match.group(1))

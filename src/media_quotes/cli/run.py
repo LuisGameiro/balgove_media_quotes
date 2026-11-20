@@ -11,20 +11,14 @@ from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import FixtureSource, build_adapter
 from ..config import Settings
-from ..curation import dedupe_quotes, review_badge
-from ..digest import write_digest
-from ..export import content_hash, local_store_path, quote_record, write_jsonl
-from ..llm import make_provider
+from ..export import content_hash, quote_record
 from ..models import ExportQuoteRecord, QuoteCandidate
 from ..registry import SourceRegistryRow
-from ..rights_guard import apply_rights_limits
 from ..risk_controls.models import ObsolescenceFlag
 from ..text_utils import normalise_text
 from ..verification_stages import verify_pipeline
-from .audit import _audit_report, _write_audit
 from .common import (
     _MANDATORY,
-    _NOTICE,
     EXIT_GAPS,
     EXIT_OK,
     _event,
@@ -33,10 +27,8 @@ from .common import (
     _gap_record,
     _load_registry,
     _read_json,
-    _run_id,
     _trace_id,
     _window,
-    _write_json,
 )
 
 
@@ -51,7 +43,7 @@ def _load_review_flags(settings: Settings) -> list[ObsolescenceFlag]:
         for item in flags_data:
             if isinstance(item, dict):
                 with contextlib.suppress(Exception):
-                    flags.append(ObsolescenceFlag.model_validate(item))
+                    flags.append(ObsolescenceFlag.model_validate_json(json.dumps(item)))
     return flags
 
 
@@ -147,6 +139,8 @@ def _process_source(  # pragma: no cover
         canonical_url = str(metadata.get("canonical_url") or "")
         article_ref_name = str(metadata.get("title") or ref)
         raw_hash = hashlib.sha256(raw).hexdigest()
+        extraction_method = str(metadata.get("extraction_method") or "fixture_html_v1")
+        extractor_version = str(metadata.get("extractor_version") or "fixture-replay-v1")
         events.append(
             _event(
                 run_id=run_id,
@@ -223,6 +217,14 @@ def _process_source(  # pragma: no cover
                 "speaker": candidate.speaker,
                 "attribution_span": candidate.attribution_span,
                 "content_hash": raw_hash,
+                "raw_blob_ref": ref,
+                "extracted_text": text,
+                "extraction_method": extraction_method,
+                "extractor_version": extractor_version,
+                "article_metadata": {
+                    "fixture_replay": replay,
+                    "mode": adapter.mode,
+                },
             }
             section_id = str(span.get("section_id") or "other")
             records.append(
@@ -340,110 +342,44 @@ def _do_run(  # pragma: no cover
     run_id: str | None,
     verbose: bool,
 ) -> int:
-    actual_run_id = run_id or _run_id(report_date, settings)
-    records, coverage, gaps, events, rejected, offsets = _collect(
-        settings, run_id=actual_run_id, report_date=report_date
+    from ..pipeline import run_daily_pipeline
+
+    result = run_daily_pipeline(
+        settings,
+        report_date=report_date,
+        run_id=run_id,
+        dry_run=dry_run,
+        pipeline="mq-run",
     )
-    if dry_run:
+
+    if result.dry_run:
         print(
-            f"Dry run {actual_run_id}: {len(records)} quote(s) would be stored, "
-            f"{len(gaps)} coverage gap(s), {rejected} candidate(s) rejected; no files written."
+            f"Dry run {result.run_id}: {len(result.records)} quote(s) would be stored, "
+            f"{len(result.gaps)} coverage gap(s), {result.rejected} candidate(s) rejected; "
+            "no files written."
         )
-        for gap in gaps:
+        for gap in result.gaps:
             print(f"  gap: {gap['source_id']} ({gap['gap_reason']}) — {gap['detail']}")
         return EXIT_OK
 
-    rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
-    records = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
-    store_path = local_store_path(settings.export_dir, report_date)
-    write_jsonl(records, store_path)
-
-    review_flags = _load_review_flags(settings)
-    now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
-    review_badges = {
-        flag.evidence.old_quote_id: review_badge(flag, now=now)
-        for flag in review_flags
-        if review_badge(flag, now=now)
-    }
-
-    digest_path = write_digest(
-        records,
-        report_date=report_date,
-        window_start=_window(report_date, settings)[0],
-        window_end=report_date,
-        out_path=settings.digest_dir / f"{report_date.isoformat()}.md",
-        sections_csv=settings.sections_csv,
-        provider=make_provider(settings),
-        obsolescence_flags=review_flags,
-        review_badges=review_badges,
-        notice=_NOTICE,
-    )
-    logs_path = settings.logs_dir / f"{actual_run_id}.jsonl"
-    logs_path.parent.mkdir(parents=True, exist_ok=True)
-    with logs_path.open("w", encoding="utf-8", newline="\n") as handle:
-        for event in events:
-            handle.write(
-                json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            )
-            handle.write("\n")
-    report = _audit_report(
-        settings,
-        report_date=report_date,
-        run_id=actual_run_id,
-        records=records,
-        coverage=coverage,
-        gaps=gaps,
-        events=events,
-        rejected=rejected + len(rights.rejected),
-        review_queue=[flag.model_dump(mode="json") for flag in review_flags],
-    )
-    _write_audit(settings, report)
-    _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
-    if settings.persist_to_postgres:
-        from ..db.engine import create_db_engine, make_session_factory
-        from ..db.repository import (
-            append_audit_events,
-            finish_pipeline_run,
-            persist_articles_and_quotes,
-            start_pipeline_run,
+    if "articles" in result.persistence:
+        print(
+            f"Postgres: {result.persistence['articles']} article(s), "
+            f"{result.persistence['stored_quotes']} quote(s) persisted"
         )
-
-        engine = create_db_engine(settings)
-        with make_session_factory(engine)() as session:
-            start_pipeline_run(
-                session,
-                run_id=actual_run_id,
-                pipeline="mq-run",
-                partition_date=report_date,
-            )
-            articles_n, quotes_n = persist_articles_and_quotes(session, records, offsets)
-            append_audit_events(session, events + coverage)
-            finish_pipeline_run(
-                session,
-                run_id=actual_run_id,
-                status="partial" if gaps else "succeeded",
-                stats={
-                    "quotes": len(records),
-                    "articles": articles_n,
-                    "stored_quotes": quotes_n,
-                    "rejected": rejected,
-                    "gaps": len(gaps),
-                },
-            )
-        print(f"Postgres: {articles_n} article(s), {quotes_n} quote(s) persisted")
     print(
-        f"Run {actual_run_id}: {len(records)} verified fixture quote(s), "
-        f"{rejected} rejected, {len(gaps)} coverage gap(s)."
+        f"Run {result.run_id}: {len(result.records)} verified fixture quote(s), "
+        f"{result.rejected} rejected, {len(result.gaps)} coverage gap(s)."
     )
-    print(f"Digest: {digest_path}")
-    print(f"Store:  {store_path}")
-    print(f"Logs:   {logs_path}")
+    print(f"Digest: {result.digest_path}")
+    print(f"Store:  {result.store_path}")
+    print(f"Logs:   {result.logs_path}")
     if verbose:
-        print(f"Audit:  {settings.audit_dir / f'audit-{report_date.isoformat()}.md'}")
-    for gap in gaps:
+        print(f"Audit:  {result.audit_md_path}")
+    for gap in result.gaps:
         if gap.get("mandatory"):
             print(
                 f"COVERAGE GAP: {gap['source_id']} is {gap['rights_status']}; "
                 f"{gap['gap_reason']} (fixture replay logged, no live contact)."
             )
-    return EXIT_GAPS if gaps else EXIT_OK
+    return EXIT_GAPS if result.gaps else EXIT_OK

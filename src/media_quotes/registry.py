@@ -117,6 +117,7 @@ class SourceRegistryRow(BaseModel):
             and bool(self.license_reference)
             and self.access_mode in PERMITTED_ACCESS
             and self.discovery_method in ENUMERABLE_DISCOVERY
+            and self.discovery_method != "web"
         )
 
     @property

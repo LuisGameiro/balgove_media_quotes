@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -21,6 +21,9 @@ from media_quotes.db.repository import (
     finish_pipeline_run,
     get_decision_cache,
     persist_articles_and_quotes,
+    persist_digest_manifest,
+    persist_obsolescence_flags,
+    persist_quote_classifications,
     record_eval_run,
     start_pipeline_run,
     sync_gold_set_labels,
@@ -30,13 +33,17 @@ from media_quotes.db.repository import (
 from media_quotes.db.tables import (
     articles_table,
     audit_events_table,
+    digests_table,
     eval_runs_table,
     gold_set_labels_table,
+    obsolescence_flags_table,
     pipeline_runs_table,
+    quote_classifications_table,
     quotes_table,
 )
 from media_quotes.gold_set import GoldArticle, GoldQuoteLabel, GoldSet
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
+from media_quotes.risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
 
 
 def test_uuid_backed_columns_use_uuid_types() -> None:
@@ -45,6 +52,11 @@ def test_uuid_backed_columns_use_uuid_types() -> None:
         articles_table.c.article_id,
         quotes_table.c.quote_id,
         quotes_table.c.article_id,
+        quote_classifications_table.c.classification_id,
+        quote_classifications_table.c.quote_id,
+        obsolescence_flags_table.c.flag_id,
+        obsolescence_flags_table.c.quote_id,
+        digests_table.c.digest_id,
         eval_runs_table.c.eval_id,
         audit_events_table.c.run_id,
         gold_set_labels_table.c.label_id,
@@ -211,6 +223,9 @@ def test_persist_articles_and_quotes_persists_when_offsets_present() -> None:
             "char_start": 0,
             "char_end": len(first.quote_text_original),
             "content_hash": first.content_hash,
+            "raw_blob_ref": "fixture://ap/synthetic-ap-2026-11-18.html",
+            "extracted_text": first.quote_text_original,
+            "extraction_method": "fixture_html_v1",
         }
     }
     inserted_articles, inserted_quotes = persist_articles_and_quotes(
@@ -237,6 +252,59 @@ def test_persist_articles_and_quotes_handles_psycopg_minus_one_rowcount() -> Non
     articles, quotes = persist_articles_and_quotes(session, records, offsets)
     assert articles == 1  # attempted insert count, not -1 -> 0
     assert quotes >= 0
+
+
+def test_persist_quote_classifications_and_digest_manifest_and_obsolescence_flags() -> None:
+    session = MagicMock()
+    records, _, _, _, _, offsets = _collect(
+        Settings(), run_id="test", report_date=date(2026, 11, 19)
+    )
+    first = records[0]
+    detail = offsets[first.quote_id]
+    article_id = _run_uuid(f"article:{first.article_url}")
+    quote_uuid = _run_uuid(
+        f"quote:{article_id}:{int(detail['char_start'])}:{int(detail['char_end'])}"
+    )
+
+    session.execute.return_value.scalars.return_value.all.return_value = [quote_uuid]
+    session.execute.return_value.rowcount = 1
+    classifications_n = persist_quote_classifications(session, [first], offsets, assigned_by="rule")
+    assert classifications_n == 1
+
+    with pytest.raises(ValueError, match="invalid assigned_by"):
+        persist_quote_classifications(session, [first], offsets, assigned_by="invalid")
+
+    digest_id = persist_digest_manifest(
+        session,
+        digest_date=date(2026, 11, 19),
+        window_start=date(2026, 11, 13),
+        window_end=date(2026, 11, 19),
+        md_path="digests/2026-11-19.md",
+        records=[first],
+    )
+    assert len(digest_id) == 36
+
+    flag = ObsolescenceFlag(
+        evidence=ObsolescenceEvidence(
+            old_quote_id=first.quote_id,
+            old_content_hash="a" * 64,
+            newer_article_id="art-new-1",
+            newer_content_hash="b" * 64,
+            newer_is_first_hand=True,
+            newer_rights_cleared=True,
+            superseding_span="Newer statement superseding old fact.",
+            decision_id="dec-obs-1",
+            rationale="Superseded by newer official statement.",
+        ),
+        confidence=0.95,
+        raised_at=datetime(2026, 11, 19, 12, 0, tzinfo=UTC),
+        state="confirmed",
+        reason_code="superseded",
+    )
+    session.execute.return_value.all.return_value = [(first.quote_id, quote_uuid)]
+    flags_n = persist_obsolescence_flags(session, [flag])
+    assert flags_n == 1
+    assert persist_obsolescence_flags(session, []) == 0
 
 
 def test_pipeline_run_lifecycle() -> None:

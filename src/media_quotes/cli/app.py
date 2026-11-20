@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -44,8 +45,13 @@ def _do_doctor(settings: Settings) -> int:  # pragma: no cover
         return result
     rows = _load_registry(settings)
     blocked = sum(1 for row in rows if row.source_id in _MANDATORY and not row.usable)
+    dagster_home = os.environ.get("DAGSTER_HOME", str(settings.audit_dir.parent / "dagster"))
     print(f"T0 gate: {blocked} mandatory source(s) blocked; fixture replay available")
-    print(f"Config: report_date={settings.report_date} window={settings.report_window_days}d")
+    print(
+        f"Config: report_date={settings.report_date} window={settings.report_window_days}d "
+        f"llm_provider={settings.llm_provider} persist_to_postgres={settings.persist_to_postgres} "
+        f"dagster_home={dagster_home}"
+    )
     print(f"Version manifest: {json.dumps(_version_manifest(settings), sort_keys=True)}")
     return EXIT_OK
 
@@ -73,6 +79,13 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("logs", help="correlated JSON logs for a run", **shared)
     eval_parser = subparsers.add_parser("eval", help="metrics on a synthetic gold set", **shared)
     eval_parser.add_argument("--gold-set", dest="gold_set", help="gold set version")
+    eval_parser.add_argument(
+        "--split",
+        dest="split",
+        choices=("all", "train", "dev", "test"),
+        default=None,
+        help="optional split filter (all, train, dev, test)",
+    )
     sources = subparsers.add_parser("sources", help="registry and T0 state at a glance", **shared)
     sources.add_argument("--tier", dest="tier", type=int, choices=(1, 2, 3, 4))
     sources.add_argument("--rights-status", dest="rights_status")
@@ -84,8 +97,9 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
     subparsers.add_parser("export", help="derived JSONL export", **shared)
     subparsers.add_parser("dashboard", help="Streamlit dashboard guidance", **shared)
+    subparsers.add_parser("dagster", help="Dagster asset/schedule guidance", **shared)
     review = subparsers.add_parser("review", help="obsolescence review queue", **shared)
-    review.add_argument("--action", choices=("list", "decide"), default="list")
+    review.add_argument("--action", choices=("list", "decide", "seed"), default="list")
     review.add_argument("--quote-id", dest="quote_id")
     review.add_argument("--verdict", choices=("confirmed", "rejected", "escalated"), dest="verdict")
     review.add_argument("--reason-code", dest="reason_code", default="human-review")
@@ -108,6 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _bootstrap,
         _do_audit,
         _do_backfill,
+        _do_dagster,
         _do_dashboard,
         _do_digest,
         _do_doctor,
@@ -141,6 +156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_OK
         if command == "dashboard":
             return _do_dashboard(settings)
+        if command == "dagster":
+            return _do_dagster(settings)
         if command == "review":
             return _do_review(
                 settings,
@@ -193,6 +210,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "eval":
             gold_set = getattr(args, "gold_set", None) or settings.gold_set_version
             report_date = _parse_report_date(getattr(args, "date", None), settings)
+            split = getattr(args, "split", None)
+            if split is not None:
+                return _do_eval(settings, gold_set=gold_set, report_date=report_date, split=split)
             return _do_eval(settings, gold_set=gold_set, report_date=report_date)
         if command == "export":
             report_date = _parse_report_date(getattr(args, "date", None), settings)

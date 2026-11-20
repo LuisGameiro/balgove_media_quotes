@@ -152,9 +152,9 @@ not a fix history: one line per item, with where it was implemented.
 | RSK-09 | Low-quality/JS-only extraction | Precision/recall + quality gate + rendering fallback; CHK-07 |
 | RSK-10 | Network/paywall gaps → silence | Retries, circuit breakers, coverage rows; CHK-05/CHK-07 |
 | RSK-12 | One-command run hides partial failure | Exit codes 0–3; CHK-02 |
-| RSK-07 | Obsolescence judgements error-prone | Policy layer in `risk_controls.py`; CHK-15 + held-out precision ≥ 0.90 ([10](10-risk-mitigation-plan.md) §1) — **planned** |
-| RSK-08 | LLM cost/latency on backfills | Policy layer in `risk_controls.py`; CHK-16 + budget gate ([10](10-risk-mitigation-plan.md) §2) — **planned** |
-| RSK-11 | Append-only growth / row locks | Policy layer in `risk_controls.py`; CHK-17 + partitioning/retention ([10](10-risk-mitigation-plan.md) §3) — **planned** |
+| RSK-07 | Obsolescence judgements error-prone | Policy layer + synthetic held-out eval pass (`obsolete_precision=1.0`, threshold 0.90); human-label and SLA evidence pending ([10](10-risk-mitigation-plan.md) §5) |
+| RSK-08 | LLM cost/latency on backfills | Budget-breach test exits `3`; three real ±20% backfill variance checks pending ([10](10-risk-mitigation-plan.md) §5) |
+| RSK-11 | Append-only growth / row locks | Offline retention plan and restore drill pass; live <60s load test pending ([10](10-risk-mitigation-plan.md) §5) |
 
 Neo4j planning is tracked in [09-neo4j-integration.md](09-neo4j-integration.md); CHK-14 there
 is a **proposed future check**, not an active CHK row. The three new CHK rows (15–17) are

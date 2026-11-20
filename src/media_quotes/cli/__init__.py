@@ -49,6 +49,7 @@ from .eval import _do_eval
 from .logs import _do_logs
 from .maintenance import _do_restore_drill, _do_retention, _do_review
 from .ops import _do_backfill, _do_dashboard, _do_digest, _do_export, _do_sources
+from .orchestration_info import _do_dagster
 from .run import _collect, _do_run, _process_source
 
 __all__ = [
@@ -72,6 +73,7 @@ __all__ = [
     "_collect",
     "_do_audit",
     "_do_backfill",
+    "_do_dagster",
     "_do_dashboard",
     "_do_digest",
     "_do_doctor",

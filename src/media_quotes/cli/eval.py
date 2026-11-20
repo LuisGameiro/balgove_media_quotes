@@ -11,28 +11,34 @@ from uuid import NAMESPACE_URL, uuid5
 from ..adapters import FixtureSource, build_adapter
 from ..config import Settings
 from ..evaluation import AcceptanceThresholds, evaluate_metrics
-from ..gold_set import load_gold_set, split_articles
+from ..gold_set import load_gold_set, split_articles, split_for
 from ..models import QuoteCandidate
 from ..text_utils import normalise_text
 from ..verification import verify_quote
 from .common import EXIT_FAILURE, EXIT_OK, _load_registry, _window, _write_json
 
 
-def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  # pragma: no cover
+def evaluate_gold_set_report(
+    settings: Settings,
+    *,
+    gold_set: str = "synthetic-v1",
+    report_date: date | None = None,
+    split: str | None = None,
+) -> dict[str, Any]:
+    """Run deterministic gold-set evaluation and write the JSON report (shared by CLI & Dagster)."""
+    effective_date = report_date or settings.report_date
+    selected_split = (split or "all").strip().lower()
+    if selected_split not in {"all", "train", "dev", "test"}:
+        raise ValueError(f"invalid split: {split!r}; expected one of all, train, dev, test")
+
     path = settings.gold_set_dir / f"{gold_set}.json"
     if not path.is_file():
-        print(f"unknown gold set: {gold_set} (looked in {settings.gold_set_dir})", file=sys.stderr)
-        return EXIT_FAILURE
-    try:
-        gold_data = load_gold_set(path)
-    except Exception as exc:
-        print(f"invalid gold set {gold_set}: {exc}", file=sys.stderr)
-        return EXIT_FAILURE
-
+        raise FileNotFoundError(f"unknown gold set: {gold_set} (looked in {settings.gold_set_dir})")
+    gold_data = load_gold_set(path)
     splits = split_articles(gold_data)
     rows = {row.source_id: row for row in _load_registry(settings)}
-    window_start, _ = _window(report_date, settings)
-    now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
+    window_start, _ = _window(effective_date, settings)
+    now = datetime.combine(effective_date, time(12, 0), tzinfo=UTC)
     labels = 0
     verified = 0
     spans_ok = 0
@@ -41,6 +47,11 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
     articles_ok = 0
     relevant_articles = 0
     for article in gold_data.articles:
+        if (
+            selected_split != "all"
+            and split_for(article.article_ref, gold_data.version) != selected_split
+        ):
+            continue
         if not article.relevant:
             continue
         relevant_articles += 1
@@ -87,7 +98,7 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
                 policy_flags,
                 metadata=metadata,
                 window_start=window_start,
-                window_end=report_date,
+                window_end=effective_date,
                 now=now,
             )
             if result.status == "verified":
@@ -120,7 +131,7 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
             negative_row,
             negative_flags,
             window_start=window_start,
-            window_end=report_date,
+            window_end=effective_date,
             now=now,
         )
         if result.status == "verified":
@@ -131,7 +142,8 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
 
     metrics: dict[str, Any] = {
         "gold_set_version": gold_set,
-        "report_date": report_date.isoformat(),
+        "report_date": effective_date.isoformat(),
+        "evaluated_split": selected_split,
         "splits": {k: len(v) for k, v in splits.items()},
         "article_recall": ratio(articles_ok, relevant_articles),
         "quote_recall": ratio(verified, labels),
@@ -155,10 +167,31 @@ def _do_eval(settings: Settings, *, gold_set: str, report_date: date) -> int:  #
             record_eval_run(
                 session,
                 gold_set_version=gold_set,
-                report_date=report_date,
+                report_date=effective_date,
                 metrics=metrics,
                 thresholds=metrics["thresholds"],
                 passed=bool(metrics["pass"]),
             )
+    return metrics
+
+
+def _do_eval(
+    settings: Settings,
+    *,
+    gold_set: str,
+    report_date: date,
+    split: str | None = None,
+) -> int:  # pragma: no cover
+    try:
+        metrics = evaluate_gold_set_report(
+            settings, gold_set=gold_set, report_date=report_date, split=split
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_FAILURE
+    except Exception as exc:
+        print(f"invalid gold set {gold_set}: {exc}", file=sys.stderr)
+        return EXIT_FAILURE
+
     print(json.dumps(metrics, ensure_ascii=False, sort_keys=True, indent=2))
     return EXIT_OK if metrics["pass"] else EXIT_FAILURE

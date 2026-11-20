@@ -25,7 +25,8 @@ def test_blocked_source_cannot_discover() -> None:
 
 
 def test_web_discovery_is_never_permitted() -> None:
-    adapter = SourceAdapter(ROWS["ap"])
+    web_row = ROWS["ap"].model_copy(update={"discovery_method": "web"})
+    adapter = SourceAdapter(web_row)
     with pytest.raises(SourceNotPermitted):
         adapter.fetch("https://example.invalid/article")
 

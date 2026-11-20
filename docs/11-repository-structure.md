@@ -51,16 +51,18 @@ src/media_quotes/
 ├── llm.py                            # LLM provider boundary scaffold
 ├── models.py                         # strict Pydantic boundary models
 ├── observability.py                  # structlog JSON logging, redaction, optional OTLP
+├── pipeline.py                       # public daily pipeline service shared by CLI and Dagster
 ├── py.typed                          # PEP 561 marker for downstream type checking
 ├── registry.py                       # sources.csv -> SourceRegistryRow and T0 policy
 ├── risk_controls.py                  # RSK-07/08/11 policy: review queue, budget gate, retention, cache key
 ├── text_utils.py                     # Unicode folding and exact-span helpers
-├── validation.py                     # data-asset validation service
+├── validation/                       # data-asset validation package with flat re-exports
 ├── verification.py                   # two-stage quote verification logic
 └── db/
     ├── __init__.py                   # database subpackage marker
     ├── engine.py                     # SQLAlchemy engine and session factory
     ├── repository.py                 # registry upsert/query operations
+    ├── resources.py                  # Dagster-friendly session-context resource handle
     ├── schema.sql                    # SQL DDL source consumed by Alembic bootstrap
     └── tables.py                     # SQLAlchemy Core tables used by repository code
 ```
@@ -174,7 +176,10 @@ migrations/
 
 scripts/
 ├── docs_qa.py                        # documentation QA checker (CHK-08)
-└── validate_data.py                  # thin wrapper around media_quotes.validation
+├── validate_data.py                  # thin wrapper around media_quotes.validation
+├── check.ps1                         # Windows equivalent of `make check`
+├── manual_validate.ps1               # manual collect/audit without Dagster
+└── run_dagster.ps1                   # starts the Dagster development UI
 ```
 
 `scripts/` contains repository/CI tools only. It must not become a second application package. Any reusable logic discovered in a script should move into `src/media_quotes/` and the script reduced to a thin wrapper.

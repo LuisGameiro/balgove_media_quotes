@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 from media_quotes.enums import SECTION_IDS
 from media_quotes.gold_set import split_for
@@ -205,7 +206,7 @@ RUSSIAN_QUOTES = [
 
 def main() -> None:
     print("Generating synthetic fixtures and gold set...")
-    articles = []
+    articles: list[dict[str, Any]] = []
     source_names = list(SOURCES_INFO.keys())
 
     for i in range(70):
@@ -218,7 +219,7 @@ def main() -> None:
         s1 = SECTIONS[i % len(SECTIONS)]
         s2 = SECTIONS[(i + 2) % len(SECTIONS)]
 
-        quotes_data = []
+        quotes_data: list[tuple[str, str, str, str]] = []
         if source_id == "ukrainskapravda":
             q_raw, speaker, q_en = UKRAINIAN_QUOTES[i % len(UKRAINIAN_QUOTES)]
             quotes_data.append((q_raw, speaker, s1, q_en))
@@ -233,12 +234,12 @@ def main() -> None:
                 quotes_data.append((t2[0], t2[1], s2, ""))
 
         text_parts = [f"Synthetic report for {source_meta['pub_name']}. Date: {pub_date}."]
-        quote_spans = []
+        quote_spans: list[dict[str, Any]] = []
 
         for q_text, speaker, sec, q_en in quotes_data:
             sentence = f"“{q_text}” said {speaker}."
             text_parts.append(sentence)
-            span_item = {
+            span_item: dict[str, Any] = {
                 "quote_text": q_text,
                 "char_start": 0,
                 "char_end": 0,
@@ -253,9 +254,10 @@ def main() -> None:
 
         full_text = " ".join(text_parts)
         for span in quote_spans:
-            pos = full_text.find(span["quote_text"])
+            q_str = str(span["quote_text"])
+            pos = full_text.find(q_str)
             span["char_start"] = pos
-            span["char_end"] = pos + len(span["quote_text"])
+            span["char_end"] = pos + len(q_str)
 
         fixture_payload = {
             "fixture": True,
@@ -376,12 +378,12 @@ def main() -> None:
 
     splits_count = {"train": 0, "dev": 0, "test": 0}
     for art in articles:
-        s = split_for(art["article_ref"], "synthetic-v1")
+        s = split_for(str(art["article_ref"]), "synthetic-v1")
         splits_count[s] += 1
 
     print(f"Total articles: {len(articles)}")
     print(f"Splits distribution: {splits_count}")
-    total_quotes = sum(len(a["quotes"]) for a in articles)
+    total_quotes = sum(len(list(a["quotes"])) for a in articles)
     print(f"Total quotes: {total_quotes}")
     print(f"Total negative candidates: {len(negatives)}")
 

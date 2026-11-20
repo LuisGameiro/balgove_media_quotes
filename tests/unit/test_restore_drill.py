@@ -1,9 +1,14 @@
-"""F2 — restore integrity and retention readiness (offline)."""
+"""F2 — restore integrity, retention readiness, review queue seed/list/decide, and split eval."""
 
 from __future__ import annotations
 
+import json
 from datetime import date
+from pathlib import Path
 
+from media_quotes.cli.eval import evaluate_gold_set_report
+from media_quotes.cli.maintenance import _do_review
+from media_quotes.cli.run import _load_review_flags
 from media_quotes.config import Settings
 from media_quotes.restore_drill import retention_readiness, verify_export_integrity
 from media_quotes.risk_controls.retention import RetentionPolicy
@@ -36,3 +41,62 @@ def test_retention_readiness() -> None:
     assert report["blob_cutoff"] == "2026-05-24"
     assert any(name.endswith("2026_10") for name in report["partitions_to_detach"])
     assert any(name.endswith("2026_11") for name in report["partitions_hot"])
+
+
+def test_review_seed_list_and_decide_round_trip(tmp_path: Path, capsys) -> None:
+    settings = Settings(_env_file=None, audit_dir=tmp_path / "audit")
+
+    # 1. Seed a sample pending flag
+    assert _do_review(settings, action="seed", quote_id="Q-20261119-0001") == 0
+    assert "review flag seeded: Q-20261119-0001 -> pending" in capsys.readouterr().out
+
+    # Calling seed again is idempotent
+    assert _do_review(settings, action="seed", quote_id="Q-20261119-0001") == 0
+    assert "review flag already exists" in capsys.readouterr().out
+
+    # 2. _load_review_flags parses the JSON ISO timestamps without dropping the flag
+    loaded = _load_review_flags(settings)
+    assert len(loaded) == 1
+    assert loaded[0].evidence.old_quote_id == "Q-20261119-0001"
+    assert loaded[0].state == "pending"
+
+    # 3. List pending flags via CLI handler
+    assert _do_review(settings, action="list") == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert len(listed) == 1
+    assert listed[0]["evidence"]["old_quote_id"] == "Q-20261119-0001"
+
+    # 4. Decide the flag
+    assert (
+        _do_review(
+            settings,
+            action="decide",
+            quote_id="Q-20261119-0001",
+            verdict="confirmed",
+            reason_code="superseded",
+        )
+        == 0
+    )
+    assert "review recorded: Q-20261119-0001 -> confirmed" in capsys.readouterr().out
+
+    # 5. Now pending list is empty
+    assert _do_review(settings, action="list") == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_evaluate_gold_set_report_with_split_filter(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        audit_dir=tmp_path / "audit",
+        persist_to_postgres=False,
+    )
+    for split_name in ("all", "train", "dev", "test"):
+        metrics = evaluate_gold_set_report(
+            settings,
+            gold_set="synthetic-v1",
+            report_date=date(2026, 11, 19),
+            split=split_name,
+        )
+        assert metrics["evaluated_split"] == split_name
+        assert metrics["pass"] is True
+        assert metrics["false_quote_rate"] == 0.0

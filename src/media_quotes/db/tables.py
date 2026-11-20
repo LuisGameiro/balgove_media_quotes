@@ -1,10 +1,21 @@
-"""Minimal SQLAlchemy Core table definitions used by bootstrap loaders.
+"""Minimal SQLAlchemy Core table definitions used by bootstrap loaders and repository writes.
 
-The authoritative DDL lives in db/schema.sql; these definitions exist only so SQLAlchemy
-can build INSERT statements for the registry.
+The authoritative DDL lives in db/schema.sql; these definitions exist so SQLAlchemy
+can build type-safe INSERT/UPDATE/SELECT statements across all PostgreSQL tables.
 """
 
-from sqlalchemy import JSON, Boolean, Column, Date, Integer, MetaData, String, Table, Uuid
+from sqlalchemy import (
+    ARRAY,
+    JSON,
+    Boolean,
+    Column,
+    Date,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Uuid,
+)
 
 metadata = MetaData()
 
@@ -41,9 +52,13 @@ articles_table = Table(
     Column("title", String, nullable=True),
     Column("publication_date", Date, nullable=True),
     Column("language", String, nullable=True),
+    Column("raw_blob_ref", String, nullable=True),
+    Column("extracted_text", String, nullable=True),
+    Column("extraction_method", String, nullable=True),
+    Column("extractor_version", String, nullable=True),
     Column("content_hash", String, nullable=False),
     Column("status", String, nullable=False),
-    Column("extractor_version", String, nullable=True),
+    Column("article_metadata", JSON, nullable=False, default=dict),
 )
 
 quotes_table = Table(
@@ -64,6 +79,39 @@ quotes_table = Table(
     Column("verification_status", String, nullable=False),
     Column("verification_details", JSON, nullable=False, default=dict),
     Column("quote_metadata", JSON, nullable=False, default=dict),
+)
+
+quote_classifications_table = Table(
+    "quote_classifications",
+    metadata,
+    Column("classification_id", Uuid(as_uuid=True), primary_key=True),
+    Column("quote_id", Uuid(as_uuid=True), nullable=False),
+    Column("section", String, nullable=False),
+    Column("rationale", String, nullable=True),
+    Column("decision_id", Uuid(as_uuid=True), nullable=True),
+    Column("assigned_by", String, nullable=False, default="rule"),
+)
+
+obsolescence_flags_table = Table(
+    "obsolescence_flags",
+    metadata,
+    Column("flag_id", Uuid(as_uuid=True), primary_key=True),
+    Column("quote_id", Uuid(as_uuid=True), nullable=False),
+    Column("is_obsolete", Boolean, nullable=False),
+    Column("reason", String, nullable=True),
+    Column("superseded_by", ARRAY(Uuid(as_uuid=True)), nullable=False, default=list),
+    Column("decision_id", Uuid(as_uuid=True), nullable=True),
+)
+
+digests_table = Table(
+    "digests",
+    metadata,
+    Column("digest_id", Uuid(as_uuid=True), primary_key=True),
+    Column("digest_date", Date, nullable=False),
+    Column("window_start", Date, nullable=False),
+    Column("window_end", Date, nullable=False),
+    Column("md_path", String, nullable=False),
+    Column("manifest", JSON, nullable=False, default=dict),
 )
 
 eval_runs_table = Table(

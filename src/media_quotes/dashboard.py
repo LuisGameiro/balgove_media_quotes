@@ -9,11 +9,25 @@ from __future__ import annotations
 import csv
 import json
 import re
+import sys
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .config import Settings, get_settings
+if TYPE_CHECKING:
+    from .config import Settings
+
+# Streamlit executes this file directly, leaving __package__ empty, so resolve the
+# config module both as a package import and as a standalone script.
+if __package__:
+    config_module = import_module(".config", __package__)
+else:
+    src_dir = str(Path(__file__).resolve().parents[1])
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    config_module = import_module("media_quotes.config")
+
+get_settings: Any = config_module.get_settings
 
 # Guarded optional import: importing this module must work without the dashboard extra.
 st: Any

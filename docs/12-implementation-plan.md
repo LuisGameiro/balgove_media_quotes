@@ -52,7 +52,9 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 fallback hook, `find_span()` for exact offsets), `verification_stages.py` (Stage 1 pre-LLM
 junk/word-limit/duplicate filter + Stage 2 existing `verify_quote`, publishable-only output),
 repository run/audit/quote persistence and `orchestration.py` (Dagster daily partitions, code
-version) are implemented with offline tests. `mq run` persists run, article, quote and audit
+version) are implemented with offline tests. Phase 5 added the public `pipeline.py` service,
+Dagster resources/config (`settings`, `database`, `DailyPipelineConfig`), three asset checks,
+UTC schedule metadata, in-process materialization tests and CLI/Dagster service parity. `mq run` persists run, article, quote and audit
 rows when `PERSIST_TO_POSTGRES=true` (Settings has no env prefix); otherwise it stays
 file-based. No source is
 activated; every run emits explicit mandatory-source coverage gaps. Persisted quote rows are

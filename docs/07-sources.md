@@ -53,8 +53,12 @@ it is* and *what enabling it requires*. It does not change the registry or the s
 
 ## Tier 2 — additional authoritative outlets (daily)
 
-All currently `pending_counsel_review` / `pending_review`, disabled, `archive_start_date`
-2026-10-01. Enabling each requires the T0 gate plus a stable, backfillable archive.
+All Tier 2 rows are now operator-attested as written-rights approved on 2026-11-20. The registry
+uses the tier-level token `TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20`; the owner withheld
+source-specific contract references from chat and the repository. The T0 gate is therefore
+approved, but **no live adapter exists yet**, so runs report `no_coverage` for these outlets
+until licensed retrieval is implemented. `archive_start_date` remains 2026-10-01; each source
+still needs a stable, backfillable archive before production use.
 
 | Source | Notes |
 |---|---|

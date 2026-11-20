@@ -160,3 +160,15 @@ DEC-17/18/19 and RSK-07/08/11 are indexed in [08](08-traceability.md) §8 with p
 tests passing in T1, leaving only the licence and operational residuals (RSK-01/02/13/14/15/16) in
 the active register in [04](04-risks-and-open-questions.md). Full runtime closure is gated on
 CHK-15/16/17 in T5–T10.
+
+## 5. Phase 7 evidence status (2026-11-20)
+
+| Risk | Evidence collected | Closure status |
+|---|---|---|
+| RSK-07 | `mq eval --gold-set synthetic-v1` passes with train=44, dev=15, test=11; `obsolete_precision=1.0`, `span_exact_match=1.0`, `false_quote_rate=0.0`; audit shows zero rejected quotes in the fixture run | Offline evidence only. Held-out **human** labels and a met review SLA are still required. |
+| RSK-08 | `mq backfill --from 2026-10-01 --to 2026-10-05 --max-cost 0.01` estimated cost 23.0 and exited `3` as required | Budget breach control passes. Three real backfills within ±20% of estimate are still required. |
+| RSK-11 | `mq retention --dry-run` reports audit rows preserved, cutoffs 2026-05-24/2026-08-22, and `longest_txn_ok=true`; `mq restore-drill --date 2026-11-19 --reference var/export/reference-2026-11-19.jsonl` passes for 22 quoted records | Offline plan and deterministic restore pass. A live load test with transactions under 60s and cold-partition/tombstone checks are still required. |
+
+These results close only the deterministic/offline portion of CHK-15, CHK-16 and CHK-17. RSK-07,
+RSK-08 and RSK-11 remain accepted until the production evidence in the rows above is recorded
+in [08](08-traceability.md) §8.

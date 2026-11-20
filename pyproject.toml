@@ -55,7 +55,11 @@ media_quotes = ["py.typed", "db/*.sql"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore:datetime\\.utcnow\\(\\) is deprecated:DeprecationWarning",
+    "ignore:datetime\\.datetime\\.utcfromtimestamp\\(\\) is deprecated:DeprecationWarning",
+]
 markers = [
     "integration: needs a real service (Postgres/feed); opt-in via -m",
     "network: may touch the network; unit tests replay VCR cassettes instead",
@@ -89,6 +93,7 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = ["jsonschema", "trafilatura", "openai"]
 ignore_missing_imports = true
+
 
 [tool.coverage.run]
 branch = true

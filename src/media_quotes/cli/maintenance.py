@@ -11,7 +11,7 @@ from ..config import Settings
 from ..exceptions import ConfigError
 from ..export import local_store_path, read_jsonl
 from ..restore_drill import retention_readiness, verify_export_integrity
-from ..risk_controls.models import ObsolescenceFlag
+from ..risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
 from ..risk_controls.obsolescence import ReviewQueue
 from ..risk_controls.retention import RetentionPolicy
 from .common import EXIT_FAILURE, EXIT_OK, _read_json, _write_json
@@ -29,7 +29,7 @@ def _load_queue(settings: Settings) -> dict[str, Any]:
 
 
 def _flag_from_dict(data: dict[str, Any]) -> ObsolescenceFlag:
-    return ObsolescenceFlag.model_validate(data)
+    return ObsolescenceFlag.model_validate_json(json.dumps(data))
 
 
 def _do_review(
@@ -41,10 +41,10 @@ def _do_review(
     reviewer: str = "Balgove Innovations",
     reason_code: str = "human-review",
 ) -> int:
-    """List pending obsolete flags or decide one using ReviewQueue (fail-closed)."""
+    """List, seed, or decide pending obsolete flags using ReviewQueue (fail-closed)."""
     payload = _load_queue(settings)
     flags_data = cast(list[dict[str, Any]], payload.get("flags", []))
-    flags = [_flag_from_dict(item) for item in flags_data]
+    flags = [_flag_from_dict(item) for item in flags_data if isinstance(item, dict)]
     queue = ReviewQueue(flags)
 
     if action == "list":
@@ -55,6 +55,34 @@ def _do_review(
         ]
         print(json.dumps(pending, ensure_ascii=False, sort_keys=True, indent=2))
         return EXIT_OK
+
+    if action == "seed":
+        target_id = quote_id or "Q-20261119-0001"
+        if any(flag.evidence.old_quote_id == target_id for flag in flags):
+            print(f"review flag already exists: {target_id}")
+            return EXIT_OK
+        sample_flag = ObsolescenceFlag(
+            evidence=ObsolescenceEvidence(
+                old_quote_id=target_id,
+                old_content_hash="a" * 64,
+                newer_article_id="art-2026-11-19-02",
+                newer_content_hash="b" * 64,
+                newer_is_first_hand=True,
+                newer_rights_cleared=True,
+                superseding_span="Negotiations have been paused pending security verification.",
+                decision_id="dec-seed-001",
+                rationale="Newer official statement supersedes earlier negotiation position.",
+            ),
+            confidence=0.95,
+            raised_at=datetime.now(UTC),
+            state="pending",
+        )
+        flags.append(sample_flag)
+        payload["flags"] = [flag.model_dump(mode="json") for flag in flags]
+        _write_json(_queue_path(settings), payload)
+        print(f"review flag seeded: {target_id} -> pending")
+        return EXIT_OK
+
     if action != "decide":
         raise ConfigError(f"unknown review action: {action}")
     if not quote_id:

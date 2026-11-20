@@ -17,10 +17,10 @@ plan is in [`docs/12`](docs/12-implementation-plan.md).
 |---|---|---|
 | Postgres schema + T0 gate | `src/media_quotes/db/schema.sql`, config, strict models | Full append-only tables, coverage contract, decision cache |
 | Bootstrap | `python -m media_quotes.bootstrap` (Alembic `upgrade head` + source sync) | Live Dagster pipeline scheduling |
-| CLI | All 12 `mq` subcommands implemented in offline fixture-replay mode | Live Dagster/Postgres/LLM orchestration |
+| CLI | All 17 `mq` subcommands implemented in offline fixture-replay mode | Live Dagster/Postgres/LLM orchestration |
 | Export | `src/media_quotes/export.py` with strict `ExportQuoteRecord` validation | Context packs from live Postgres (`mq export`) |
 | Logs / traces | JSON logging, structlog secret redaction, optional OTLP tracing (`observability.py`) | Distributed tracing with live collectors |
-| Tests | 209 pytest tests, risk-control policy tests, >90% coverage | VCR.py live recordings, Dagster asset checks |
+| Tests | 240+ pytest tests, risk-control policy tests, >90% coverage | VCR.py live recordings, Dagster asset checks |
 | Quality tooling | Alembic migrations, committed `uv.lock`, `Makefile` (`make check`), GitHub Actions CI, ruff/mypy/pytest, `mq doctor` | Continuous asset contracts |
 
 Reuters and BBC **stay mandatory** (DEC-01) but ingestion is operationally blocked until
@@ -56,17 +56,18 @@ src/media_quotes/
   batch.py           # Provider batch API planning for backfills
   rights_guard.py    # DEC-10 word limits and attribution policy guard
   restore_drill.py   # Export integrity verification and retention readiness
-  orchestration.py   # Dagster daily-partitioned orchestration asset
+  pipeline.py        # shared daily collection/audit service used by CLI and Dagster
+  orchestration.py   # Dagster assets, jobs, 7 checks, resources, schedule and SLA sensor
   __main__.py        # python -m media_quotes
   bootstrap.py       # Alembic upgrade head + source registry sync
   cli/               # mq command-line interface package (all subcommands)
   risk_controls/     # RSK-07/08/11 policy package: review queue, budget gate, retention, cache
   validation/        # Data-asset validation package: sources, sections, quotes
   db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
-docs/                # Requirements, architecture, tasks, decisions, rationale, repo tree (11), start plan (12)
+docs/                # Requirements, architecture, tasks, decisions, rationale, repo tree (11), start plan (12), command reference (14)
 data/                # Registry, frozen schema, derived JSONL export, templates (no Python)
 tests/               # pytest suite incl. test_docs_qa.py; VCR.py/syrupy planned for full stack
-scripts/             # docs_qa.py (CHK-08), validate_data.py (registry/data checks)
+scripts/             # docs_qa.py (CHK-08), validate_data.py, check.ps1, run_dagster.ps1, run_dashboard.ps1, manual_validate.ps1
 alembic.ini          # Alembic config; database URL comes from Settings, not this file
 migrations/          # Alembic env.py, script.py.mako and versions/
   versions/0001_initial.py        # initial schema
@@ -134,9 +135,10 @@ coverage, Alembic, secrets redaction) are specified in
 ## Command interface (offline fixture-replay CLI implemented today; full live pipeline in T9)
 
 The implemented entry point is `mq` (`python -m media_quotes` / `python -m media_quotes.cli`).
-All 12 subcommands in the table below function today in deterministic offline fixture-replay mode,
-satisfying audit, evaluation and digest workflows without network access. T9 completes the live
-Dagster asset scheduling, external LLM provider calls, and production database connections.
+All implemented subcommands in the table below function today in deterministic offline
+fixture-replay mode, satisfying audit, evaluation and digest workflows without network access.
+T9 completes the live Dagster asset scheduling, external LLM provider calls, and production
+database connections. Full command examples live in [`docs/14`](docs/14-command-reference.md).
 
 | Command | Purpose |
 |---|---|
@@ -145,9 +147,11 @@ Dagster asset scheduling, external LLM provider calls, and production database c
 | `mq run --date YYYY-MM-DD` | Full pipeline **plus** audit report and log summary in one command |
 | `mq audit [--date …] [--run-id …]` | T0/coverage/schema/false-quote/exact-match/first-hand checks → JSON + MD in `var/audit/` |
 | `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id` |
-| `mq eval --gold-set <version>` | Deterministic metrics + κ-calibrated judge |
+| `mq eval --gold-set <version> [--split …]` | Deterministic metrics + κ-calibrated judge (optional `all|train|dev|test` filter) |
 | `mq sources`, `mq version` | Registry + rights status at a glance; version manifest |
 | `mq backfill`, `mq digest`, `mq export`, `mq dashboard` | Backfill, regenerate MD, derived JSONL, Streamlit UI |
+| `mq dagster` | Show Dagster asset, partition, schedule and persistence guidance |
+| `mq review`, `mq retention`, `mq restore-drill` | Review queue (`list|seed|decide`), retention plan, derived-export integrity |
 
 Shared flags: `--offline` (VCR replay), `--dry-run`, `--date`, `--run-id`/`--trace-id`,
 `--out`, `--verbose`. Exit codes: `0` pass · `1` validation/threshold failure · `2` partial
@@ -163,6 +167,29 @@ quality workflow; the live orchestration contract is specified in
 function with `powershell -ExecutionPolicy Bypass -File scripts/install_check_profile.ps1`
 (adds it to both Windows PowerShell and PowerShell 7 profiles) and then just run `check` from
 the project root (or `check C:\path\to\balgoveinnovations` from anywhere).
+
+**Manual quote validation without Dagster:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/manual_validate.ps1 -Date 2026-11-19
+```
+
+This runs the same `_collect` pipeline as the Dagster asset and prints the audit result.
+Use `-DryRun` for planning only or `-Persist` to write Postgres rows.
+
+## Streamlit Community Cloud deployment
+
+The app is a Streamlit dashboard at `src/media_quotes/dashboard.py`. Streamlit Community Cloud
+requires the code to live in a published GitHub repository. The local repository currently has no
+remote configured, so deployment requires:
+
+1. Create a GitHub repository and add it as the `origin` remote.
+2. Commit and push the current `main` branch.
+3. In Streamlit Cloud, choose that repository, branch `main`, and main file path
+   `src/media_quotes/dashboard.py`.
+4. Use the root `requirements.txt`, which installs the project with the `dashboard` extra.
+
+The dashboard reads local replay artifacts and does not require a database or API key.
 
 ## Dates
 
