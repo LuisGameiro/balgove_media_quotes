@@ -143,7 +143,12 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--to", dest="to_date", help="period end YYYY-MM-DD")
     backfill.add_argument("--max-cost", dest="max_cost", type=float)
     subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
-    subparsers.add_parser("export", help="derived JSONL export", **shared)
+    export_parser = subparsers.add_parser("export", help="derived JSONL export", **shared)
+    export_parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="build the export from Postgres instead of local files",
+    )
     subparsers.add_parser("dashboard", help="Streamlit dashboard guidance", **shared)
     subparsers.add_parser("dagster", help="Dagster asset/schedule guidance", **shared)
     review = subparsers.add_parser("review", help="obsolescence review queue", **shared)
@@ -336,8 +341,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     report_date=report_date,
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
+                    from_db=bool(getattr(args, "from_db", False)),
                 )
-            return _do_export(settings, report_date=report_date, out=getattr(args, "out", None))
+            return _do_export(
+                settings,
+                report_date=report_date,
+                out=getattr(args, "out", None),
+                from_db=bool(getattr(args, "from_db", False)),
+            )
         if command == "backfill":
             start = (
                 _parse_report_date(args.from_date, settings)

@@ -84,6 +84,7 @@ src/media_quotes/
 ├── language.py                       # offline quote-language detection
 ├── live.py                           # shared live feed/article fetch loop
 ├── llm.py / llm_live.py / llm_openrouter.py   # provider protocol and pinned boundaries
+├── llm_cache.py                      # Postgres-backed decision cache hooks
 ├── models.py                         # strict Pydantic boundary models
 ├── observability.py                  # structlog JSON logging, redaction, optional OTLP
 ├── orchestration.py                  # Dagster assets, 6 checks, jobs, schedule, sensor
@@ -200,9 +201,9 @@ migrations/
     ├── 0005_topic_packs.py           # topic_id on quotes, digests and runs
     └── 0006_digest_topic_unique.py   # one digest per topic and date
 
-`decision_cache` and `storage_partitions` (migration 0003) plus `batch.py` are contract stubs:
-no CLI, provider or asset reads or writes them in a real run. They are kept for the planned live
-cache/batch/backfill work, not as active features.
+`decision_cache` is now used by `llm_cache.DbDecisionCache` for the pinned LLM boundary when
+`PERSIST_TO_POSTGRES=true`. `storage_partitions` (migration 0003) and `batch.py` remain contract
+stubs with no production caller, kept for the planned partitioning and Batch API work.
 
 scripts/
 ├── docs_qa.py                        # documentation QA checker (CHK-08)

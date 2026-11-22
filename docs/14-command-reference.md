@@ -44,7 +44,7 @@ The CLI entrypoint is `.\.venv\Scripts\python.exe -m media_quotes` (or `python -
 | `run --dry-run` | Plan collection and inspect T0 coverage gaps without writing files or DB rows | `python -m media_quotes run --dry-run --date 2026-11-19` |
 | `audit` | Generate deterministic audit report (`var/audit/audit-YYYY-MM-DD.{json,md}`); `--topic` selects a non-default topic pack | `python -m media_quotes audit --date 2026-11-19 --topic ai-policy` |
 | `digest` | Regenerate Markdown digest (`digests/YYYY-MM-DD.md`) from verified local store | `python -m media_quotes digest --date 2026-11-19` |
-| `export` | Write schema-validated derived JSONL export (`var/export/quotes.jsonl` or `--out`) | `python -m media_quotes export --date 2026-11-19 --out var/export/latest.jsonl` |
+| `export` | Write schema-validated derived JSONL export from local files, or add `--from-db` to rebuild it from Postgres | `python -m media_quotes export --date 2026-11-19 --from-db --out var/export/latest.jsonl` |
 | `logs` | Filter and print structured JSON logs correlated by `--run-id` and optional `--trace-id` | `python -m media_quotes logs --run-id run-3300d30f1c8e` |
 | `eval` | Evaluate versioned gold set against precision/recall/false-quote contracts (`--split` optional) | `python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` |
 | `sources` | Inspect source registry, T0 gate status, and per-source quote counts (`--tier`, `--rights-status`) | `python -m media_quotes sources --tier 1` |

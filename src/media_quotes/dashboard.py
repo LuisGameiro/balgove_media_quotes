@@ -118,6 +118,32 @@ def registered_sources(sources_csv: Path) -> list[dict[str, str]]:  # pragma: no
         return [dict(row) for row in csv.DictReader(handle)]
 
 
+def database_summary(settings: Settings) -> dict[str, int]:  # pragma: no cover
+    """Read-only row counts from Postgres; empty when the DB is off or unreachable."""
+    from sqlalchemy import text
+
+    from .db.engine import create_db_engine
+
+    engine = create_db_engine(settings)
+    try:
+        counts_sql = {
+            "sources": text("SELECT count(*) FROM sources"),
+            "articles": text("SELECT count(*) FROM articles"),
+            "quotes": text("SELECT count(*) FROM quotes"),
+            "pipeline_runs": text("SELECT count(*) FROM pipeline_runs"),
+            "audit_events": text("SELECT count(*) FROM audit_events"),
+        }
+        with engine.connect() as connection:
+            return {
+                name: int(connection.execute(statement).scalar_one())
+                for name, statement in counts_sql.items()
+            }
+    except Exception:
+        return {}
+    finally:
+        engine.dispose()
+
+
 def main(settings: Settings | None = None) -> None:  # pragma: no cover
     """Launch the Streamlit app when installed; otherwise print deterministic guidance."""
     if st is None:
@@ -169,6 +195,13 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     st.subheader("Database schema summary")
     schema_sql = Path(__file__).resolve().parent / "db" / "schema.sql"
     st.write(schema_summary(schema_sql))
+    if cfg.persist_to_postgres:
+        counts = database_summary(cfg)
+        if counts:
+            st.subheader("Database row counts (read-only)")
+            st.dataframe([{"table": name, "rows": rows} for name, rows in counts.items()])
+        else:
+            st.write("Postgres is enabled but unreachable.")
 
 
 __all__ = [

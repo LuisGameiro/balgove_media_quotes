@@ -170,6 +170,9 @@ class OpenRouterJudgeProvider:
             raise ConfigError("AI_JUDGE_MODEL_SNAPSHOT must be pinned for the judge")
         self._settings = settings
         self._mode = mode
+        from .llm_cache import DbDecisionCache
+
+        self._cache_hooks = DbDecisionCache(settings) if settings.persist_to_postgres else None
         self._model_snapshot = model_snapshot
         self._actor = f"openrouter:{model_snapshot}@{settings.judge_prompt_version}"
         self._pinned: PinnedOpenAIClient | None = None
@@ -182,6 +185,7 @@ class OpenRouterJudgeProvider:
             model_snapshot=self._model_snapshot,
             prompt_version=self._settings.judge_prompt_version,
             schema_hash_value=_hash({"judge-schema": self._settings.judge_prompt_version}),
+            cache_hooks=self._cache_hooks,
             api_style="chat",
         )
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,6 +84,7 @@ class PinnedOpenAIClient:
         schema_hash_value: str,
         cache_lookup: Callable[[str], LLMDecision | None] | None = None,
         cache_write: Callable[[str, LLMDecision], None] | None = None,
+        cache_hooks: Any | None = None,
         api_style: str = "responses",
     ) -> None:
         if api_style not in {"responses", "chat"}:
@@ -97,12 +98,17 @@ class PinnedOpenAIClient:
         self.schema_hash = schema_hash_value
         self.cache_lookup = cache_lookup
         self.cache_write = cache_write
+        self.cache_hooks = cache_hooks
 
     def respond(self, request: LLMRequest) -> LLMDecision:
         """Cache → provider → audit-ready decision; fail closed on refusal/incomplete."""
         if request.model_snapshot != self.model_snapshot:
             raise ConfigError("request model snapshot does not match pinned client")
-        if self.cache_lookup is not None:
+        if self.cache_hooks is not None:
+            cached = cast("LLMDecision | None", self.cache_hooks.lookup(request))
+            if cached is not None:
+                return cached.model_copy(update={"cached": True})
+        elif self.cache_lookup is not None:
             cached = self.cache_lookup(request.cache_key)
             if cached is not None:
                 return cached.model_copy(update={"cached": True})
@@ -152,6 +158,8 @@ class PinnedOpenAIClient:
             incomplete=incomplete,
             provider_response_id=str(getattr(response, "id", "") or ""),
         )
-        if self.cache_write is not None and not refusal and not incomplete:
+        if self.cache_hooks is not None:
+            self.cache_hooks.write(request, decision)
+        elif self.cache_write is not None and not refusal and not incomplete:
             self.cache_write(request.cache_key, decision)
         return decision

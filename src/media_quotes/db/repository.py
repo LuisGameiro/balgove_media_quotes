@@ -574,6 +574,131 @@ def get_decision_cache(session: Session, cache_key: str) -> dict[str, Any] | Non
     return dict(row) if row else None
 
 
+def read_export_records(
+    session: Session,
+    *,
+    report_date: date,
+    window_days: int,
+    topic_id: str | None = None,
+) -> list[Any]:
+    """Rebuild strict export records from persisted quotes for one report window."""
+    from datetime import timedelta
+
+    from ..models import ExportQuoteRecord, VerificationRecord
+
+    window_start = report_date - timedelta(days=window_days - 1)
+    active_topic = topic_id or DEFAULT_TOPIC_ID
+    statement = (
+        select(
+            quotes_table.c.canonical_quote_id.label("q_id"),
+            quotes_table.c.quote_text_raw.label("q_text"),
+            quotes_table.c.quote_text_en.label("q_text_en"),
+            quotes_table.c.quote_metadata.label("q_meta"),
+            quotes_table.c.verification_details.label("q_details"),
+            quotes_table.c.extraction_method.label("q_method"),
+            quotes_table.c.topic_id.label("q_topic"),
+            quotes_table.c.topic_status.label("q_topic_status"),
+            quotes_table.c.topic_rule_version.label("q_rule_version"),
+            quotes_table.c.topic_score.label("q_score"),
+            quotes_table.c.matched_terms.label("q_terms"),
+            quotes_table.c.quote_language.label("q_language"),
+            quotes_table.c.language_confidence.label("q_lang_conf"),
+            quotes_table.c.translation_model_snapshot.label("q_t_model"),
+            quotes_table.c.translation_prompt_version.label("q_t_prompt"),
+            quotes_table.c.translation_hash.label("q_t_hash"),
+            quotes_table.c.translation_status.label("q_t_status"),
+            articles_table.c.canonical_url.label("a_url"),
+            articles_table.c.title.label("a_title"),
+            articles_table.c.language.label("a_language"),
+            articles_table.c.publication_date.label("a_date"),
+            articles_table.c.article_metadata.label("a_meta"),
+            articles_table.c.content_hash.label("a_hash"),
+            sources_table.c.source_id.label("s_id"),
+            sources_table.c.source_name.label("s_name"),
+            sources_table.c.tier.label("s_tier"),
+            sources_table.c.country_region.label("s_region"),
+            sources_table.c.source_type.label("s_type"),
+            sources_table.c.rights_status.label("s_rights"),
+            sources_table.c.access_mode.label("s_access"),
+            sources_table.c.license_reference.label("s_license"),
+            sources_table.c.discovery_method.label("s_discovery"),
+            sources_table.c.claim_only.label("s_claim"),
+            sources_table.c.language.label("s_language"),
+        )
+        .select_from(
+            quotes_table.join(
+                articles_table, quotes_table.c.article_id == articles_table.c.article_id
+            ).join(sources_table, articles_table.c.source_id == sources_table.c.source_id)
+        )
+        .where(
+            quotes_table.c.topic_id == active_topic,
+            articles_table.c.publication_date >= window_start,
+            articles_table.c.publication_date <= report_date,
+            quotes_table.c.verification_status == "verified",
+        )
+        .order_by(articles_table.c.publication_date, quotes_table.c.canonical_quote_id)
+    )
+    records: list[Any] = []
+    for row in session.execute(statement).mappings():
+        q = row
+        a = row
+        s = row
+        meta = q["q_meta"] or {}
+        article_meta = a["a_meta"] or {}
+        details = q["q_details"] or {}
+        verification = VerificationRecord(
+            verbatim_match=bool(details.get("verbatim_match", True)),
+            metadata_verified=bool(details.get("metadata_verified", True)),
+            method=str(details.get("method") or q["q_method"] or "db-export"),
+            verified_at=datetime.now(UTC),
+        )
+        records.append(
+            ExportQuoteRecord.model_validate(
+                {
+                    "quote_id": q["q_id"],
+                    "quote_text_original": q["q_text"],
+                    "quote_text_en": q["q_text_en"] or "",
+                    "source_id": s["s_id"],
+                    "source_name": s["s_name"],
+                    "publication_name": str(article_meta.get("publication_name") or ""),
+                    "source_tier": s["s_tier"],
+                    "source_country_region": s["s_region"],
+                    "source_type": s["s_type"],
+                    "rights_status": s["s_rights"],
+                    "access_mode": s["s_access"],
+                    "license_reference": s["s_license"] or "",
+                    "discovery_method": s["s_discovery"],
+                    "claim_only": s["s_claim"],
+                    "original_reporting_flag": (
+                        "first-hand" if q["q_topic_status"] == "accepted" else "unknown"
+                    ),
+                    "source_language": a["a_language"] or s["s_language"],
+                    "publication_date": a["a_date"].isoformat(),
+                    "article_name": a["a_title"] or "",
+                    "article_author": str(article_meta.get("byline") or ""),
+                    "article_url": a["a_url"],
+                    "extraction_date": datetime.now(UTC).isoformat(),
+                    "section_id": meta.get("section_id") or "other",
+                    "is_obsolete": False,
+                    "content_hash": a["a_hash"],
+                    "verification": verification.model_dump(mode="json"),
+                    "topic_id": q["q_topic"] or active_topic,
+                    "topic_status": q["q_topic_status"] or "accepted",
+                    "topic_rule_version": q["q_rule_version"] or "",
+                    "topic_score": q["q_score"] or 0.0,
+                    "matched_terms": list(q["q_terms"] or []),
+                    "quote_language": q["q_language"] or "",
+                    "language_confidence": q["q_lang_conf"] or 0.0,
+                    "translation_model_snapshot": q["q_t_model"] or "",
+                    "translation_prompt_version": q["q_t_prompt"] or "",
+                    "translation_hash": q["q_t_hash"] or "",
+                    "translation_status": q["q_t_status"] or "",
+                }
+            )
+        )
+    return records
+
+
 def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: bool = True) -> int:
     """Upsert registry rows into Postgres. No network access."""
     if not rows:

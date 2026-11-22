@@ -78,9 +78,11 @@ def make_provider(settings: Settings, *, topic_pack: TopicPack | None = None) ->
     if provider in {"local", "stand-in", "none", ""}:
         return LocalStandInProvider(topic_pack=topic_pack)
     if provider == "openrouter":
+        from .llm_cache import DbDecisionCache
         from .llm_openrouter import OpenRouterInferenceProvider
 
-        return OpenRouterInferenceProvider(settings)
+        cache_hooks = DbDecisionCache(settings) if settings.persist_to_postgres else None
+        return OpenRouterInferenceProvider(settings, cache_hooks=cache_hooks)
     raise ConfigError(
         f"inference provider '{provider}' is unavailable; set LLM_PROVIDER to local or openrouter"
     )

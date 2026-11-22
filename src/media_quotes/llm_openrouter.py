@@ -67,6 +67,7 @@ class OpenRouterInferenceProvider(InferenceProvider):
         client: Any | None = None,
         cache_lookup: Callable[[str], LLMDecision | None] | None = None,
         cache_write: Callable[[str, LLMDecision], None] | None = None,
+        cache_hooks: Any | None = None,
     ) -> None:
         if settings.llm_provider != "openrouter":
             raise ConfigError("OpenRouterInferenceProvider requires LLM_PROVIDER=openrouter")
@@ -78,6 +79,7 @@ class OpenRouterInferenceProvider(InferenceProvider):
             schema_hash_value=schema_hash(settings.schema_path),
             cache_lookup=cache_lookup,
             cache_write=cache_write,
+            cache_hooks=cache_hooks,
             api_style="chat",
         )
 

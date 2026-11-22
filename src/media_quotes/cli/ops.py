@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -84,6 +85,32 @@ def _do_backfill(  # pragma: no cover
     print(f"Budget: {note}; live backfill disabled in blocked/degraded mode.")
     if not dry_run:
         print("No source contact or write performed: fixture-only offline replay is the only path.")
+
+    if settings.persist_to_postgres:
+        from ..db.repository import finish_pipeline_run, start_pipeline_run
+        from ..pipeline import _default_session_context
+
+        run_id = f"backfill-{start.isoformat()}-{end.isoformat()}"
+        stats = {
+            **asdict(estimate),
+            "max_cost": max_cost,
+            "budget_note": note,
+            "span_days": span,
+            "cached_hashes": len(cached_hashes),
+        }
+        with _default_session_context(settings) as session:
+            start_pipeline_run(
+                session,
+                run_id=run_id,
+                pipeline="mq-backfill",
+                partition_date=start,
+                commit=False,
+            )
+            finish_pipeline_run(
+                session, run_id=run_id, status="succeeded", stats=stats, commit=False
+            )
+            session.commit()
+        print(f"Backfill estimate persisted to Postgres as run {run_id}.")
     return EXIT_OK
 
 
@@ -244,13 +271,26 @@ def _do_export(
     report_date: date,
     out: str | None,
     topic_id: str | None = None,
+    from_db: bool = False,
 ) -> int:  # pragma: no cover
     active_topic_id = str(
         topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
     )
-    records = read_jsonl(
-        local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
-    )
+    if from_db:
+        from ..db.repository import read_export_records
+        from ..pipeline import _default_session_context
+
+        with _default_session_context(settings) as session:
+            records = read_export_records(
+                session,
+                report_date=report_date,
+                window_days=settings.report_window_days,
+                topic_id=active_topic_id,
+            )
+    else:
+        records = read_jsonl(
+            local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
+        )
     if not records:
         print(
             "no verified local quote store; run `mq run --date ...` first",

@@ -18,7 +18,7 @@ plan is in [`docs/12`](docs/12-implementation-plan.md).
 | Postgres schema + T0 gate | `src/media_quotes/db/schema.sql`, config, strict models | Full append-only tables, coverage contract, decision cache |
 | Bootstrap | `python -m media_quotes.bootstrap` (Alembic `upgrade head` + source sync) | Live Dagster pipeline scheduling |
 | CLI | 19 `mq` subcommands: offline fixture replay plus an explicit, rights-gated `mq fetch` | Live Dagster/Postgres/LLM orchestration |
-| Export | `src/media_quotes/export.py` with strict `ExportQuoteRecord` validation | Context packs from live Postgres (`mq export`) |
+| Export | `src/media_quotes/export.py`; `mq export --from-db` rebuilds the export from Postgres | Context packs from live Postgres |
 | Logs / traces | JSON logging, structlog secret redaction, optional OTLP tracing (`observability.py`) | Distributed tracing with live collectors |
 | Tests | 630 pytest tests, risk-control policy tests, ~86.7% coverage (85% gate) | VCR.py live recordings, Dagster asset checks |
 | Quality tooling | Alembic migrations, committed `uv.lock`, `Makefile` (`make check`), GitHub Actions CI, ruff/mypy/pytest, `mq doctor` | Continuous asset contracts |
@@ -61,6 +61,7 @@ src/media_quotes/
   extraction.py      # Trafilatura DOM-aware extraction and quality gate
   llm.py             # Inference provider protocol and local stand-in
   llm_live.py        # Pinned OpenAI client with structured outputs and decision caching
+  llm_cache.py       # Postgres-backed decision cache hooks for the pinned LLM boundary
   llm_openrouter.py  # OpenRouter provider built on the same pinned boundary
   batch.py           # Provider batch API planner — design stub, no production caller
   rights_guard.py    # DEC-10 word limits and attribution policy guard

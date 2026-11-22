@@ -34,7 +34,7 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 | Step | Work | Exit check |
 |---|---|---|
 | B1 | Monthly partitioning of `audit_events` and `llm_decisions` (RSK-11 plan §3) — planned, not applied | CHK-17 |
-| B2 | Wire the provider cache key into a `decision_cache` repository method (idempotent upsert) | CHK-16 |
+| B2 | Done: `llm_cache.DbDecisionCache` wires the pinned LLM boundary to `decision_cache` when `PERSIST_TO_POSTGRES=true` | CHK-16 |
 | B3 | Wire `configure_observability` (structlog redaction + OTLP span exporter in `observability.py`) into live Postgres/Dagster pipeline runs and local OTel collector | CHK-13 |
 | B4 | `uv.lock` + `make check` already present; ensure CI runs it on every PR | CHK-10/11 |
 
@@ -72,7 +72,7 @@ with offline tests. There is no CLI flag for provider selection.
 | Step | Work | Exit check |
 |---|---|---|
 | PD1 | Live OpenAI boundary with pinned snapshot, strict structured output (preserving native `quote_text` + generating English `quote_text_en` translation), provider response id, refusal/incomplete logging, and Postgres `decision_cache` lookup before call | CHK-02 |
-| PD2 | Batch API path for backfills using `custom_id`; wire `risk_controls.budget_gate` + `--max-cost` on `mq backfill` to Postgres `pipeline_runs` | CHK-16 |
+| PD2 | Batch API path for backfills using `custom_id` (still a stub); done: `mq backfill` records budget estimate and gate result in `pipeline_runs` when persistence is on | CHK-16 |
 | PD3 | Section assignment from the 6-slug allow-list in `data/sections.csv`, cross-outlet quote deduplication (14-day window), and obsolescence rule with evidence bundle + `risk_controls.ReviewQueue` (24h `provisional_hold` `[Under Review]` badge) | CHK-15 |
 | PD4 | Held-out eval: obsolete precision ≥ 0.90 and drift guard (`obsoletion_allowed`) persisted in Postgres | CHK-03 |
 
@@ -85,7 +85,7 @@ remain offline-safe; no live provider/Postgres backend is yet required.
 | Step | Work | Exit check |
 |---|---|---|
 | E1 | Python-built digest (`digest.py`) from verified records with verbatim quotes (`quote_text` + `quote_text_en`), DEC-10 limits, `[Under Review]` provisional-hold badges and snapshots | CHK-04 |
-| E2 | Dashboard: latest/archive digests, per-source coverage view, review queue, logs, DB explorer (read-only against Postgres) | CHK-05/06 |
+| E2 | Done: dashboard shows latest digests, per-source coverage, review queue, logs and read-only Postgres row counts | CHK-05/06 |
 | E3 | Cut over all 19 CLI commands to live Postgres/Dagster backends with exit codes 0–3 | CHK-01/02/06 |
 
 ## 6. Phase F — T8 quality gate & closure (continuous, final)
