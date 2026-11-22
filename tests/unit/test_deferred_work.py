@@ -193,13 +193,41 @@ def test_batch_apply_results_writes_cache(tmp_path: Path, monkeypatch: Any) -> N
         user_prompt="user",
     )
     result["custom_id"] = custom_id("cache-k")
-    applied = batch_cli._apply_results(settings, [result], [request])
-    assert applied == 1
+    applied, unmatched = batch_cli._apply_results(settings, [result], [request])
+    assert (applied, unmatched) == (1, 0)
     assert written[0].cache_key == "cache-k"
     assert written[0].model_snapshot == request.model_snapshot
     assert written[0].prompt_version == "p1"
     assert written[0].schema_hash == "s1"
     assert written[0].output == {"text": "summary"}
+
+
+def test_batch_apply_reports_unmatched_results(tmp_path: Path, monkeypatch: Any) -> None:
+    from contextlib import contextmanager
+
+    from media_quotes.cli import batch as batch_cli
+    from media_quotes.llm_live import LLMRequest
+
+    session = MagicMock()
+
+    @contextmanager
+    def fake_context(settings: Settings) -> Any:
+        yield session
+
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", fake_context)
+    request = LLMRequest(
+        decision_type="section-inference",
+        cache_key="cache-k",
+        input_hash="i",
+        model_snapshot="openai/gpt-4o-mini-2024-07-18",
+        prompt_version="p1",
+        schema_hash="s1",
+        system_prompt="system",
+        user_prompt="user",
+    )
+    result = {"custom_id": "unmatched", "response": {"body": {"output_text": "x"}}}
+    applied, unmatched = batch_cli._apply_results(_settings(tmp_path), [result], [request])
+    assert (applied, unmatched) == (0, 1)
 
 
 def test_batch_cli_dry_run_writes_no_network(tmp_path: Path, monkeypatch: Any) -> None:

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from media_quotes.config import Settings
+from media_quotes.config import Settings, unknown_setting_env_vars
 
 
 def test_defaults_are_safe(monkeypatch):
@@ -43,6 +43,15 @@ def test_batch_model_snapshot_rejects_placeholders():
     for value in ("unset", "latest", "UNSET"):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, batch_model_snapshot=value)
+
+
+def test_unknown_setting_env_vars_flags_typos():
+    env = {
+        "EXTRACTION_FALLBACKS": "static",
+        "EXTRACTION_FALLBACK": "off",
+        "PATH": "/bin",
+    }
+    assert unknown_setting_env_vars(env) == ["EXTRACTION_FALLBACKS"]
 
 
 def test_shared_session_factory_is_cached():

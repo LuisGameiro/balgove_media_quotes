@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from ..config import Settings, get_settings
+from ..config import Settings, get_settings, unknown_setting_env_vars
 from ..exceptions import BudgetExceededError, ConfigError, MediaQuotesError, ValidationError
 from ..validation import validate_data_dir
 from .common import (
@@ -57,6 +57,9 @@ def _do_doctor(settings: Settings) -> int:  # pragma: no cover
     warning = _translation_readiness_warning(settings)
     if warning:
         print(f"Warning: {warning}")
+    unknown_env = unknown_setting_env_vars(dict(os.environ))
+    if unknown_env:
+        print(f"Warning: unrecognised setting env var(s): {', '.join(unknown_env)}")
     return EXIT_OK
 
 

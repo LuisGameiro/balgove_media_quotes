@@ -7,6 +7,7 @@ environment. ``mq dashboard`` prints launch guidance instead of starting a serve
 from __future__ import annotations
 
 import csv
+import hmac
 import json
 import re
 import sys
@@ -120,11 +121,15 @@ def registered_sources(sources_csv: Path) -> list[dict[str, str]]:  # pragma: no
         return [dict(row) for row in csv.DictReader(handle)]
 
 
-def database_summary(settings: Settings) -> dict[str, int]:  # pragma: no cover
-    """Read-only row counts from Postgres; empty when the DB is off or unreachable."""
+def database_summary(settings: Settings) -> dict[str, int | str]:  # pragma: no cover
+    """Read-only row counts from Postgres; an 'error' key names a failed query."""
     from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
 
-    from .db.engine import create_db_engine
+    if __package__:
+        from .db.engine import create_db_engine
+    else:
+        from media_quotes.db.engine import create_db_engine
 
     engine = create_db_engine(settings)
     try:
@@ -140,8 +145,8 @@ def database_summary(settings: Settings) -> dict[str, int]:  # pragma: no cover
                 name: int(connection.execute(statement).scalar_one())
                 for name, statement in counts_sql.items()
             }
-    except Exception:
-        return {}
+    except SQLAlchemyError as exc:
+        return {"error": type(exc).__name__}
     finally:
         engine.dispose()
 
@@ -152,6 +157,16 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
         print(guidance(settings))
         return
     cfg = settings or get_settings()
+    password = cfg.dashboard_password
+    if password is None or not password.get_secret_value():
+        st.error("DASHBOARD_PASSWORD is not set; refusing to render internal material.")
+        st.stop()
+        return
+    entered = st.text_input("Dashboard password", type="password")
+    if not hmac.compare_digest(entered, password.get_secret_value()):
+        st.warning("Enter the dashboard password to view internal material.")
+        st.stop()
+        return
     load_digests = st.cache_data(ttl=60)(latest_digests)
     load_gaps = st.cache_data(ttl=60)(coverage_gaps)
     load_logs = st.cache_data(ttl=60)(recent_logs)
@@ -199,11 +214,13 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     st.write(schema_summary(schema_sql))
     if cfg.persist_to_postgres:
         counts = database_summary(cfg)
-        if counts:
+        if "error" in counts:
+            st.write(f"Postgres query failed: {counts['error']}")
+        elif counts:
             st.subheader("Database row counts (read-only)")
             st.dataframe([{"table": name, "rows": rows} for name, rows in counts.items()])
         else:
-            st.write("Postgres is enabled but unreachable.")
+            st.write("Postgres is enabled but no counts were returned.")
 
 
 __all__ = [
@@ -217,3 +234,6 @@ __all__ = [
     "review_queue_view",
     "schema_summary",
 ]
+
+if __name__ == "__main__":
+    main()

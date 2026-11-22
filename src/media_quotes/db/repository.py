@@ -643,66 +643,63 @@ def read_export_records(
     )
     records: list[Any] = []
     for row in session.execute(statement).mappings():
-        q = row
-        a = row
-        s = row
-        meta = q["q_meta"] or {}
-        article_meta = a["a_meta"] or {}
-        details = q["q_details"] or {}
+        meta = row["q_meta"] or {}
+        article_meta = row["a_meta"] or {}
+        details = row["q_details"] or {}
         stored_verified_at = details.get("verified_at")
         if isinstance(stored_verified_at, str):
             verified_at = datetime.fromisoformat(stored_verified_at.replace("Z", "+00:00"))
         elif isinstance(stored_verified_at, datetime):
             verified_at = stored_verified_at
         else:
-            verified_at = datetime.combine(a["a_date"], time(12, 0), tzinfo=UTC)
+            verified_at = datetime.combine(row["a_date"], time(12, 0), tzinfo=UTC)
         verification = VerificationRecord(
             verbatim_match=bool(details.get("verbatim_match", True)),
             metadata_verified=bool(details.get("metadata_verified", True)),
-            method=str(details.get("method") or q["q_method"] or "db-export"),
+            method=str(details.get("method") or row["q_method"] or "db-export"),
             verified_at=verified_at,
         )
         records.append(
             ExportQuoteRecord.model_validate(
                 {
-                    "quote_id": q["q_id"],
-                    "quote_text_original": q["q_text"],
-                    "quote_text_en": q["q_text_en"] or "",
-                    "source_id": s["s_id"],
-                    "source_name": s["s_name"],
+                    "quote_id": row["q_id"],
+                    "quote_text_original": row["q_text"],
+                    "quote_text_en": row["q_text_en"] or "",
+                    "source_id": row["s_id"],
+                    "source_name": row["s_name"],
                     "publication_name": str(article_meta.get("publication_name") or ""),
-                    "source_tier": s["s_tier"],
-                    "source_country_region": s["s_region"],
-                    "source_type": s["s_type"],
-                    "rights_status": s["s_rights"],
-                    "access_mode": s["s_access"],
-                    "license_reference": s["s_license"] or "",
-                    "discovery_method": s["s_discovery"],
-                    "claim_only": s["s_claim"],
-                    "original_reporting_flag": meta.get("original_reporting_flag") or "first-hand",
-                    "source_language": a["a_language"] or s["s_language"],
-                    "publication_date": a["a_date"].isoformat(),
-                    "article_name": a["a_title"] or "",
+                    "source_tier": row["s_tier"],
+                    "source_country_region": row["s_region"],
+                    "source_type": row["s_type"],
+                    "rights_status": row["s_rights"],
+                    "access_mode": row["s_access"],
+                    "license_reference": row["s_license"] or "",
+                    "discovery_method": row["s_discovery"],
+                    "claim_only": row["s_claim"],
+                    "original_reporting_flag": meta.get("original_reporting_flag") or "unknown",
+                    "source_language": row["a_language"] or row["s_language"],
+                    "publication_date": row["a_date"].isoformat(),
+                    "article_name": row["a_title"] or "",
                     "article_author": str(article_meta.get("byline") or ""),
-                    "article_url": a["a_url"],
+                    "article_url": row["a_url"],
                     "extraction_date": str(
-                        article_meta.get("extraction_date") or a["a_date"].isoformat()
+                        article_meta.get("extraction_date") or row["a_date"].isoformat()
                     ),
                     "section_id": meta.get("section_id") or "other",
                     "is_obsolete": False,
-                    "content_hash": a["a_hash"],
+                    "content_hash": row["a_hash"],
                     "verification": verification.model_dump(mode="json"),
-                    "topic_id": q["q_topic"] or active_topic,
-                    "topic_status": q["q_topic_status"] or "accepted",
-                    "topic_rule_version": q["q_rule_version"] or "",
-                    "topic_score": q["q_score"] or 0.0,
-                    "matched_terms": list(q["q_terms"] or []),
-                    "quote_language": q["q_language"] or "",
-                    "language_confidence": q["q_lang_conf"] or 0.0,
-                    "translation_model_snapshot": q["q_t_model"] or "",
-                    "translation_prompt_version": q["q_t_prompt"] or "",
-                    "translation_hash": q["q_t_hash"] or "",
-                    "translation_status": q["q_t_status"] or "",
+                    "topic_id": row["q_topic"] or active_topic,
+                    "topic_status": row["q_topic_status"] or "accepted",
+                    "topic_rule_version": row["q_rule_version"] or "",
+                    "topic_score": row["q_score"] or 0.0,
+                    "matched_terms": list(row["q_terms"] or []),
+                    "quote_language": row["q_language"] or "",
+                    "language_confidence": row["q_lang_conf"] or 0.0,
+                    "translation_model_snapshot": row["q_t_model"] or "",
+                    "translation_prompt_version": row["q_t_prompt"] or "",
+                    "translation_hash": row["q_t_hash"] or "",
+                    "translation_status": row["q_t_status"] or "",
                 }
             )
         )

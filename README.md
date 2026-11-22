@@ -198,14 +198,15 @@ Use `-DryRun` for planning only or `-Persist` to write Postgres rows.
 ## Streamlit Community Cloud deployment
 
 The app is a Streamlit dashboard at `src/media_quotes/dashboard.py`. Streamlit Community Cloud
-requires the code to live in a published GitHub repository. The local repository currently has no
-remote configured, so deployment requires:
+requires the code to live in a published GitHub repository. The repository already has an `origin`
+remote; deployment requires:
 
-1. Create a GitHub repository and add it as the `origin` remote.
-2. Commit and push the current `main` branch.
-3. In Streamlit Cloud, choose that repository, branch `main`, and main file path
+1. Commit and push the current `main` branch.
+2. In Streamlit Cloud, choose that repository, branch `main`, and main file path
    `src/media_quotes/dashboard.py`.
-4. Use the root `requirements.txt`, which installs the project with the `dashboard` extra.
+3. Use the root `requirements.txt`, which installs the project with all extras.
+4. Set the `DASHBOARD_PASSWORD` secret in Streamlit Cloud. The dashboard refuses to render
+   internal digests, audit reports or licence metadata without it.
 
 The dashboard reads local replay artifacts and does not require a database or API key.
 

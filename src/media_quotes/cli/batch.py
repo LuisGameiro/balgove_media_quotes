@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -75,18 +76,22 @@ def _apply_results(
     settings: Settings,
     results: list[dict[str, Any]],
     requests: list[LLMRequest],
-) -> int:
+) -> tuple[int, int]:
     from ..db.repository import DecisionCacheEntry, upsert_decision_cache
     from ..pipeline import _default_session_context
 
     by_cache_key = {custom_id(item.cache_key): item for item in requests}
     applied = 0
+    unmatched = 0
     with _default_session_context(settings) as session:
         for result in results:
             request = by_cache_key.get(str(result.get("custom_id") or ""))
             text = _extract_text(result)
-            if request is None or text is None:
+            if request is None:
+                unmatched += 1
                 continue
+            if text is None:
+                continue  # failed provider result, not a mapping mismatch
             entry = DecisionCacheEntry(
                 cache_key=request.cache_key,
                 model_snapshot=request.model_snapshot,
@@ -97,7 +102,7 @@ def _apply_results(
             )
             upsert_decision_cache(session, entry)
             applied += 1
-    return applied
+    return applied, unmatched
 
 
 def _do_batch(
@@ -120,8 +125,15 @@ def _do_batch(
         if job.status == "completed" and apply and settings.persist_to_postgres:
             requests = _load_requests(requests_path)
             _require_matching_model(requests, settings.batch_model_snapshot)
-            applied = _apply_results(settings, job.results, requests)
+            applied, unmatched = _apply_results(settings, job.results, requests)
             print(f"Applied {applied} batch result(s) to decision_cache.")
+            if unmatched:
+                print(
+                    f"warning: {unmatched} result(s) had no matching request; "
+                    "check that --requests matches the submitted batch",
+                    file=sys.stderr,
+                )
+                return EXIT_FAILURE
         return EXIT_OK if job.status == "completed" else EXIT_FAILURE
 
     if dry_run or not execute:

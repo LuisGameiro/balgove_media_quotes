@@ -6,7 +6,9 @@ relative to PROJECT_ROOT so the CLI, bootstrap and scripts share one convention.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
+from difflib import get_close_matches
 from functools import lru_cache
 from pathlib import Path
 from typing import Final
@@ -79,6 +81,7 @@ class Settings(BaseSettings):
     llm_model_snapshot: str = "unset"
     prompt_version: str = "standalone-inference-v1"
     openrouter_api_key: SecretStr | None = None
+    dashboard_password: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_app_url: str = "https://github.com/balgoveinnovations/media-quotes"
     openrouter_app_title: str = "Media Quotes Collection System"
@@ -210,6 +213,16 @@ class Settings(BaseSettings):
     def quote_within_limits(self, quote_text: str) -> bool:
         """DEC-10 word-count gate; strict counting on Unicode whitespace."""
         return len(quote_text.split()) <= self.max_quote_words
+
+
+def unknown_setting_env_vars(environ: Mapping[str, str]) -> list[str]:
+    """Env names close to a Settings field but not equal to one (likely typos)."""
+    known = sorted({name.upper() for name in Settings.model_fields})
+    return sorted(
+        name
+        for name in environ
+        if "_" in name and name not in known and get_close_matches(name, known, n=1, cutoff=0.85)
+    )
 
 
 @lru_cache
