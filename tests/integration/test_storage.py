@@ -233,8 +233,44 @@ def test_persist_articles_and_quotes_persists_when_offsets_present() -> None:
     )
     assert inserted_articles >= 0
     assert inserted_quotes >= 0
-    assert session.execute.call_count == 2
+    # Two INSERTs plus the canonical-id collision lookup SELECT.
+    assert session.execute.call_count >= 2
     assert session.commit.call_count == 1
+
+
+def test_quote_insert_writes_topic_and_translation_columns() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    session = MagicMock()
+    session.execute.return_value.rowcount = 1
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    first = records[0]
+    offsets = {
+        first.quote_id: {
+            "char_start": 0,
+            "char_end": len(first.quote_text_original),
+            "content_hash": first.content_hash,
+        }
+    }
+    persist_articles_and_quotes(session, records, offsets=offsets)
+    quote_insert = str(
+        session.execute.call_args_list[-1].args[0].compile(dialect=postgresql.dialect())
+    )
+    for column in (
+        "topic_id",
+        "topic_status",
+        "topic_rule_version",
+        "topic_score",
+        "matched_terms",
+        "quote_language",
+        "language_confidence",
+        "quote_text_en",
+        "translation_model_snapshot",
+        "translation_prompt_version",
+        "translation_hash",
+        "translation_status",
+    ):
+        assert column in quote_insert
 
 
 def test_persist_articles_and_quotes_handles_psycopg_minus_one_rowcount() -> None:

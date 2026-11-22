@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Force -Path $DagsterHome | Out-Null
 $env:DAGSTER_HOME = $DagsterHome
 
 Write-Host "Dagster assets: daily_quotes_digest, gold_set_evaluation, retention_readiness_report"
-Write-Host "Asset checks: export_schema_valid, audit_gates_pass, coverage_gaps_disclosed, t0_rights_boundary_enforced, quote_rights_limits_respected, restore_drill_integrity, gold_set_thresholds_met"
+Write-Host "Asset checks: export_schema_valid, audit_gates_pass, coverage_gaps_disclosed, t0_rights_boundary_enforced, quote_rights_limits_respected, gold_set_thresholds_met"
 Write-Host "Jobs: daily_quotes_digest_job, governance_audit_job"
 Write-Host "Partitions: daily from 2026-10-01"
 Write-Host "Schedule: daily_digest_schedule at 06:00 UTC (stopped by default)"

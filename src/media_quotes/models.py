@@ -5,18 +5,20 @@ quote is only published after a deterministic verifier has matched it against st
 article text. Strict mode prevents silent coercion (e.g. '123' -> 123).
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .enums import (
+    SECTION_IDS,
     AccessMode,
     DiscoveryMethod,
     OriginalReportingFlag,
     RightsStatus,
-    SectionId,
     SourceType,
 )
 
@@ -31,7 +33,7 @@ def _parse_datetime(value: object) -> object:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
 
 
-# Source rows are defined in registry.py, mirroring the authoritative data/sources.csv.
+# Source rows are defined in registry.py, mirroring data/sources/*.json and data/sources.csv.
 
 
 class ArticleIn(BaseModel):
@@ -133,12 +135,26 @@ class ExportQuoteRecord(BaseModel):
     article_author: str = ""
     article_url: str
     extraction_date: datetime
-    section_id: SectionId
+    section_id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     is_obsolete: bool
     obsolete_reason: str = ""
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     verification: VerificationRecord
     notes: str = ""
+    # Topic-gate provenance. Defaults keep legacy exports valid; content_hash is computed
+    # before these fields are attached and its semantics are deliberately unchanged.
+    topic_id: str = Field(default="ukraine-war", pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    topic_status: Literal["accepted", "uncertain", "rejected"] = "accepted"
+    topic_rule_version: str = ""
+    topic_score: float = 0.0
+    matched_terms: list[str] = Field(default_factory=list)
+    # Detected *quote* language may differ from the source-level `source_language`.
+    quote_language: str = Field(default="", pattern=r"^([a-z]{2}|und)?$")
+    language_confidence: float = 0.0
+    translation_model_snapshot: str = ""
+    translation_prompt_version: str = ""
+    translation_hash: str = ""
+    translation_status: str = ""
 
     @field_validator("publication_date", mode="before")
     @classmethod
@@ -149,3 +165,12 @@ class ExportQuoteRecord(BaseModel):
     @classmethod
     def _parse_extraction_date(cls, value: object) -> object:
         return _parse_datetime(value)
+
+    @model_validator(mode="after")
+    def _validate_default_topic_section(self) -> ExportQuoteRecord:
+        if self.topic_id == "ukraine-war" and self.section_id not in SECTION_IDS:
+            raise ValueError(
+                f"section_id {self.section_id!r} is not valid for topic 'ukraine-war'; "
+                f"expected one of {SECTION_IDS}"
+            )
+        return self

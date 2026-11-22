@@ -1,0 +1,59 @@
+{
+  "source_id": "guardian",
+  "source_name": "The Guardian",
+  "homepage_url": "https://www.theguardian.com",
+  "feed_url": "",
+  "tier": 2,
+  "cadence_hours": 24,
+  "country_region": "UK",
+  "source_type": "independent",
+  "claim_only": false,
+  "language": "en",
+  "requires_translation": false,
+  "paywalled": false,
+  "rights_status": "license_held",
+  "access_mode": "licensed_database",
+  "license_reference": "TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20",
+  "discovery_method": "licensed_database",
+  "archive_start_date": "2026-10-01",
+  "enabled": true,
+  "notes": "Operator attested written rights on 2026-11-20; source-specific contract reference withheld from chat/repo by owner. T0 approved for engineering validation.",
+  "routes": [
+    {
+      "route_id": "route-guardian-ukraine-default",
+      "route_type": "topic_rss",
+      "discovery_url": "https://www.theguardian.com/world/ukraine/rss",
+      "topic_rule_id": "ukraine-war-v1",
+      "topic_id": "ukraine-war",
+      "priority": 10,
+      "fallback_route_id": "",
+      "approved": true,
+      "license_reference": "TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20",
+      "translation_rights_confirmed": false,
+      "notes": "Approved topic RSS route; feed is discovery only; translation rights unverified."
+    },
+    {
+      "route_id": "route-guardian-ai-policy-default",
+      "route_type": "topic_rss",
+      "discovery_url": "https://www.theguardian.com/technology/artificialintelligenceai/rss",
+      "topic_rule_id": "ai-policy-v1",
+      "topic_id": "ai-policy",
+      "priority": 20,
+      "fallback_route_id": "",
+      "approved": true,
+      "license_reference": "TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20",
+      "translation_rights_confirmed": false,
+      "notes": "Approved topic RSS route for AI Policy & Governance; discovery only."
+    }
+  ],
+  "extractor_hints": {
+    "adapter": null,
+    "default_feed_url": "https://www.theguardian.com/world/ukraine/rss",
+    "favor_precision": false,
+    "favor_recall": false,
+    "include_comments": false,
+    "include_tables": false,
+    "min_text_length": 200,
+    "strip_selectors": []
+  }
+}

@@ -12,6 +12,7 @@ from media_quotes import llm_openrouter
 from media_quotes.config import Settings
 from media_quotes.exceptions import ConfigError
 from media_quotes.llm import make_provider
+from media_quotes.llm_live import PinnedOpenAIClient
 from media_quotes.llm_openrouter import OpenRouterInferenceProvider, _make_client
 
 
@@ -165,6 +166,27 @@ def test_openrouter_validates_json_structure() -> None:
     )
     with pytest.raises(ConfigError, match="80-word limit"):
         p5.infer(section_id="war_intensity", section_name="War Intensity", quote_texts=["Fact 1."])
+
+
+def test_cache_key_changes_with_model_and_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    original = PinnedOpenAIClient.respond
+
+    def spy(self: PinnedOpenAIClient, request: Any) -> Any:
+        seen.append(request.cache_key)
+        return original(self, request)
+
+    monkeypatch.setattr(PinnedOpenAIClient, "respond", spy)
+    monkeypatch.setattr(llm_openrouter, "_make_client", lambda passed: _client(FakeCompletions()))
+
+    OpenRouterInferenceProvider(_settings()).infer(
+        section_id="s", section_name="S", quote_texts=["quoted text"]
+    )
+    OpenRouterInferenceProvider(_settings(prompt_version="v2")).infer(
+        section_id="s", section_name="S", quote_texts=["quoted text"]
+    )
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
 
 
 def test_make_client_builder(monkeypatch: pytest.MonkeyPatch) -> None:

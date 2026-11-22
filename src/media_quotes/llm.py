@@ -7,13 +7,14 @@ OpenAI-compatible OpenRouter client. No CLI flag changes the provider.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from .exceptions import ConfigError
 
 if TYPE_CHECKING:
     from .config import Settings
+    from .topics import TopicPack
 
 _STANDIN = {
     "war_intensity": (
@@ -45,9 +46,22 @@ class InferenceProvider(Protocol):
 class LocalStandInProvider:
     """Template-based, clearly labelled stand-in for the future pinned LLM provider."""
 
+    def __init__(
+        self,
+        *,
+        topic_pack: TopicPack | None = None,
+        standin_map: Mapping[str, str] | None = None,
+    ) -> None:
+        merged = dict(_STANDIN)
+        if topic_pack is not None:
+            merged.update(topic_pack.standin_map())
+        if standin_map is not None:
+            merged.update(standin_map)
+        self._standin = merged
+
     def infer(self, *, section_id: str, section_name: str, quote_texts: Sequence[str]) -> str:
         count = len(quote_texts)
-        body = _STANDIN.get(
+        body = self._standin.get(
             section_id,
             f"The selected quotes concern {section_name.lower()} in this replay snapshot.",
         )
@@ -58,11 +72,11 @@ class LocalStandInProvider:
         )
 
 
-def make_provider(settings: Settings) -> InferenceProvider:
+def make_provider(settings: Settings, *, topic_pack: TopicPack | None = None) -> InferenceProvider:
     """Resolve the provider configured in the environment via ``Settings``."""
     provider = settings.llm_provider.strip().lower()
     if provider in {"local", "stand-in", "none", ""}:
-        return LocalStandInProvider()
+        return LocalStandInProvider(topic_pack=topic_pack)
     if provider == "openrouter":
         from .llm_openrouter import OpenRouterInferenceProvider
 

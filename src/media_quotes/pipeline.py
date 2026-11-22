@@ -7,17 +7,365 @@ settings, date and their own session context when they want dependency injection
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import json
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol, cast
 
-from .config import Settings
+from .config import DEFAULT_TOPIC_ID, Settings
 from .db.resources import SessionContextFactory
 from .models import ExportQuoteRecord
 from .risk_controls.models import ObsolescenceFlag
+
+
+class SourceTopicRoute(Protocol):
+    """Shape returned by source_topics.load_source_topic_routes()."""
+
+    source_id: str
+    route_id: str
+    approved: bool
+    translation_rights_confirmed: bool
+    topic_rule_id: str
+    license_reference: str
+
+
+class TopicDecision(Protocol):
+    """Shape returned by relevance.evaluate_topic()."""
+
+    status: str
+    score: float
+    matched_terms: Sequence[str]
+    rule_id: str
+    rule_version: str
+    reasons: Sequence[str]
+
+
+class LanguageDecision(Protocol):
+    """Shape returned by language.detect_language()."""
+
+    language: str
+    confidence: float
+    evidence: object
+
+
+class TranslationResult(Protocol):
+    """Shape returned by translation.translate_quote()."""
+
+    text: str
+    source_language: str
+    status: str
+    model_snapshot: str
+    prompt_version: str
+    content_hash: str
+    error: str | None
+
+
+# Judge providers may be a callable or expose judge()/decide(); ask_judge() adapts both.
+JudgeProvider = Any
+
+
+@dataclass(frozen=True, slots=True)
+class TopicDecisionSnapshot:
+    status: str
+    score: float
+    matched_terms: tuple[str, ...]
+    rule_id: str
+    rule_version: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LanguageDecisionSnapshot:
+    language: str
+    confidence: float
+    evidence: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationSnapshot:
+    text: str
+    source_language: str
+    status: str
+    model_snapshot: str
+    prompt_version: str
+    content_hash: str
+    error: str
+    usable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class JudgeDecisionSnapshot:
+    task: str
+    verdict: str
+    confidence: float
+    rationale: str
+    actor: str
+    model_snapshot: str
+    prompt_version: str
+    input_hash: str
+    output_hash: str
+    escalation_reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class TopicAssessment:
+    status: Literal["accepted", "uncertain", "rejected"]
+    score: float
+    matched_terms: tuple[str, ...]
+    rule_id: str
+    rule_version: str
+    reasons: tuple[str, ...]
+    escalated: bool = False
+    judge: JudgeDecisionSnapshot | None = None
+
+
+def _api(module: str, attribute: str) -> Any:
+    """Import an optional pure module lazily so offline defaults stay import-safe."""
+    return getattr(importlib.import_module(module), attribute)
+
+
+def _field(value: Any, name: str, default: Any) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    result = getattr(value, name, default)
+    return default if result is None else result
+
+
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else str(value) if value is not None else ""
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _strings(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, Sequence):
+        return tuple(_text(item) for item in value if _text(item))
+    return ()
+
+
+def load_source_topic_routes(path: Path) -> dict[str, list[SourceTopicRoute]]:
+    loader = cast(
+        Callable[[Path], dict[str, list[SourceTopicRoute]]],
+        _api("media_quotes.source_topics", "load_source_topic_routes"),
+    )
+    return loader(path)
+
+
+def load_topic_rules(path: Path) -> dict[str, dict[str, Any]]:
+    loader = cast(
+        Callable[[Path], dict[str, dict[str, Any]]],
+        _api("media_quotes.relevance", "load_topic_rules"),
+    )
+    return loader(path)
+
+
+def evaluate_topic(rule: Mapping[str, Any], article: Mapping[str, Any]) -> Any:
+    evaluator = cast(
+        Callable[[dict[str, Any], dict[str, Any]], Any],
+        _api("media_quotes.relevance", "evaluate_topic"),
+    )
+    return evaluator(dict(rule), dict(article))
+
+
+def detect_language(text: str) -> Any:
+    detector = cast(Callable[[str], Any], _api("media_quotes.language", "detect_language"))
+    return detector(text)
+
+
+def translate_quote(
+    text: str,
+    *,
+    source_language: str,
+    settings: Settings,
+    provider: Any = None,
+) -> Any:
+    translator = cast(Callable[..., Any], _api("media_quotes.translation", "translate_quote"))
+    return translator(text, source_language=source_language, settings=settings, provider=provider)
+
+
+def make_judge(settings: Settings) -> JudgeProvider:
+    factory = cast(Callable[[Settings], JudgeProvider], _api("media_quotes.judge", "make_judge"))
+    return factory(settings)
+
+
+def normalise_topic_decision(value: Any) -> TopicDecisionSnapshot:
+    return TopicDecisionSnapshot(
+        status=_text(_field(value, "status", "rejected")),
+        score=_float(_field(value, "score", 0.0)),
+        matched_terms=_strings(_field(value, "matched_terms", ())),
+        rule_id=_text(_field(value, "rule_id", "")),
+        rule_version=_text(_field(value, "rule_version", "")),
+        reasons=_strings(_field(value, "reasons", ())),
+    )
+
+
+def normalise_language_decision(value: Any) -> LanguageDecisionSnapshot:
+    return LanguageDecisionSnapshot(
+        language=_text(_field(value, "language", "unknown")),
+        confidence=_float(_field(value, "confidence", 0.0)),
+        evidence=_text(_field(value, "evidence", "")),
+    )
+
+
+def normalise_translation_result(value: Any) -> TranslationSnapshot:
+    status = _text(_field(value, "status", "failed"))
+    text = _text(_field(value, "text", ""))
+    error = _text(_field(value, "error", ""))
+    return TranslationSnapshot(
+        text=text,
+        source_language=_text(_field(value, "source_language", "")),
+        status=status,
+        model_snapshot=_text(_field(value, "model_snapshot", "")),
+        prompt_version=_text(_field(value, "prompt_version", "")),
+        content_hash=_text(_field(value, "content_hash", "")),
+        error=error,
+        usable=bool(text) and not error and status in {"translated", "ok", "success", "passed"},
+    )
+
+
+def normalise_judge_decision(value: Any) -> JudgeDecisionSnapshot:
+    return JudgeDecisionSnapshot(
+        task=_text(_field(value, "task", "")),
+        verdict=_text(_field(value, "verdict", "")).lower(),
+        confidence=_float(_field(value, "confidence", 0.0)),
+        rationale=_text(_field(value, "rationale", "")),
+        actor=_text(_field(value, "actor", "ai-judge")),
+        model_snapshot=_text(_field(value, "model_snapshot", "")),
+        prompt_version=_text(_field(value, "prompt_version", "")),
+        input_hash=_text(_field(value, "input_hash", "")),
+        output_hash=_text(_field(value, "output_hash", "")),
+        escalation_reason=_text(_field(value, "escalation_reason", "")),
+    )
+
+
+def ask_judge(judge: JudgeProvider, *, task: str, payload: Mapping[str, Any]) -> Any:
+    """Call a judge provider without depending on its exact call signature."""
+    methods = [getattr(judge, name, None) for name in ("judge", "decide", "evaluate")]
+    methods.append(judge if callable(judge) else None)
+    errors: list[Exception] = []
+    for method in methods:
+        if not callable(method):
+            continue
+        try:
+            return _call_judge_method(method, task=task, payload=payload)
+        except TypeError as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[-1]
+    raise TypeError("judge provider exposes no callable entry point")
+
+
+def _call_judge_method(method: Callable[..., Any], *, task: str, payload: Mapping[str, Any]) -> Any:
+    parameters: Mapping[str, inspect.Parameter]
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if parameters:
+        names = set(parameters)
+        accepts_kwargs = any(
+            param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+        )
+        accepts_positional = any(
+            param.kind
+            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for param in parameters.values()
+        )
+        if "task" in names:
+            kwargs: dict[str, Any] = {"task": task}
+            for key in (
+                "context",
+                "payload",
+                "input",
+                "input_data",
+                "data",
+                "article",
+                "decision",
+            ):
+                if key in names or accepts_kwargs:
+                    kwargs[key] = dict(payload)
+                    break
+            return method(**kwargs)
+        if accepts_kwargs:
+            return method(task=task, **dict(payload))
+        if accepts_positional:
+            return method(task, dict(payload))
+    return method(task=task, payload=dict(payload))
+
+
+def assess_topic(
+    rule: Mapping[str, Any],
+    article: Mapping[str, Any],
+    *,
+    judge: JudgeProvider | None = None,
+) -> TopicAssessment:
+    """Evaluate the deterministic rule; only the uncertain band may reach the judge."""
+    decision = normalise_topic_decision(evaluate_topic(rule, article))
+    status = (
+        decision.status if decision.status in {"accepted", "uncertain", "rejected"} else "rejected"
+    )
+    assessment = TopicAssessment(
+        status=cast(Literal["accepted", "uncertain", "rejected"], status),
+        score=decision.score,
+        matched_terms=decision.matched_terms,
+        rule_id=decision.rule_id,
+        rule_version=decision.rule_version,
+        reasons=decision.reasons,
+    )
+    if assessment.status != "uncertain" or judge is None:
+        return assessment
+    judged = normalise_judge_decision(
+        ask_judge(
+            judge,
+            task="topic_uncertain",
+            payload={
+                "topic_decision": {
+                    "status": decision.status,
+                    "score": decision.score,
+                    "matched_terms": list(decision.matched_terms),
+                    "rule_id": decision.rule_id,
+                    "rule_version": decision.rule_version,
+                    "reasons": list(decision.reasons),
+                },
+                "article": dict(article),
+            },
+        )
+    )
+    accepts = judged.verdict in {"accept", "accepted", "confirm", "confirmed"}
+    reasons = (*assessment.reasons, judged.rationale)
+    if not accepts or judged.escalation_reason or judged.task not in {"", "topic_uncertain"}:
+        reasons += ("ai-judge did not clear the uncertain band",)
+        return TopicAssessment(
+            status="rejected",
+            score=assessment.score,
+            matched_terms=assessment.matched_terms,
+            rule_id=assessment.rule_id,
+            rule_version=assessment.rule_version,
+            reasons=tuple(reason for reason in reasons if reason),
+            escalated=True,
+            judge=judged,
+        )
+    return TopicAssessment(
+        status="accepted",
+        score=assessment.score,
+        matched_terms=assessment.matched_terms,
+        rule_id=assessment.rule_id,
+        rule_version=assessment.rule_version,
+        reasons=tuple(reason for reason in reasons if reason),
+        judge=judged,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +382,7 @@ class DailyPipelineResult:
     rejected: int
     rejected_total: int
     status: str
+    topic_id: str = DEFAULT_TOPIC_ID
     review_flags: tuple[ObsolescenceFlag, ...] = ()
     offsets: dict[str, dict[str, Any]] = field(default_factory=dict)
     store_path: Path | None = None
@@ -78,6 +427,8 @@ def _persist_result(
 
     window_start, _ = _window(result.report_date, settings)
     assigned_by = "llm" if settings.llm_provider == "openrouter" else "rule"
+    # Defence in depth: only topic-accepted records may ever reach quote tables.
+    publishable = [record for record in result.records if record.topic_status == "accepted"]
     context_factory = session_context or _default_session_context
     with context_factory(settings) as session:
         start_pipeline_run(
@@ -85,12 +436,14 @@ def _persist_result(
             run_id=result.run_id,
             pipeline=pipeline,
             partition_date=result.report_date,
+            topic_id=result.topic_id,
+            commit=False,
         )
         articles_n, quotes_n = persist_articles_and_quotes(
-            session, list(result.records), result.offsets
+            session, publishable, result.offsets, commit=False
         )
         classifications_n = persist_quote_classifications(
-            session, list(result.records), result.offsets, assigned_by=assigned_by
+            session, publishable, result.offsets, assigned_by=assigned_by, commit=False
         )
         digest_id = persist_digest_manifest(
             session,
@@ -98,24 +451,30 @@ def _persist_result(
             window_start=window_start,
             window_end=result.report_date,
             md_path=str(result.digest_path or ""),
-            records=list(result.records),
+            records=publishable,
+            topic_id=result.topic_id,
+            commit=False,
         )
-        flags_n = persist_obsolescence_flags(session, list(result.review_flags))
-        append_audit_events(session, list(result.events) + list(result.coverage))
+        flags_n = persist_obsolescence_flags(session, list(result.review_flags), commit=False)
+        append_audit_events(session, list(result.events) + list(result.coverage), commit=False)
         finish_pipeline_run(
             session,
             run_id=result.run_id,
             status=result.status,
             stats={
                 **result.checks,
-                "quotes": len(result.records),
+                "topic_id": result.topic_id,
+                "quotes": len(publishable),
+                "topic_gated_records": len(result.records) - len(publishable),
                 "articles": articles_n,
                 "stored_quotes": quotes_n,
                 "classifications": classifications_n,
                 "obsolescence_flags": flags_n,
                 "digest_id": digest_id,
             },
+            commit=False,
         )
+        session.commit()
     return {
         "articles": articles_n,
         "stored_quotes": quotes_n,
@@ -132,6 +491,7 @@ def run_daily_pipeline(
     run_id: str | None = None,
     dry_run: bool = False,
     pipeline: str = "mq-run",
+    topic_id: str | None = None,
     persist_to_postgres: bool | None = None,
     session_context: SessionContextFactory | None = None,
 ) -> DailyPipelineResult:
@@ -139,6 +499,8 @@ def run_daily_pipeline(
     from .cli.audit import _audit_report, _write_audit
     from .cli.common import (
         _NOTICE,
+        _digest_path,
+        _load_topic_pack,
         _run_id,
         _window,
         _write_json,
@@ -150,10 +512,17 @@ def run_daily_pipeline(
     from .llm import make_provider
     from .rights_guard import apply_rights_limits
 
-    actual_run_id = run_id or _run_id(report_date, settings)
-    records, coverage, gaps, events, rejected, offsets = _collect(
-        settings, run_id=actual_run_id, report_date=report_date
+    active_topic_id = str(
+        topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
     )
+    topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
+    actual_run_id = run_id or _run_id(report_date, settings, topic_id=active_topic_id)
+    records, coverage, gaps, events, rejected, offsets = _collect(
+        settings, run_id=actual_run_id, report_date=report_date, topic_pack=topic_pack
+    )
+    publishable_records = [record for record in records if record.topic_status == "accepted"]
+    rejected += len(records) - len(publishable_records)
+    records = publishable_records
 
     if dry_run:
         return DailyPipelineResult(
@@ -167,30 +536,32 @@ def run_daily_pipeline(
             rejected=rejected,
             rejected_total=rejected,
             status="dry-run",
+            topic_id=active_topic_id,
             offsets=offsets,
         )
 
     rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
     kept = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
-    store_path = local_store_path(settings.export_dir, report_date)
+    store_path = local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
     write_jsonl(kept, store_path)
 
     review_flags = _load_review_flags(settings)
     now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
-    review_badges = {
-        flag.evidence.old_quote_id: review_badge(flag, now=now)
-        for flag in review_flags
-        if review_badge(flag, now=now)
-    }
+    review_badges: dict[str, str] = {}
+    for flag in review_flags:
+        badge = review_badge(flag, now=now)
+        if badge:
+            review_badges[flag.evidence.old_quote_id] = badge
 
     digest_path = write_digest(
         kept,
         report_date=report_date,
         window_start=_window(report_date, settings)[0],
         window_end=report_date,
-        out_path=settings.digest_dir / f"{report_date.isoformat()}.md",
+        out_path=_digest_path(settings, report_date, topic_id=active_topic_id),
         sections_csv=settings.sections_csv,
-        provider=make_provider(settings),
+        topic_pack=topic_pack,
+        provider=make_provider(settings, topic_pack=topic_pack),
         obsolescence_flags=review_flags,
         review_badges=review_badges,
         notice=_NOTICE,
@@ -215,6 +586,7 @@ def run_daily_pipeline(
         events=events,
         rejected=rejected + len(rights.rejected),
         review_queue=[flag.model_dump(mode="json") for flag in review_flags],
+        topic_id=active_topic_id,
     )
     audit_json_path, audit_md_path = _write_audit(settings, report)
     _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
@@ -231,6 +603,7 @@ def run_daily_pipeline(
         rejected=rejected,
         rejected_total=rejected + len(rights.rejected),
         status=status,
+        topic_id=active_topic_id,
         review_flags=tuple(review_flags),
         offsets=offsets,
         store_path=store_path,

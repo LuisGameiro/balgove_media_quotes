@@ -1,0 +1,297 @@
+{
+  "topic_id": "ukraine-war",
+  "name": "Russia-Ukraine War",
+  "description": "Attributed verbatim media quotes on the Russia-Ukraine war across international, Ukrainian, and Russian-language coverage.",
+  "version": "1.0.0",
+  "default_section": "other",
+  "sections": [
+    {
+      "section_id": "war_intensity",
+      "section_name": "War Intensity",
+      "description": "Quotes on the pace, scale and geography of fighting, casualty assessments, and front-line developments.",
+      "keywords": [
+        "offensive",
+        "shelling",
+        "fighting",
+        "front line",
+        "casualt",
+        "strike",
+        "drone",
+        "missile"
+      ],
+      "standin_summary": "The selected quotes describe pressure on the front line and expectations about how fighting may develop."
+    },
+    {
+      "section_id": "international_support",
+      "section_name": "International Support",
+      "description": "Quotes on military, financial, humanitarian and diplomatic support to Ukraine, and on partner commitments.",
+      "keywords": [
+        "support",
+        "air defence",
+        "partners",
+        "aid",
+        "assistance",
+        "coalition",
+        "package"
+      ],
+      "standin_summary": "The selected quotes focus on partner commitments and the practical delivery of support."
+    },
+    {
+      "section_id": "peace_initiatives",
+      "section_name": "Peace Initiatives",
+      "description": "Quotes on negotiations, ceasefires, peace plans, talks and conditionalities.",
+      "keywords": [
+        "ceasefire",
+        "negotiation",
+        "talks",
+        "peace",
+        "halt in strikes",
+        "diploma",
+        "summit"
+      ],
+      "standin_summary": "The selected quotes frame peace efforts around conditions, guarantees and verification."
+    },
+    {
+      "section_id": "sanctions",
+      "section_name": "Sanctions",
+      "description": "Quotes on sanctions regimes, enforcement, exemptions, and economic pressure on Russia.",
+      "keywords": [
+        "sanction",
+        "restriction",
+        "enforcement",
+        "dual-use",
+        "embargo",
+        "asset freeze"
+      ],
+      "standin_summary": "The selected quotes concern sanctions pressure, enforcement and its economic effects."
+    },
+    {
+      "section_id": "resources",
+      "section_name": "Conflicting Parties’ Resources",
+      "description": "Quotes on manpower, ammunition, equipment, energy, budgets and industrial capacity of both sides.",
+      "keywords": [
+        "ammunition",
+        "production",
+        "personnel",
+        "supplies",
+        "budget",
+        "mobilisation",
+        "defense industry"
+      ],
+      "standin_summary": "The selected quotes point to manpower, equipment and industrial capacity on both sides."
+    },
+    {
+      "section_id": "other",
+      "section_name": "Other / Cross-cutting",
+      "description": "Material quotes that do not fit cleanly into the sections above, including accountability and long-term consequences.",
+      "keywords": [],
+      "standin_summary": "The selected quotes raise cross-cutting consequences of the war."
+    }
+  ],
+  "relevance": {
+    "rule_id": "ukraine-war-v1",
+    "version": "1.0.0",
+    "locales": [
+      "en",
+      "uk",
+      "ru"
+    ],
+    "anchors": {
+      "en": [
+        "ukraine",
+        "ukrainian forces",
+        "russian invasion of ukraine",
+        "kyiv"
+      ],
+      "uk": [
+        "україна",
+        "українські війська",
+        "вторгнення в україну",
+        "київ"
+      ],
+      "ru": [
+        "украина",
+        "украинские войска",
+        "вторжение в украину",
+        "киев"
+      ]
+    },
+    "supporting_terms": {
+      "en": [
+        "russia",
+        "moskva",
+        "donbas",
+        "kharkiv",
+        "odesa",
+        "front line",
+        "shelling",
+        "missile strike",
+        "air defence",
+        "drone strike",
+        "sanctions",
+        "ceasefire",
+        "peace talks",
+        "international support"
+      ],
+      "uk": [
+        "росія",
+        "російські війська",
+        "донеччина",
+        "харків",
+        "одеса",
+        "фронт",
+        "обстріл",
+        "ракетний удар",
+        "повітряна оборона",
+        "удар дрона",
+        "санкції",
+        "перемир'я",
+        "мирні переговори",
+        "міжнародна допомога"
+      ],
+      "ru": [
+        "россия",
+        "российские войска",
+        "донбасс",
+        "харьков",
+        "одесса",
+        "фронт",
+        "обстрел",
+        "ракетный удар",
+        "противовоздушная оборона",
+        "удар дрона",
+        "санкции",
+        "перемирие",
+        "мирные переговоры",
+        "международная помощь"
+      ]
+    },
+    "exclusions": {
+      "en": [
+        "gaza",
+        "israel hamas",
+        "premier league",
+        "champions league",
+        "super bowl",
+        "nfl",
+        "formula one",
+        "oscars",
+        "box office",
+        "concert tour",
+        "reality show"
+      ],
+      "uk": [
+        "газа",
+        "ізраїль хамас",
+        "прем'єр-ліга",
+        "ліга чемпіонів",
+        "футбол",
+        "баскетбол",
+        "теніс",
+        "оскар",
+        "кінофестиваль",
+        "концертний тур",
+        "реальне шоу"
+      ],
+      "ru": [
+        "газа",
+        "израиль хамас",
+        "премьер-лига",
+        "лига чемпионов",
+        "футбол",
+        "баскетбол",
+        "теннис",
+        "оскар",
+        "кинофестиваль",
+        "концертный тур",
+        "реалити-шоу"
+      ]
+    },
+    "weights": {
+      "anchor": 3.0,
+      "supporting_term": 1.0,
+      "exclusion": -5.0,
+      "title_bonus": 1.0
+    },
+    "accept_threshold": 2.0,
+    "uncertain_band": {
+      "lower": 0.5,
+      "upper": 1.9
+    }
+  },
+  "quick_keywords": [
+    "ukraine",
+    "ukrainian",
+    "kyiv",
+    "kiev",
+    "russia",
+    "russian",
+    "moscow",
+    "putin",
+    "zelenskiy",
+    "zelensky",
+    "kremlin",
+    "donbas",
+    "donetsk",
+    "luhansk",
+    "kharkiv",
+    "kherson",
+    "zaporizhzhia",
+    "crimea",
+    "kursk",
+    "black sea",
+    "odesa",
+    "front line",
+    "frontline",
+    "air defence",
+    "interceptor",
+    "drone",
+    "missile",
+    "shahed",
+    "shelling",
+    "ceasefire",
+    "mobilisation",
+    "artillery",
+    "ammunition",
+    "україна",
+    "українськ",
+    "київ",
+    "росія",
+    "російськ",
+    "москва",
+    "путін",
+    "зеленськ",
+    "кремль",
+    "донбас",
+    "донеччин",
+    "луганськ",
+    "харків",
+    "херсон",
+    "запоріжж",
+    "крим",
+    "курськ",
+    "чорне море",
+    "одеса",
+    "фронт",
+    "ппо",
+    "перехоплювач",
+    "шахед",
+    "обстріл",
+    "ракета",
+    "дрон",
+    "перемир'я",
+    "мобілізація",
+    "артилерія",
+    "боєприпас",
+    "украина",
+    "украинск",
+    "киев",
+    "россия",
+    "российск",
+    "путин",
+    "зеленск",
+    "донбасс",
+    "перемирие",
+    "боеприпас"
+  ]
+}

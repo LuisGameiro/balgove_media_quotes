@@ -61,7 +61,7 @@ def latest_digests(directory: Path, limit: int = 14) -> list[tuple[str, str]]:  
 
 
 def coverage_gaps(audit_dir: Path) -> list[dict[str, Any]]:  # pragma: no cover
-    reports = sorted(audit_dir.glob("audit-*.json"), reverse=True) if audit_dir.is_dir() else []
+    reports = sorted(audit_dir.rglob("audit-*.json"), reverse=True) if audit_dir.is_dir() else []
     if not reports:
         return []
     payload = json.loads(reports[0].read_text(encoding="utf-8"))
@@ -70,7 +70,7 @@ def coverage_gaps(audit_dir: Path) -> list[dict[str, Any]]:  # pragma: no cover
 
 
 def _latest_audit(audit_dir: Path) -> dict[str, Any]:
-    reports = sorted(audit_dir.glob("audit-*.json"), reverse=True) if audit_dir.is_dir() else []
+    reports = sorted(audit_dir.rglob("audit-*.json"), reverse=True) if audit_dir.is_dir() else []
     if not reports:
         return {}
     payload = json.loads(reports[0].read_text(encoding="utf-8"))
@@ -140,6 +140,8 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
         with st.expander(day):
             st.markdown(markdown)
 
+    report_topic = str(_latest_audit(cfg.audit_dir).get("topic_id", "ukraine-war"))
+    st.caption(f"Latest audit report: topic {report_topic}")
     st.subheader("Per-source coverage")
     st.dataframe(load_coverage(cfg.audit_dir))
 

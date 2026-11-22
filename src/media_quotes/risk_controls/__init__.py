@@ -2,7 +2,6 @@
 
 from ..exceptions import BudgetExceededError
 from .budget import budget_gate, estimate_backfill
-from .cache import build_cache_key
 from .models import (
     STRICT,
     BackfillEstimate,
@@ -27,7 +26,6 @@ __all__ = [
     "ReviewQueue",
     "ReviewState",
     "budget_gate",
-    "build_cache_key",
     "estimate_backfill",
     "obsoletion_allowed",
     "partition_name",

@@ -10,8 +10,7 @@ Includes:
   tables, artifact file links, and numeric trend sparklines).
 - Structured compute logging with secret redaction and trace correlation.
 - Contract asset checks (`export_schema_valid`, `audit_gates_pass`, `coverage_gaps_disclosed`,
-  `t0_rights_boundary_enforced`, `quote_rights_limits_respected`, `restore_drill_integrity`,
-  `gold_set_thresholds_met`).
+  `t0_rights_boundary_enforced`, `quote_rights_limits_respected`, `gold_set_thresholds_met`).
 - Governance & evaluation assets (`gold_set_evaluation`, `retention_readiness_report`).
 - Operational sensor (`review_queue_sla_sensor`).
 """
@@ -39,6 +38,24 @@ class DailyPipelineConfig(dg.Config):
 
     dry_run: bool = False
     persist_to_postgres: bool | None = None
+    topic_id: str | None = None
+
+
+class CheckConfig(dg.Config):
+    """Topic used by the asset under check; mirrors DailyPipelineConfig.topic_id.
+
+    Dagster does not expose the asset's materialization metadata to a check, so when a
+    check is executed on its own it must be given the same topic as the asset run it
+    validates. Without it the configured default topic is assumed.
+    """
+
+    topic_id: str | None = None
+
+
+class GoldSetCheckConfig(dg.Config):
+    """Gold set whose evaluation report this check validates."""
+
+    gold_set: str = "synthetic-v1"
 
 
 class GoldSetEvalConfig(dg.Config):
@@ -62,11 +79,25 @@ def database_resource(_: dg.InitResourceContext) -> DatabaseResourceHandle:
     return DatabaseResourceHandle(_default_session_context)
 
 
-def _load_audit_report(settings: Settings, report_date: date) -> dict[str, Any]:
-    path = settings.audit_dir / f"audit-{report_date.isoformat()}.json"
-    if not path.is_file():
-        return {}
-    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+def _load_audit_report(
+    settings: Settings, report_date: date, topic_id: str | None = None
+) -> dict[str, Any]:
+    name = f"audit-{report_date.isoformat()}.json"
+    from .cli.audit import _audit_target_dir
+
+    target = _audit_target_dir(settings, str(topic_id or settings.active_topic)) / name
+    if target.is_file():
+        return cast(dict[str, Any], json.loads(target.read_text(encoding="utf-8")))
+    return {}
+
+
+def _store_path(settings: Settings, report_date: date, topic_id: str | None = None) -> Any:
+    """Resolve the export path for the topic the partition actually ran with."""
+    from .export import local_store_path
+
+    return local_store_path(
+        settings.export_dir, report_date, topic_id=topic_id or settings.active_topic
+    )
 
 
 def _check_date(context: dg.AssetCheckExecutionContext, settings: Settings) -> date:
@@ -104,12 +135,15 @@ def _build_coverage_table(coverage: Sequence[dict[str, Any]]) -> dg.TableMetadat
 
 def _log_pipeline_events(context: dg.AssetExecutionContext, result: DailyPipelineResult) -> None:
     """Emit structured, secret-redacted stage summaries into Dagster compute logs."""
-    blocked_mandatory = [str(gap.get("source_id")) for gap in result.gaps if gap.get("mandatory")]
+    blocked_mandatory = sorted(
+        {str(gap.get("source_id")) for gap in result.gaps if gap.get("mandatory")}
+    )
     summary_payload = redact_sensitive(
         None,
         "info",
         {
             "run_id": result.run_id,
+            "topic_id": result.topic_id,
             "report_date": result.report_date.isoformat(),
             "status": result.status,
             "quotes_verified": len(result.records),
@@ -122,28 +156,11 @@ def _log_pipeline_events(context: dg.AssetExecutionContext, result: DailyPipelin
     )
     context.log.info(f"Daily pipeline summary: {json.dumps(summary_payload, sort_keys=True)}")
     if blocked_mandatory:
-        sources_csv = ", ".join(sorted(set(blocked_mandatory)))
+        sources_csv = ", ".join(blocked_mandatory)
         context.log.warning(
             f"T0 rights gate active for mandatory sources: {sources_csv} "
             "(replayed from synthetic fixtures or disclosed as coverage gaps)."
         )
-
-
-def _load_review_flags_json(settings: Settings) -> list[Any]:
-    """Load review queue flags using Pydantic JSON validation so ISO strings parse cleanly."""
-    from .risk_controls.models import ObsolescenceFlag
-
-    queue_path = settings.audit_dir / "review-queue.json"
-    if not queue_path.is_file():
-        return []
-    payload = json.loads(queue_path.read_text(encoding="utf-8"))
-    flags_data = payload.get("flags", []) if isinstance(payload, dict) else []
-    flags = []
-    if isinstance(flags_data, list):
-        for item in flags_data:
-            if isinstance(item, dict):
-                flags.append(ObsolescenceFlag.model_validate_json(json.dumps(item)))
-    return flags
 
 
 def build_definitions() -> dg.Definitions:
@@ -172,16 +189,18 @@ def build_definitions() -> dg.Definitions:
     ) -> dict[str, Any]:
         app_settings = settings
         report_date = date.fromisoformat(context.partition_key)
+        active_topic = config.topic_id or app_settings.active_topic
         context.log.info(
             f"Starting daily_quotes_digest for partition {report_date.isoformat()} "
-            f"(dry_run={config.dry_run})"
+            f"(topic={active_topic}, dry_run={config.dry_run})"
         )
         result: DailyPipelineResult = run_daily_pipeline(
             app_settings,
             report_date=report_date,
-            run_id=f"dagster-{report_date.isoformat()}",
+            run_id=f"dagster-{report_date.isoformat()}-{active_topic}",
             dry_run=config.dry_run,
             pipeline="dagster-daily",
+            topic_id=config.topic_id,
             persist_to_postgres=config.persist_to_postgres,
             session_context=database.context(),
         )
@@ -189,6 +208,7 @@ def build_definitions() -> dg.Definitions:
         if result.dry_run:
             summary = {
                 "run_id": result.run_id,
+                "topic_id": result.topic_id,
                 "report_date": result.report_date.isoformat(),
                 "dry_run": True,
                 "quotes": len(result.records),
@@ -214,6 +234,7 @@ def build_definitions() -> dg.Definitions:
 
         metadata: dict[str, Any] = {
             "run_id": result.run_id,
+            "topic_id": result.topic_id,
             "report_date": result.report_date.isoformat(),
             "quotes": len(result.records),
             "coverage": len(result.coverage),
@@ -226,7 +247,6 @@ def build_definitions() -> dg.Definitions:
             "logs_path": dg.MetadataValue.path(str(result.logs_path or "")),
             "audit_json_path": dg.MetadataValue.path(str(result.audit_json_path or "")),
             "audit_md_path": dg.MetadataValue.path(str(result.audit_md_path or "")),
-            "content_hash": result.records[0].content_hash if result.records else "",
             "coverage_table": _build_coverage_table(result.coverage),
             **checks,
         }
@@ -238,6 +258,7 @@ def build_definitions() -> dg.Definitions:
         context.add_output_metadata(metadata)
         return {
             "run_id": result.run_id,
+            "topic_id": result.topic_id,
             "report_date": result.report_date.isoformat(),
             "quotes": len(result.records),
             "coverage": len(result.coverage),
@@ -342,17 +363,17 @@ def build_definitions() -> dg.Definitions:
         today = settings.report_date
         months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
         report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
+        report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
         hot_count = len(report["partitions_hot"])
         detach_count = len(report["partitions_to_detach"])
         context.log.info(
-            f"Retention readiness check: hot={hot_count}, "
-            f"detach={detach_count}, longest_txn_ok={report['longest_txn_ok']}"
+            f"Retention readiness check: hot={hot_count}, detach={detach_count}; "
+            "lock duration not measured"
         )
         context.add_output_metadata(
             {
                 "blob_cutoff": str(report["blob_cutoff"]),
                 "log_cutoff": str(report["log_cutoff"]),
-                "longest_txn_ok": bool(report["longest_txn_ok"]),
                 "audit_rows_dropped": bool(report["audit_rows_dropped"]),
                 "hot_partition_count": hot_count,
                 "detach_partition_count": detach_count,
@@ -367,13 +388,15 @@ def build_definitions() -> dg.Definitions:
         description="The dated JSONL export reads back as strict ExportQuoteRecord values.",
     )
     def export_schema_valid(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
+        context: dg.AssetCheckExecutionContext,
+        config: CheckConfig,
+        settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
-        from .export import local_store_path, read_jsonl
+        from .export import read_jsonl
 
         app_settings = settings
         report_date = _check_date(context, app_settings)
-        records = read_jsonl(local_store_path(app_settings.export_dir, report_date))
+        records = read_jsonl(_store_path(app_settings, report_date, config.topic_id))
         return dg.AssetCheckResult(
             passed=bool(records),
             severity=dg.AssetCheckSeverity.ERROR,
@@ -389,10 +412,14 @@ def build_definitions() -> dg.Definitions:
         description="The deterministic audit report reports gates_pass=true.",
     )
     def audit_gates_pass(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
+        context: dg.AssetCheckExecutionContext,
+        config: CheckConfig,
+        settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         app_settings = settings
-        report = _load_audit_report(app_settings, _check_date(context, app_settings))
+        report = _load_audit_report(
+            app_settings, _check_date(context, app_settings), config.topic_id
+        )
         gates_pass = bool(report.get("checks", {}).get("gates_pass", False))
         return dg.AssetCheckResult(
             passed=gates_pass,
@@ -407,10 +434,14 @@ def build_definitions() -> dg.Definitions:
         description="Blocked sources are disclosed as coverage gaps rather than silently skipped.",
     )
     def coverage_gaps_disclosed(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
+        context: dg.AssetCheckExecutionContext,
+        config: CheckConfig,
+        settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         app_settings = settings
-        report = _load_audit_report(app_settings, _check_date(context, app_settings))
+        report = _load_audit_report(
+            app_settings, _check_date(context, app_settings), config.topic_id
+        )
         gaps = report.get("coverage_gaps", [])
         disclosed = bool(report) and bool(report.get("checks", {}).get("coverage_gaps_disclosed"))
         passed = not gaps or disclosed
@@ -430,14 +461,16 @@ def build_definitions() -> dg.Definitions:
         ),
     )
     def t0_rights_boundary_enforced(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
+        context: dg.AssetCheckExecutionContext,
+        config: CheckConfig,
+        settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         from .cli.common import _fixture_mode, _load_registry
-        from .export import local_store_path, read_jsonl
+        from .export import read_jsonl
 
         app_settings = settings
         report_date = _check_date(context, app_settings)
-        records = read_jsonl(local_store_path(app_settings.export_dir, report_date))
+        records = read_jsonl(_store_path(app_settings, report_date, config.topic_id))
         registry = {row.source_id: row for row in _load_registry(app_settings)}
         violations: list[str] = []
         for record in records:
@@ -469,14 +502,16 @@ def build_definitions() -> dg.Definitions:
         ),
     )
     def quote_rights_limits_respected(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
+        context: dg.AssetCheckExecutionContext,
+        config: CheckConfig,
+        settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
-        from .export import local_store_path, read_jsonl
+        from .export import read_jsonl
         from .rights_guard import apply_rights_limits
 
         app_settings = settings
         report_date = _check_date(context, app_settings)
-        records = read_jsonl(local_store_path(app_settings.export_dir, report_date))
+        records = read_jsonl(_store_path(app_settings, report_date, config.topic_id))
         decision = apply_rights_limits(records, max_quote_words=app_settings.max_quote_words)
         passed = len(decision.rejected) == 0
         return dg.AssetCheckResult(
@@ -493,40 +528,6 @@ def build_definitions() -> dg.Definitions:
         )
 
     @dg.asset_check(
-        asset=daily_quotes_digest,
-        name="restore_drill_integrity",
-        description=(
-            "CHK-17: Exported JSONL passes round-trip identity and SHA-256 content_hash "
-            "integrity verification."
-        ),
-    )
-    def restore_drill_integrity(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
-    ) -> dg.AssetCheckResult:
-        from .export import local_store_path, read_jsonl
-        from .restore_drill import verify_export_integrity
-
-        app_settings = settings
-        report_date = _check_date(context, app_settings)
-        store_path = local_store_path(app_settings.export_dir, report_date)
-        if not store_path.is_file():
-            return dg.AssetCheckResult(
-                passed=False,
-                severity=dg.AssetCheckSeverity.ERROR,
-                metadata={"store_path": str(store_path)},
-                description="Export store file does not exist for restore drill verification",
-            )
-        primary = read_jsonl(store_path)
-        restored = read_jsonl(store_path)
-        ok, reasons = verify_export_integrity(primary, restored)
-        return dg.AssetCheckResult(
-            passed=ok and bool(primary),
-            severity=dg.AssetCheckSeverity.ERROR,
-            metadata={"quotes_verified": len(primary), "discrepancies": len(reasons)},
-            description="; ".join(reasons) if reasons else None,
-        )
-
-    @dg.asset_check(
         asset=gold_set_evaluation,
         name="gold_set_thresholds_met",
         description=(
@@ -534,10 +535,12 @@ def build_definitions() -> dg.Definitions:
         ),
     )
     def gold_set_thresholds_met(
-        context: dg.AssetCheckExecutionContext, settings: dg.ResourceParam[Settings]
+        context: dg.AssetCheckExecutionContext,
+        config: GoldSetCheckConfig,
+        settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         del context
-        path = settings.audit_dir / "eval-synthetic-v1.json"
+        path = settings.audit_dir / f"eval-{config.gold_set}.json"
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,
@@ -595,10 +598,11 @@ def build_definitions() -> dg.Definitions:
         ),
     )
     def review_queue_sla_sensor(context: dg.SensorEvaluationContext) -> dg.SensorResult:
+        from .cli.common import load_review_flags
         from .risk_controls.obsolescence import ReviewQueue
 
         app_settings = get_settings()
-        flags = _load_review_flags_json(app_settings)
+        flags = load_review_flags(app_settings)
         queue = ReviewQueue(flags)
         now = datetime.now(UTC)
         overdue_ids = queue.overdue(now=now, sla_days=1)
@@ -638,7 +642,6 @@ def build_definitions() -> dg.Definitions:
             coverage_gaps_disclosed,
             t0_rights_boundary_enforced,
             quote_rights_limits_respected,
-            restore_drill_integrity,
             gold_set_thresholds_met,
         ],
         jobs=[job, governance_job],

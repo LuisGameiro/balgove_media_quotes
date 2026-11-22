@@ -10,13 +10,14 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import Engine
 
 from .config import PROJECT_ROOT, get_settings
 from .db.engine import create_db_engine, make_session_factory
 from .db.repository import sync_sources
 from .observability import configure_logging
-from .registry import load_sources_csv
+from .source_configs import load_registry_rows
 
 _ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
 
@@ -33,22 +34,23 @@ def initialize_database(engine: Engine, alembic_ini: Path | None = None) -> int:
     with engine.connect() as connection:
         config.attributes = {"connection": connection}
         command.upgrade(config, "head")
-        # One revision is applied by `head` on a fresh database.
-        return 1
+    return len(list(ScriptDirectory.from_config(config).walk_revisions()))
 
 
 def main() -> None:
     settings = get_settings()
     configure_logging(settings)
     engine = create_db_engine(settings)
+    try:
+        statements = initialize_database(engine, settings.alembic_ini)
+        rows = load_registry_rows(settings.sources_dir, fallback_csv=settings.sources_csv)
 
-    statements = initialize_database(engine, settings.alembic_ini)
-    rows = load_sources_csv(resolve_sources_csv(settings.sources_csv))
+        with make_session_factory(engine)() as session:
+            synced = sync_sources(session, rows)
+    finally:
+        engine.dispose()
 
-    with make_session_factory(engine)() as session:
-        synced = sync_sources(session, rows)
-
-    print(f"Bootstrap complete: {statements} SQL statements, {synced} sources synced")
+    print(f"Bootstrap complete: {statements} migration(s), {synced} sources synced")
 
 
 if __name__ == "__main__":

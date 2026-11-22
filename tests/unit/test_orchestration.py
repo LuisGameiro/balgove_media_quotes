@@ -65,7 +65,6 @@ def test_definitions_expose_asset_job_checks_and_schedule() -> None:
         "export_schema_valid",
         "gold_set_thresholds_met",
         "quote_rights_limits_respected",
-        "restore_drill_integrity",
         "t0_rights_boundary_enforced",
     ]
     assert PARTITION_START == "2026-10-01"
@@ -135,8 +134,44 @@ def test_materialize_one_partition_with_resource_overrides(
         "coverage_gaps_disclosed": True,
         "t0_rights_boundary_enforced": True,
         "quote_rights_limits_respected": True,
-        "restore_drill_integrity": True,
     }
+
+
+def test_checks_read_their_own_topic_when_both_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from media_quotes.pipeline import run_daily_pipeline
+
+    settings = _make_settings(tmp_path)
+    monkeypatch.setattr(orchestration, "get_settings", lambda: settings)
+
+    # A default-topic run leaves an audit file and export that must not be read by the
+    # ai-policy asset checks below.
+    run_daily_pipeline(settings, report_date=date(2026, 11, 19), topic_id="ukraine-war")
+
+    defs = build_definitions()
+    job = defs.resolve_job_def("daily_quotes_digest_job")
+    result = job.execute_in_process(
+        partition_key="2026-11-19",
+        run_config={
+            "ops": {
+                "daily_quotes_digest": {
+                    "config": {"topic_id": "ai-policy", "persist_to_postgres": False}
+                }
+            }
+        },
+    )
+    assert result.success
+    check_results = {ev.check_name: ev.passed for ev in result.get_asset_check_evaluations()}
+    assert check_results == {
+        "export_schema_valid": True,
+        "audit_gates_pass": True,
+        "coverage_gaps_disclosed": True,
+        "t0_rights_boundary_enforced": True,
+        "quote_rights_limits_respected": True,
+    }
+    assert (tmp_path / "audit" / "ai-policy" / "audit-2026-11-19.json").is_file()
+    assert (tmp_path / "export" / "ai-policy" / "quotes-2026-11-19.jsonl").is_file()
 
 
 def test_materialize_governance_job_in_process(
@@ -158,7 +193,6 @@ def test_materialize_governance_job_in_process(
     assert eval_out["false_quote_rate"] == 0.0
 
     ret_out = result.output_for_node("retention_readiness_report")
-    assert ret_out["longest_txn_ok"] is True
     assert ret_out["audit_rows_dropped"] is False
 
     check_evals = result.get_asset_check_evaluations()

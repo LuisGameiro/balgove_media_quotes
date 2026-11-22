@@ -88,7 +88,16 @@ class OpenRouterInferenceProvider(InferenceProvider):
 
         cache_key = hashlib.sha256(
             json.dumps(
-                [section_id, section_name, list(quote_texts)], ensure_ascii=False, sort_keys=True
+                [
+                    section_id,
+                    section_name,
+                    list(quote_texts),
+                    self.client.model_snapshot,
+                    self.client.prompt_version,
+                    self.client.schema_hash,
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
             ).encode("utf-8")
         ).hexdigest()
 

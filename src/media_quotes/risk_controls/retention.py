@@ -20,7 +20,7 @@ def retention_plan(policy: RetentionPolicy, today: date, months: Iterable[date])
     detach: list[str] = []
     keep: list[str] = []
     for month in sorted(set(months)):
-        for table in ("audit_events", "llm_decisions", "verifier_results"):
+        for table in ("audit_events", "llm_decisions"):
             name = partition_name(table, month)
             if (month.year, month.month) < current:
                 detach.append(name)

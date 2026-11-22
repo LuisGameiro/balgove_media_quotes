@@ -27,7 +27,7 @@ def test_main_runs_full_bootstrap_pipeline(monkeypatch, capsys) -> None:
     configure_logging = MagicMock()
     monkeypatch.setattr(bootstrap, "configure_logging", configure_logging)
 
-    engine = object()
+    engine = MagicMock()
     create_db_engine = MagicMock(return_value=engine)
     monkeypatch.setattr(bootstrap, "create_db_engine", create_db_engine)
 
@@ -35,8 +35,8 @@ def test_main_runs_full_bootstrap_pipeline(monkeypatch, capsys) -> None:
     monkeypatch.setattr(bootstrap, "initialize_database", initialize_database)
 
     rows = [object()]
-    load_sources_csv = MagicMock(return_value=rows)
-    monkeypatch.setattr(bootstrap, "load_sources_csv", load_sources_csv)
+    load_registry_rows = MagicMock(return_value=rows)
+    monkeypatch.setattr(bootstrap, "load_registry_rows", load_registry_rows)
 
     session = MagicMock()
     factory = MagicMock(return_value=session)
@@ -51,10 +51,13 @@ def test_main_runs_full_bootstrap_pipeline(monkeypatch, capsys) -> None:
     configure_logging.assert_called_once_with(settings)
     create_db_engine.assert_called_once_with(settings)
     initialize_database.assert_called_once_with(engine, settings.alembic_ini)
-    load_sources_csv.assert_called_once_with(bootstrap.resolve_sources_csv(settings.sources_csv))
+    load_registry_rows.assert_called_once_with(
+        settings.sources_dir, fallback_csv=settings.sources_csv
+    )
+    engine.dispose.assert_called_once_with()
     make_session_factory.assert_called_once_with(engine)
     factory.assert_called_once_with()
     session.__enter__.assert_called_once_with()
     session.__exit__.assert_called_once()
     sync_sources.assert_called_once_with(session.__enter__.return_value, rows)
-    assert "Bootstrap complete: 7 SQL statements, 3 sources synced" in capsys.readouterr().out
+    assert "Bootstrap complete: 7 migration(s), 3 sources synced" in capsys.readouterr().out

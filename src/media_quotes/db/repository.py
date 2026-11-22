@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from ..config import DEFAULT_TOPIC_ID
 from ..text_utils import normalise_text
 from .tables import (
     articles_table,
@@ -51,7 +52,11 @@ def record_eval_run(
     commit: bool = True,
 ) -> str:
     """Append one evaluation result; eval ids are stable per gold set + date."""
-    eval_id = _run_uuid(f"eval:{gold_set_version}:{report_date.isoformat()}")
+    from ..evaluation import EVAL_CONTRACT_VERSION
+
+    eval_id = _run_uuid(
+        f"eval:{EVAL_CONTRACT_VERSION}:{gold_set_version}:{report_date.isoformat()}"
+    )
     eval_id_str = str(eval_id)
     statement = pg_insert(eval_runs_table).values(
         eval_id=eval_id,
@@ -224,9 +229,22 @@ def persist_articles_and_quotes(
                     {
                         "source_id": record.source_id,
                         "section_id": record.section_id,
+                        "topic_id": record.topic_id,
                         "claim_only": record.claim_only,
                     }
                 ),
+                "topic_id": record.topic_id,
+                "topic_status": record.topic_status,
+                "topic_rule_version": record.topic_rule_version,
+                "topic_score": record.topic_score,
+                "matched_terms": _jsonable(record.matched_terms),
+                "quote_language": record.quote_language,
+                "language_confidence": record.language_confidence,
+                "quote_text_en": record.quote_text_en,
+                "translation_model_snapshot": record.translation_model_snapshot,
+                "translation_prompt_version": record.translation_prompt_version,
+                "translation_hash": record.translation_hash,
+                "translation_status": record.translation_status,
             }
         )
     inserted_articles = 0
@@ -245,6 +263,27 @@ def persist_articles_and_quotes(
         inserted_articles = _inserted_count(result, len(article_values))
     inserted_quotes = 0
     if quote_values:
+        # A quote id collision with an older run is not a duplicate business record.
+        # Remap only the display id, keeping the business-key conflict target below.
+        # Only the date prefixes in this batch can collide with a remapped candidate.
+        prefixes = sorted({str(item["canonical_quote_id"])[:10] for item in quote_values})
+        existing_statement = select(quotes_table.c.canonical_quote_id).where(
+            or_(*(quotes_table.c.canonical_quote_id.like(f"{prefix}-%") for prefix in prefixes))
+        )
+        existing_ids = {str(row[0]) for row in session.execute(existing_statement)}
+        assigned_ids = set(existing_ids)
+        for item in quote_values:
+            quote_id = str(item["canonical_quote_id"])
+            if quote_id not in assigned_ids:
+                assigned_ids.add(quote_id)
+                continue
+            date_prefix, sequence = quote_id.rsplit("-", 1)
+            next_sequence = (int(sequence) + 1) % 10000
+            while f"{date_prefix}-{next_sequence:04d}" in assigned_ids:
+                next_sequence = (next_sequence + 1) % 10000
+            remapped = f"{date_prefix}-{next_sequence:04d}"
+            item["canonical_quote_id"] = remapped
+            assigned_ids.add(remapped)
         statement = pg_insert(quotes_table).values(quote_values)
         statement = statement.on_conflict_do_nothing(
             index_elements=["article_id", "quote_text_normalised", "char_start", "char_end"]
@@ -330,14 +369,21 @@ def persist_digest_manifest(
     window_end: date,
     md_path: str,
     records: list[ExportQuoteRecord],
+    topic_id: str = DEFAULT_TOPIC_ID,
     commit: bool = True,
 ) -> str:
     """Idempotently upsert the daily Markdown digest manifest into the `digests` table."""
-    digest_id = _run_uuid(f"digest:{digest_date.isoformat()}")
+    digest_seed = (
+        f"digest:{digest_date.isoformat()}"
+        if topic_id == DEFAULT_TOPIC_ID
+        else f"digest:{topic_id}:{digest_date.isoformat()}"
+    )
+    digest_id = _run_uuid(digest_seed)
     sections: dict[str, list[str]] = {}
     for rec in records:
         sections.setdefault(rec.section_id, []).append(rec.quote_id)
     manifest = {
+        "topic_id": topic_id,
         "total_quotes": len(records),
         "quote_ids": [rec.quote_id for rec in records],
         "sections": sections,
@@ -349,9 +395,10 @@ def persist_digest_manifest(
         window_end=window_end,
         md_path=md_path,
         manifest=_jsonable(manifest),
+        topic_id=topic_id,
     )
     statement = statement.on_conflict_do_update(
-        index_elements=["digest_date"],
+        index_elements=["topic_id", "digest_date"],
         set_={
             "window_start": statement.excluded.window_start,
             "window_end": statement.excluded.window_end,
@@ -421,6 +468,7 @@ def start_pipeline_run(
     run_id: str,
     pipeline: str,
     partition_date: date,
+    topic_id: str = DEFAULT_TOPIC_ID,
     commit: bool = True,
 ) -> str:
     """Insert a run row in 'running' state; idempotent on re-run."""
@@ -430,6 +478,7 @@ def start_pipeline_run(
         "partition_date": partition_date,
         "status": "running",
         "stats": {},
+        "topic_id": topic_id,
     }
     statement = pg_insert(pipeline_runs_table).values(values)
     statement = statement.on_conflict_do_nothing(index_elements=["run_id"])
@@ -453,7 +502,7 @@ def finish_pipeline_run(
     statement = (
         update(pipeline_runs_table)
         .where(pipeline_runs_table.c.run_id == _run_uuid(run_id))
-        .values(status=status, stats=_jsonable(stats))
+        .values(status=status, stats=_jsonable(stats), finished_at=datetime.now(UTC))
     )
     session.execute(statement)
     if commit:
@@ -536,7 +585,10 @@ def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: boo
     statement = pg_insert(sources_table).values(values)
     statement = statement.on_conflict_do_update(
         index_elements=["source_id"],
-        set_={name: getattr(statement.excluded, name) for name in columns},
+        set_={
+            **{name: getattr(statement.excluded, name) for name in columns},
+            "updated_at": datetime.now(UTC),
+        },
     )
     session.execute(statement)
     if commit:

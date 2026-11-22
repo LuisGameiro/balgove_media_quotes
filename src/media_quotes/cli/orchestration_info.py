@@ -23,8 +23,7 @@ def _do_dagster(settings: Settings) -> int:  # pragma: no cover - operator guida
     print("Dagster assets: daily_quotes_digest, gold_set_evaluation, retention_readiness_report")
     print(
         "Asset checks: export_schema_valid, audit_gates_pass, coverage_gaps_disclosed, "
-        "t0_rights_boundary_enforced, quote_rights_limits_respected, restore_drill_integrity, "
-        "gold_set_thresholds_met"
+        "t0_rights_boundary_enforced, quote_rights_limits_respected, gold_set_thresholds_met"
     )
     print(f"Partitions: daily from {PARTITION_START}")
     print(f"Code version: {CODE_VERSION}")

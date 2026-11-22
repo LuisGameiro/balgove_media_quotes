@@ -37,34 +37,66 @@ Ignored and intentionally absent from a clean checkout: `.venv/`, `__pycache__/`
 ```text
 src/media_quotes/
 ├── __init__.py                       # package marker
-├── __main__.py                       # python -m media_quotes entry point
-├── adapters.py                       # permission-gated source adapter; T0 fail-closed
-├── bootstrap.py                      # Alembic upgrade head + source registry sync
-├── cli.py                            # mq command-line interface (12 subcommands)
+├── __main__.py                       # python -m media_quotes (CLI entry point)
+├── bootstrap.py                      # Alembic upgrade head + JSON source registry sync
 ├── config.py                         # Settings, PROJECT_ROOT, SecretStr DB URL, date defaults
-├── coverage.py                       # per-source coverage counters
-├── dashboard.py                      # dashboard projection scaffold
-├── digest.py                         # daily MD digest assembly scaffold
 ├── enums.py                          # one definition of canonical enum values
 ├── exceptions.py                     # shared domain exception hierarchy
-├── export.py                         # derived JSONL writer
-├── llm.py                            # LLM provider boundary scaffold
+├── py.typed                          # PEP 561 marker for downstream type checking
+├── adapters/                         # permission-gated adapter package (T0 fail-closed)
+│   ├── __init__.py                   # public re-exports (was the old adapters.py API)
+│   ├── base.py                       # SourceAdapter + discovery-method subclasses
+│   ├── blob_cache.py                 # content-addressed BlobCache and path-confined FixtureSource
+│   ├── html_extractor.py             # JSON-LD + HTML fixture parser, newspaper body extraction
+│   ├── quote_extractor.py            # quote spans, speaker attribution, section fallback
+│   ├── registry.py                   # adapter plugin registry and build_adapter()
+│   ├── rss.py                        # RSS 2.0 / Atom discovery
+│   └── sitemap.py                    # standard and Google News sitemap discovery
+├── cli/                              # mq command-line interface (19 subcommands)
+│   ├── __init__.py / __main__.py / app.py   # exports, python -m entry, parser and dispatch
+│   ├── common.py                     # shared helpers: paths, run IDs, registry, topic pack, JSON I/O
+│   ├── audit.py / logs.py / eval.py  # audit reports, log inspection, gold-set evaluation
+│   ├── run.py / fetch.py             # offline collect + explicit rights-gated live fetch
+│   ├── ops.py / maintenance.py       # backfill/sources/topics/digest/export; review/retention/drill
+│   └── orchestration_info.py         # Dagster guidance text
+├── db/                               # SQLAlchemy Core persistence
+│   ├── engine.py / tables.py         # engine/session factory; table definitions
+│   ├── repository.py                 # idempotent upserts for quotes, digests, runs, audit
+│   ├── resources.py                  # Dagster-friendly session-context handle
+│   └── schema.sql                    # authoritative DDL consumed by Alembic 0001
+├── risk_controls/                    # RSK-07/08/11 policies (package with flat re-exports)
+│   ├── models.py                     # review flags, estimates, retention policy
+│   ├── obsolescence.py               # review queue and SLA helpers
+│   ├── budget.py / retention.py      # backfill budget gate; partition/prune planner
+├── validation/                       # data-asset validation (package with flat re-exports)
+│   ├── common.py / sources.py / sections.py / quotes.py
+│   └── modular.py                    # per-source JSON and per-topic pack checks
+├── batch.py                          # provider Batch API planner (design stub, no production caller)
+├── curation.py                       # section assignment, cross-outlet dedup, review badges
+├── dashboard.py                      # Streamlit dashboard projection
+├── digest.py                         # daily Markdown digest assembly
+├── evaluation.py                     # pure acceptance-threshold contract
+├── export.py                         # strict JSONL export with atomic writes
+├── extraction.py                     # trafilatura extraction and quality gate
+├── fetch.py                          # rate-limited, rights-gated HTTP client policy
+├── gold_set.py                       # versioned gold set and 60/20/20 splits
+├── judge.py                          # AI-judge contract (off/shadow/advisory/decision)
+├── language.py                       # offline quote-language detection
+├── live.py                           # shared live feed/article fetch loop
+├── llm.py / llm_live.py / llm_openrouter.py   # provider protocol and pinned boundaries
 ├── models.py                         # strict Pydantic boundary models
 ├── observability.py                  # structlog JSON logging, redaction, optional OTLP
-├── pipeline.py                       # public daily pipeline service shared by CLI and Dagster
-├── py.typed                          # PEP 561 marker for downstream type checking
+├── orchestration.py                  # Dagster assets, 6 checks, jobs, schedule, sensor
+├── pipeline.py                       # daily pipeline service shared by CLI and Dagster
 ├── registry.py                       # sources.csv -> SourceRegistryRow and T0 policy
-├── risk_controls.py                  # RSK-07/08/11 policy: review queue, budget gate, retention, cache key
+├── relevance.py                      # deterministic versioned topic relevance rules
+├── restore_drill.py                  # export integrity and retention readiness
+├── rights_guard.py                   # DEC-10 word limits and attribution policy guard
+├── source_configs.py / source_topics.py       # per-source JSON config and topic routes
 ├── text_utils.py                     # Unicode folding and exact-span helpers
-├── validation/                       # data-asset validation package with flat re-exports
-├── verification.py                   # two-stage quote verification logic
-└── db/
-    ├── __init__.py                   # database subpackage marker
-    ├── engine.py                     # SQLAlchemy engine and session factory
-    ├── repository.py                 # registry upsert/query operations
-    ├── resources.py                  # Dagster-friendly session-context resource handle
-    ├── schema.sql                    # SQL DDL source consumed by Alembic bootstrap
-    └── tables.py                     # SQLAlchemy Core tables used by repository code
+├── topics.py                         # topic pack model, loaders and scaffold
+├── translation.py                    # optional pinned-boundary translation
+└── verification.py / verification_stages.py   # deterministic verification
 ```
 
 Rules:
@@ -105,32 +137,21 @@ data/
 ```text
 tests/
 ├── conftest.py                       # shared fixtures and warning policy
-├── unit/                             # pure, offline tests; mirrors src modules
-│   ├── __init__.py
-│   ├── test_adapters.py
-│   ├── test_config.py
-│   ├── test_coverage.py
-│   ├── test_enums.py
-│   ├── test_export_writer.py
-│   ├── test_models.py
-│   ├── test_observability.py
-│   ├── test_observability_policy.py
-│   ├── test_registry.py
-│   ├── test_registry_coercions.py
-│   ├── test_risk_controls.py
-│   ├── test_risk_controls_edges.py
-│   ├── test_text_and_export.py
-│   ├── test_text_utils_edges.py
-│   ├── test_validation.py
-│   └── test_validation_edges.py
+├── unit/                             # pure, offline tests (one file per feature area)
+│   ├── test_adapters.py / test_all_sources_matrix.py / test_newspaper_scraping.py
+│   ├── test_config.py / test_enums.py / test_models.py / test_registry*.py
+│   ├── test_curation.py / test_export_writer.py / test_text*.py
+│   ├── test_relevance.py / test_topics*.py / test_language.py / test_translation.py / test_judge.py
+│   ├── test_fetch*.py / test_llm*.py / test_openrouter.py / test_batch.py
+│   ├── test_audit*.py / test_dashboard*.py / test_eval*.py / test_orchestration.py
+│   ├── test_maintenance_cli.py / test_migrations.py / test_restore_drill.py / test_rights_guard.py
+│   ├── test_observability*.py / test_gold_set.py / test_verification*.py / test_extraction.py
+│   ├── risk_controls/                # test_policies.py, test_validation.py
+│   └── validation/                   # test_helpers.py, test_service.py
 ├── integration/                      # CLI/bootstrap/DB boundary tests
-│   ├── __init__.py
-│   ├── test_bootstrap.py
-│   ├── test_cli.py
-│   ├── test_cli_errors.py
-│   └── test_storage.py
+│   ├── test_bootstrap.py / test_storage.py
+│   └── cli/test_app.py / cli/test_errors.py
 └── contract/                         # docs/data contract checks
-    ├── __init__.py
     └── test_docs_qa.py
 ```
 
@@ -163,7 +184,7 @@ docs/
 └── 14-command-reference.md           # every command, flag, script and operational order
 ```
 
-Former `docs/05-critique-and-improvements.md` is retired. Do not recreate it; its content was folded into 01–04 and 06.
+The former doc 05 (critique and improvements) is retired. Do not recreate it; its content was folded into 01–04 and 06.
 
 ## 6. Migrations and repository tooling
 
@@ -172,7 +193,16 @@ migrations/
 ├── env.py                            # Alembic environment
 ├── script.py.mako                    # Alembic revision template
 └── versions/
-    └── 0001_initial.py               # initial schema revision
+    ├── 0001_initial.py               # initial schema
+    ├── 0002_gold_set.py              # gold-set labels and eval runs
+    ├── 0003_decision_cache.py        # decision cache and partition registry
+    ├── 0004_topic_language_judge.py  # topic/language/translation provenance
+    ├── 0005_topic_packs.py           # topic_id on quotes, digests and runs
+    └── 0006_digest_topic_unique.py   # one digest per topic and date
+
+`decision_cache` and `storage_partitions` (migration 0003) plus `batch.py` are contract stubs:
+no CLI, provider or asset reads or writes them in a real run. They are kept for the planned live
+cache/batch/backfill work, not as active features.
 
 scripts/
 ├── docs_qa.py                        # documentation QA checker (CHK-08)
@@ -210,7 +240,7 @@ The `.gitkeep` files preserve empty directories in git. Actual generated files u
 | New source | `data/sources.csv`, `docs/07-sources.md`, and validation tests |
 | New canonical enum value | `src/media_quotes/enums.py`, `data/quotes.schema.json`, `src/media_quotes/db/schema.sql`, docs, tests |
 | New DB table/column | `migrations/versions/`, `src/media_quotes/db/schema.sql`, `src/media_quotes/db/tables.py`, `src/media_quotes/models.py` |
-| New command | `src/media_quotes/cli.py`, root README, `docs/02-stack-and-architecture.md` |
+| New command | `src/media_quotes/cli/app.py` (parser + dispatch), `src/media_quotes/cli/__init__.py` (re-export), root README, `docs/02-stack-and-architecture.md` |
 | New planning document | `docs/`, with an entry in `docs/README.md` |
 | New reusable Python logic | `src/media_quotes/` with a unit test |
 | New CI/repo check | `Makefile` target and `.github/workflows/ci.yml` via `uv run make check` |

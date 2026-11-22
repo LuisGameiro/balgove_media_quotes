@@ -47,7 +47,7 @@ Priority = High/Med/Low from Sev × Likelihood (High×High or High×Certain = Hi
 
 The engineering-addressable risks (RSK-07/08/11) have a concrete mitigation plan in
 [10-risk-mitigation-plan.md](10-risk-mitigation-plan.md) with unit-tested policy controls in
-`src/media_quotes/risk_controls.py` and checks CHK-15…17; their design decisions (DEC-17/18/19)
+`src/media_quotes/risk_controls/` and checks CHK-15…17; their design decisions (DEC-17/18/19)
 and policy closures are indexed in [08](08-traceability.md) §8 while integration exit criteria
 are enforced in T1–T10.
 

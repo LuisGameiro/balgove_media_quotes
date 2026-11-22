@@ -14,8 +14,17 @@ DATA_DIR = PROJECT_ROOT / "data"
 def _copy_data(tmp_path: Path) -> Path:
     target = tmp_path / "data"
     target.mkdir()
-    for name in ("sources.csv", "sections.csv", "quotes.schema.json", "quotes.example.jsonl"):
+    for name in (
+        "sources.csv",
+        "sections.csv",
+        "source_topic_routes.csv",
+        "topic_rules.json",
+        "quotes.schema.json",
+        "quotes.example.jsonl",
+    ):
         shutil.copyfile(DATA_DIR / name, target / name)
+    for name in ("sources", "topics"):
+        shutil.copytree(DATA_DIR / name, target / name)
     return target
 
 

@@ -29,6 +29,7 @@ var/export/*
 !var/export/.gitkeep
 var/logs/*
 !var/logs/.gitkeep
+var/tmp-*
 digests/*
 !digests/.gitkeep
 data/reports/*

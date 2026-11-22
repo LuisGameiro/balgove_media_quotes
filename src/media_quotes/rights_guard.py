@@ -39,7 +39,7 @@ def apply_rights_limits(
         reasons: list[str] = []
         if words > max_quote_words:
             reasons.append(f"over_word_limit:{words}>{max_quote_words}")
-        if attribution_required and not (record.article_author or record.source_name):
+        if attribution_required and not record.article_author.strip():
             reasons.append("missing_attribution")
         if reasons:
             rejected.append({"quote_id": record.quote_id, "reason": ";".join(reasons)})

@@ -13,6 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 STRICT = ConfigDict(strict=True, extra="forbid")
 
+# Bump when metric definitions or their computation change, so a re-eval writes a new
+# eval_runs row instead of silently keeping stale metrics for the same gold set and date.
+EVAL_CONTRACT_VERSION = "eval-contract-v1"
+
 
 class AcceptanceThresholds(BaseModel):
     """Minimum values; false_quote_rate is a maximum (0.0 required)."""
@@ -27,6 +31,13 @@ class AcceptanceThresholds(BaseModel):
     false_quote_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     obsolete_precision: float = Field(default=0.90, ge=0.0, le=1.0)
     judge_kappa: float = Field(default=0.70, ge=0.0, le=1.0)
+    # Topic/language/category acceptance criteria (docs/16 §8). New metrics are only
+    # enforced when a report actually measured them so older gold sets stay comparable.
+    topic_recall: float = Field(default=0.75, ge=0.0, le=1.0)
+    topic_precision: float = Field(default=0.90, ge=0.0, le=1.0)
+    topic_false_positive_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    language_accuracy: float = Field(default=0.80, ge=0.0, le=1.0)
+    category_coverage: float = Field(default=0.80, ge=0.0, le=1.0)
 
     def as_dict(self) -> dict[str, float]:
         return self.model_dump()
@@ -43,14 +54,30 @@ def obsolete_precision(
     return round(correct / len(confirmed_obsolete), 4)
 
 
+MAXIMUM_METRICS = frozenset({"false_quote_rate", "topic_false_positive_rate"})
+NEW_METRICS = frozenset(
+    {
+        "topic_recall",
+        "topic_precision",
+        "topic_false_positive_rate",
+        "language_accuracy",
+        "category_coverage",
+    }
+)
+
+
 def evaluate_metrics(
     metrics: Mapping[str, Any], thresholds: AcceptanceThresholds
 ) -> dict[str, Any]:
     """Return a copy of `metrics` with `thresholds`, `pass` and failing check names."""
     minimums = thresholds.as_dict()
-    values = {name: float(metrics.get(name, 0.0)) for name in minimums}
+    values = {
+        name: float(metrics.get(name, 0.0))
+        for name in minimums
+        if name not in NEW_METRICS or name in metrics
+    }
     passed = {
-        name: (value <= minimums[name] if name == "false_quote_rate" else value >= minimums[name])
+        name: (value <= minimums[name] if name in MAXIMUM_METRICS else value >= minimums[name])
         for name, value in values.items()
     }
     result = dict(metrics)

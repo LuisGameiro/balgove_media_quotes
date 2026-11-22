@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKFILL_START: Final = date(2026, 10, 1)
 REPORT_WINDOW_DAYS: Final = 14
 GOLD_SET_VERSION: Final = "synthetic-v1"
+DEFAULT_TOPIC_ID: Final = "ukraine-war"
 
 # DEC-10 licence-limit policy — enforced by the renderer, never by the frozen schema.
 MAX_QUOTE_WORDS: Final = 30
@@ -46,7 +47,12 @@ class Settings(BaseSettings):
     digest_dir: Path = Path("digests")
     blob_dir: Path = Path("var/blobs")
     sources_csv: Path = Path("data/sources.csv")
+    sources_dir: Path = Path("data/sources")
     sections_csv: Path = Path("data/sections.csv")
+    source_topics_csv: Path = Path("data/source_topic_routes.csv")
+    topic_rules_path: Path = Path("data/topic_rules.json")
+    topics_dir: Path = Path("data/topics")
+    active_topic: str = DEFAULT_TOPIC_ID
     schema_path: Path = Path("data/quotes.schema.json")
     fixtures_dir: Path = Path("data/fixtures")
     gold_set_dir: Path = Path("data/gold_set")
@@ -80,11 +86,28 @@ class Settings(BaseSettings):
     openrouter_timeout_seconds: float = 30.0
     openrouter_max_retries: int = 2
 
+    # Optional workstreams: classify/translate quotes and AI-assisted review.
+    translation_mode: str = "off"
+    ai_judge_mode: str = "off"
+    ai_judge_model_snapshot: str = "unset"
+    judge_prompt_version: str = "judge-v1"
+    translation_prompt_version: str = "translation-v1"
+
+    # Live fetch policy (used by scripts/test_scraper.py and mq fetch).
+    fetch_timeout_seconds: float = Field(default=10.0, gt=0)
+    fetch_requests_per_second: float = Field(default=1.0, gt=0)
+    fetch_max_bytes: int = Field(default=5_000_000, gt=0)
+    fetch_max_connections: int = Field(default=10, gt=0)
+
     @field_validator(
         "digest_dir",
         "blob_dir",
         "sources_csv",
+        "sources_dir",
         "sections_csv",
+        "source_topics_csv",
+        "topic_rules_path",
+        "topics_dir",
         "schema_path",
         "fixtures_dir",
         "gold_set_dir",
@@ -98,6 +121,28 @@ class Settings(BaseSettings):
     def _resolve_path(cls, value: object) -> Path:
         path = Path(str(value))
         return path if path.is_absolute() else PROJECT_ROOT / path
+
+    @field_validator("translation_mode", mode="before")
+    @classmethod
+    def _validate_translation_mode(cls, value: object) -> str:
+        mode = str(value).strip().lower()
+        if mode not in {"off", "detect_only", "translate"}:
+            raise ValueError("translation_mode must be off, detect_only or translate")
+        return mode
+
+    @field_validator("ai_judge_mode", mode="before")
+    @classmethod
+    def _validate_ai_judge_mode(cls, value: object) -> str:
+        mode = str(value).strip().lower()
+        if mode not in {"off", "shadow", "advisory", "decision"}:
+            raise ValueError("ai_judge_mode must be off, shadow, advisory or decision")
+        return mode
+
+    @staticmethod
+    def _require_pinned_snapshot(value: str, name: str) -> None:
+        snapshot = value.strip()
+        if not snapshot or snapshot.lower() in {"unset", "latest"}:
+            raise ValueError(f"{name} must be a pinned snapshot id (no 'unset'/'latest')")
 
     @model_validator(mode="after")
     def _validate_llm_provider(self) -> Settings:
@@ -115,6 +160,26 @@ class Settings(BaseSettings):
                 "LLM_MODEL_SNAPSHOT must be a pinned OpenRouter model id when "
                 "LLM_PROVIDER=openrouter"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_translation_mode(self) -> Settings:
+        if self.translation_mode != "translate":
+            return self
+        if self.llm_provider != "openrouter":
+            raise ValueError("TRANSLATION_MODE=translate requires LLM_PROVIDER=openrouter")
+        self._require_pinned_snapshot(self.llm_model_snapshot, "LLM_MODEL_SNAPSHOT")
+        return self
+
+    @model_validator(mode="after")
+    def _check_ai_judge_mode(self) -> Settings:
+        if self.ai_judge_mode == "off":
+            return self
+        if self.llm_provider != "openrouter":
+            raise ValueError("AI_JUDGE_MODE != off requires LLM_PROVIDER=openrouter")
+        if self.openrouter_api_key is None or not self.openrouter_api_key.get_secret_value():
+            raise ValueError("OPENROUTER_API_KEY is required when AI_JUDGE_MODE != off")
+        self._require_pinned_snapshot(self.ai_judge_model_snapshot, "AI_JUDGE_MODEL_SNAPSHOT")
         return self
 
     @property

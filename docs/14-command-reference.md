@@ -30,7 +30,7 @@ Steps executed by `scripts/check.ps1`:
 
 ---
 
-## 2. All 17 CLI subcommands (`media_quotes.cli` / `mq`)
+## 2. All 19 CLI subcommands (`media_quotes.cli` / `mq`)
 
 The CLI entrypoint is `.\.venv\Scripts\python.exe -m media_quotes` (or `python -m media_quotes` / `mq` when the virtualenv is active).
 
@@ -38,16 +38,18 @@ The CLI entrypoint is `.\.venv\Scripts\python.exe -m media_quotes` (or `python -
 |---|---|---|
 | `doctor` | Self-diagnostic check (data files, T0 rights gate, active env/DB/Dagster config) | `python -m media_quotes doctor` |
 | `validate` | Validate `data/sources.csv`, `data/sections.csv`, and `data/quotes.schema.json` | `python -m media_quotes validate` |
-| `bootstrap` | Run Alembic migrations (`0001..0003`) and upsert `data/sources.csv` into Postgres | `python -m media_quotes bootstrap` |
+| `bootstrap` | Run Alembic migrations (`0001..0006`) and sync `data/sources/*.json` into Postgres | `python -m media_quotes bootstrap` |
 | `version` | Print package version, schema hash, prompt version, and runtime date window | `python -m media_quotes version` |
-| `run` | Execute daily collection pipeline (discover, fetch, verify, dedupe, digest, export, audit) | `python -m media_quotes run --offline --date 2026-11-19` |
-| `run --dry-run` | Plan collection and inspect T0 coverage gaps without writing files or DB rows | `python -m media_quotes run --offline --dry-run --date 2026-11-19` |
-| `audit` | Generate deterministic audit report (`var/audit/audit-YYYY-MM-DD.{json,md}`) | `python -m media_quotes audit --date 2026-11-19` |
+| `run` | Execute daily collection pipeline (discover, fetch, verify, dedupe, digest, export, audit) | `python -m media_quotes run --date 2026-11-19` |
+| `run --dry-run` | Plan collection and inspect T0 coverage gaps without writing files or DB rows | `python -m media_quotes run --dry-run --date 2026-11-19` |
+| `audit` | Generate deterministic audit report (`var/audit/audit-YYYY-MM-DD.{json,md}`); `--topic` selects a non-default topic pack | `python -m media_quotes audit --date 2026-11-19 --topic ai-policy` |
 | `digest` | Regenerate Markdown digest (`digests/YYYY-MM-DD.md`) from verified local store | `python -m media_quotes digest --date 2026-11-19` |
 | `export` | Write schema-validated derived JSONL export (`var/export/quotes.jsonl` or `--out`) | `python -m media_quotes export --date 2026-11-19 --out var/export/latest.jsonl` |
 | `logs` | Filter and print structured JSON logs correlated by `--run-id` and optional `--trace-id` | `python -m media_quotes logs --run-id run-3300d30f1c8e` |
 | `eval` | Evaluate versioned gold set against precision/recall/false-quote contracts (`--split` optional) | `python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` |
 | `sources` | Inspect source registry, T0 gate status, and per-source quote counts (`--tier`, `--rights-status`) | `python -m media_quotes sources --tier 1` |
+| `topics` | List, scaffold (`init`) or show topic packs (`--action`, `--name`, `--description`) | `python -m media_quotes topics --action list` |
+| `fetch` | Plan a rights-cleared fetch; add `--live` to contact the source | `python -m media_quotes fetch --source-id guardian` |
 | `backfill` | Estimate historical backfill articles, cache hit rate, duration, and cost vs `--max-cost` | `python -m media_quotes backfill --from 2026-10-01 --to 2026-11-19 --max-cost 100 --dry-run` |
 | `review` | Manage human-in-the-loop obsolescence review queue (`--action list\|seed\|decide`) | `python -m media_quotes review --action list` |
 | `retention` | Check RSK-11 monthly partition detach readiness and 180d blob / 90d log cutoffs | `python -m media_quotes retention --dry-run` |
@@ -70,7 +72,7 @@ Exit codes:
 docker compose up -d --wait
 docker compose ps
 
-# 2. Apply Alembic migrations (0001_initial, 0002_gold_set, 0003_decision_cache) and sync sources.csv
+# 2. Apply Alembic migrations (0001_initial .. 0006_digest_topic_unique) and sync data/sources/*.json
 .\.venv\Scripts\python.exe -m media_quotes.bootstrap
 
 # 3. Or invoke via the CLI subcommand
@@ -110,8 +112,8 @@ Contract thresholds enforced (`AcceptanceThresholds` in `src/media_quotes/evalua
 
 ```powershell
 # Step 1: Run two daily partitions (idempotent even when re-run multiple times against Postgres)
-.\.venv\Scripts\python.exe -m media_quotes run --offline --verbose --date 2026-11-18
-.\.venv\Scripts\python.exe -m media_quotes run --offline --verbose --date 2026-11-19
+.\.venv\Scripts\python.exe -m media_quotes run --verbose --date 2026-11-18
+.\.venv\Scripts\python.exe -m media_quotes run --verbose --date 2026-11-19
 
 # Step 2: Run restore drill comparing the two daily exports
 .\.venv\Scripts\python.exe -m media_quotes restore-drill --date 2026-11-19 --reference var/export/quotes-2026-11-18.jsonl
@@ -137,7 +139,7 @@ Contract thresholds enforced (`AcceptanceThresholds` in `src/media_quotes/evalua
 # Run unit tests only
 .\.venv\Scripts\python.exe -m pytest tests/unit/ -v
 
-# Run Dagster orchestration unit tests (assets, 7 checks, governance job, SLA sensor)
+# Run Dagster orchestration unit tests (assets, 6 checks, governance job, SLA sensor)
 .\.venv\Scripts\python.exe -m pytest tests/unit/test_orchestration.py -v
 
 # Run OpenRouter / LLM gateway unit tests (no network calls made)
@@ -179,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\manual_validate.ps1 -Date 202
 ### 7.1 Inspecting Definitions, Assets, Jobs, Schedules & Sensors
 
 ```powershell
-# 1. Print project-level Dagster summary (assets, 7 checks, jobs, schedule, sensor, Postgres flag)
+# 1. Print project-level Dagster summary (assets, 6 checks, jobs, schedule, sensor, Postgres flag)
 .\.venv\Scripts\python.exe -m media_quotes dagster
 
 # 2. Validate the Dagster code location without starting a daemon
@@ -252,17 +254,19 @@ and when Streamlit executes it as a standalone script, so the previous
   - `daily_quotes_digest` (`DailyPartitionsDefinition(start_date="2026-10-01")`, group `media_quotes`, `code_version=c4-daily-pipeline-v2`)
   - `gold_set_evaluation` (group `media_quotes_governance`, `CHK-03`)
   - `retention_readiness_report` (group `media_quotes_governance`, `CHK-17` / `RSK-11`)
-- **Asset checks (`7`):**
+- **Asset checks (`6`):**
   - `export_schema_valid` — verifies strict `ExportQuoteRecord` JSONL deserialization.
   - `audit_gates_pass` — verifies `gates_pass=true` in the partition's audit report.
   - `coverage_gaps_disclosed` — verifies blocked sources are disclosed as coverage gaps.
   - `t0_rights_boundary_enforced` (`CHK-01`) — verifies zero live fetches for blocked sources.
   - `quote_rights_limits_respected` (`DEC-10` / `CHK-19`) — verifies `<= 30` words and required attribution.
-  - `restore_drill_integrity` (`CHK-17`) — verifies round-trip JSONL identity and SHA-256 `content_hash`.
   - `gold_set_thresholds_met` (`CHK-03`) — verifies `0%` false-quote rate and all gold-set thresholds.
+ All five checks on `daily_quotes_digest` accept `CheckConfig(topic_id)`. When a check is executed
+ on its own, pass the same `topic_id` as the asset run it validates; otherwise the configured
+ default topic is assumed.
 - **Jobs (`2`):** `daily_quotes_digest_job`, `governance_audit_job`.
 - **Schedule & sensor (`2`):** `daily_digest_schedule` (`0 6 * * * UTC`, stopped by default), `review_queue_sla_sensor` (300s interval, stopped by default).
-- **Resources & config:** `settings`, `database`; run config `DailyPipelineConfig(dry_run, persist_to_postgres)` and `GoldSetEvalConfig(gold_set, report_date)`.
+- **Resources & config:** `settings`, `database`; run config `DailyPipelineConfig(dry_run, persist_to_postgres, topic_id)` and `GoldSetEvalConfig(gold_set, report_date)`.
 - **Rich UI metadata:** Inline Markdown digest and audit previews (`MetadataValue.md`), per-source coverage and T0 status table (`MetadataValue.table`), clickable artifact paths (`MetadataValue.path`), and structured secret-redacted compute logs.
 
 ---
@@ -320,7 +324,7 @@ PowerShell treats `<` and `>` as redirection operators: paste the **actual** run
 ```powershell
 docker compose up -d --wait
 docker compose ps                       # service "postgres" should be healthy
-python -m media_quotes.bootstrap        # Alembic 0001..0003 + sources.csv sync
+python -m media_quotes.bootstrap        # Alembic 0001..0006 + data/sources/*.json sync
 python -m media_quotes doctor
 python -m media_quotes run --date 2026-11-19
 python -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19
@@ -383,17 +387,17 @@ Every quality requirement in §4 of the brief (`REQ-01`..`REQ-14` in [01-require
 | Brief §4 Quality Requirement | Req ID | Implementation Module(s) | Command(s) to Verify |
 |---|---|---|---|
 | **0. T0 rights gate: no source ingested without recorded permission; logs include `license_reference`** | `REQ-01` | `src/media_quotes/registry.py`, `src/media_quotes/db/schema.sql`, `src/media_quotes/orchestration.py` | `.\.venv\Scripts\python.exe -m media_quotes doctor`<br>`.\.venv\Scripts\python.exe -m media_quotes sources --tier 1`<br>`.\.venv\Scripts\python.exe -m pytest tests/unit/test_registry.py tests/unit/test_fetch.py -v` |
-| **1. All material articles from mandatory sources should be detected** *(in blocked mode: replayed from synthetic fixtures and disclosed as explicit coverage gaps)* | `REQ-02` | `src/media_quotes/adapters.py`, `src/media_quotes/coverage.py`, `src/media_quotes/cli/audit.py` | `.\.venv\Scripts\python.exe -m media_quotes run --offline --verbose --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes audit --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` *(checks `article_recall >= 0.90`)* |
-| **2. All material quotes from those articles should be detected** | `REQ-05` | `src/media_quotes/adapters.py`, `src/media_quotes/gold_set.py`, `src/media_quotes/cli/eval.py` | `.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` *(checks `quote_recall >= 0.90` across 60/20/20 splits)*<br>`.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --split test --date 2026-11-19` |
+| **1. All material articles from mandatory sources should be detected** *(in blocked mode: replayed from synthetic fixtures and disclosed as explicit coverage gaps)* | `REQ-02` | `src/media_quotes/adapters/`, `src/media_quotes/cli/audit.py` | `.\.venv\Scripts\python.exe -m media_quotes run --verbose --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes audit --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` *(checks `article_recall >= 0.90`)* |
+| **2. All material quotes from those articles should be detected** | `REQ-05` | `src/media_quotes/adapters/`, `src/media_quotes/gold_set.py`, `src/media_quotes/cli/eval.py` | `.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` *(checks `quote_recall >= 0.90` across 60/20/20 splits)*<br>`.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --split test --date 2026-11-19` |
 | **3. Quotes relevant, substantial, self-explanatory, and cleansed (no ads, page numbers, table symbols, cookie notices)** | `REQ-06` | `src/media_quotes/verification_stages.py`, `src/media_quotes/verification.py`, `src/media_quotes/rights_guard.py` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_verification_stages.py tests/unit/test_verification.py tests/unit/test_rights_guard.py -v`<br>`.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` *(verifies `false_quote_rate == 0.0` against 14 negative candidates)* |
 | **4. All material quotes are extracted and saved (no important articles or quotes left out)** | `REQ-07` | `src/media_quotes/pipeline.py`, `src/media_quotes/db/repository.py`, `src/media_quotes/export.py` | `.\.venv\Scripts\python.exe -m media_quotes run --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes export --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes restore-drill --date 2026-11-19 --reference var/export/quotes-2026-11-18.jsonl` |
 | **5. Accurate extraction of quotes and metadata from the primary source (exact NFC span, speaker, canonical URL, date, byline, tier, claim-only flags)** | `REQ-03`, `REQ-04`, `REQ-08` | `src/media_quotes/text_utils.py`, `src/media_quotes/verification.py`, `src/media_quotes/models.py` | `.\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19` *(verifies `span_exact_match == 1.0` and `metadata_accuracy == 1.0`)*<br>`.\.venv\Scripts\python.exe -m pytest tests/unit/test_text_utils.py tests/unit/test_models.py -v` |
 | **6. Accurate load for the MD file (verbatim text, categorisation into canonical sections, and obsolete quotes excluded/badged)** | `REQ-09` | `src/media_quotes/digest.py`, `src/media_quotes/curation.py`, `src/media_quotes/risk_controls/obsolescence.py` | `.\.venv\Scripts\python.exe -m media_quotes digest --date 2026-11-19`<br>`.\.venv\Scripts\python.exe -m media_quotes review --action seed --quote-id Q-20261118-0001`<br>`.\.venv\Scripts\python.exe -m media_quotes review --action decide --quote-id Q-20261118-0001 --verdict confirmed --reason-code superseded`<br>`.\.venv\Scripts\python.exe -m pytest tests/unit/test_curation.py tests/unit/test_digest.py -v` |
 | **7. Relevant 1–2 sentence interpretation of quotes for each section in the MD file** | `REQ-10` | `src/media_quotes/llm.py`, `src/media_quotes/llm_live.py`, `src/media_quotes/llm_openrouter.py` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_llm_live.py tests/unit/test_openrouter.py -v`<br>`.\.venv\Scripts\python.exe -m media_quotes run --date 2026-11-19` *(uses offline `LLM_PROVIDER=local` or live `LLM_PROVIDER=openrouter`)* |
-| **8. Database of quotes is auditable and easily integratable with frontier labs' LLMs (strict frozen JSON Schema + content-addressed SHA-256 hashes)** | `REQ-11` | `data/quotes.schema.json`, `src/media_quotes/export.py`, `src/media_quotes/db/schema.sql` | `.\.venv\Scripts\python.exe scripts/validate_data.py`<br>`.\.venv\Scripts\python.exe -m media_quotes export --date 2026-11-19 --out var/export/quotes.jsonl`<br>`.\.venv\Scripts\dagster.exe asset materialize -m media_quotes.orchestration --select daily_quotes_digest --partition 2026-11-19` *(runs `export_schema_valid` & `restore_drill_integrity` checks)* |
+| **8. Database of quotes is auditable and easily integratable with frontier labs' LLMs (strict frozen JSON Schema + content-addressed SHA-256 hashes)** | `REQ-11` | `data/quotes.schema.json`, `src/media_quotes/export.py`, `src/media_quotes/db/schema.sql` | `.\.venv\Scripts\python.exe scripts/validate_data.py`<br>`.\.venv\Scripts\python.exe -m media_quotes export --date 2026-11-19 --out var/export/quotes.jsonl`<br>`.\.venv\Scripts\dagster.exe asset materialize -m media_quotes.orchestration --select daily_quotes_digest --partition 2026-11-19` *(runs the `export_schema_valid` check)* |
 | **9. Logs are saved for auditability and traceability (`run_id`, `trace_id`, `license_reference`, secret redaction)** | `REQ-12` | `src/media_quotes/observability.py`, `src/media_quotes/cli/logs.py`, `src/media_quotes/db/repository.py` | `.\.venv\Scripts\python.exe -m media_quotes logs --run-id run-1870a49f4880`<br>`.\.venv\Scripts\python.exe -m pytest tests/unit/test_observability.py -v` |
 | **10. Processing handles potential errors (network issues, rate limits, timeouts, unavailable content, oversized responses)** | `REQ-13` | `src/media_quotes/fetch.py`, `src/media_quotes/llm_openrouter.py`, `src/media_quotes/orchestration.py` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_fetch.py tests/unit/test_openrouter.py -v` |
-| **11. Process media articles regardless of size or content type (DOM/Trafilatura extraction, JSON/HTML/XML fixtures, quality gate, Playwright fallback boundary)** | `REQ-14` | `src/media_quotes/extraction.py`, `src/media_quotes/adapters.py` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_extraction.py tests/unit/test_adapters.py tests/unit/test_newspaper_scraping.py -v` |
+| **11. Process media articles regardless of size or content type (DOM/Trafilatura extraction, JSON/HTML/XML fixtures, quality gate)** | `REQ-14` | `src/media_quotes/extraction.py`, `src/media_quotes/adapters/` | `.\.venv\Scripts\python.exe -m pytest tests/unit/test_extraction.py tests/unit/test_adapters.py tests/unit/test_newspaper_scraping.py -v` |
 
 ---
 
@@ -406,7 +410,7 @@ When `PERSIST_TO_POSTGRES=true` is active in `.env`, `mq run`, `mq eval`, and `m
 ```powershell
 # 1. Seed a review flag, run the pipeline, and run gold-set evaluation
 .\.venv\Scripts\python.exe -m media_quotes review --action seed --quote-id Q-20261118-0001
-.\.venv\Scripts\python.exe -m media_quotes run --offline --date 2026-11-19
+.\.venv\Scripts\python.exe -m media_quotes run --date 2026-11-19
 .\.venv\Scripts\python.exe -m media_quotes eval --gold-set synthetic-v1 --date 2026-11-19
 
 # 2. Check row counts across all PostgreSQL tables
@@ -457,4 +461,81 @@ network request, use `--html-file` with `my_article.html` or a fixture under `da
 # 4. After step 1, copy articles[].url and test ONE real article page.
 #    Do NOT use a made-up slug such as sample-article-slug: it returns 404 Not Found.
 #    .\.venv\Scripts\python.exe scripts/test_scraper.py --source-id guardian --live --url <paste-real-url>
+```
+
+The portable form of the same diagnostic commands is:
+
+```sh
+python scripts/test_scraper.py --validate-all-sources
+python scripts/test_scraper.py --validate-source <id>
+python scripts/test_scraper.py --validate-all-sources --live-routes
+```
+
+`--validate-source <id>` (for example `guardian`, `reuters` or `bbc`) prints one source card with
+the registry row, `topic_gate`, `language_detection`, `categories`, `translation_readiness`,
+`gate_enforcement`, `rights_status` and `source_type`. `--validate-all-sources` prints the same
+cards for all 28 sources plus `approved_routes` / `blocked_routes`, `sources_with_fixtures`,
+`sources_with_live_feeds`, a source x section `category_coverage` map and a `failures` list. The
+command exits `1` when any failure is recorded and `0` otherwise; the JSON report is printed in
+both cases.
+
+Live route checks are **off by default**. `--live-routes` is an explicit opt-in and probes only
+sources that have both an approved topic route and a usable T0 row. A blocked or unapproved
+source is reported as `blocked_not_probed`; its URL is never fetched during validation. Use
+`--source-topics-csv PATH` and `--topic-rules PATH` to override the `source_topics_csv` and
+`topic_rules_path` settings for a single diagnostic run.
+
+---
+
+## 12. Modular Topic Packs & File-Per-Source Configuration
+
+Sources and monitored topics are managed as standalone JSON files so adding or removing outlets
+and switching subjects requires zero Python changes:
+
+- **One file per topic:** `data/topics/<topic_id>.json` (for example `ukraine-war.json` and
+  `ai-policy.json`) defines sections, section keywords, stand-in summaries, quick screening
+  keywords, and deterministic relevance rules (`anchors`, `supporting_terms`, `exclusions`).
+- **One file per source:** `data/sources/<source_id>.json` holds the outlet's T0 rights fields,
+  per-topic discovery routes (`routes[]`), and optional `extractor_hints` (including custom
+  adapter plugin overrides registered via `@register_source_adapter` / `@register_adapter`).
+- **Derived CSV compatibility:** `data/sources.csv` and `data/source_topic_routes.csv` remain
+  synchronised mirrors generated from `data/sources/*.json` via `mq sources --action sync-csv`.
+
+### 12.1 Managing Topic Packs (`mq topics` and `--topic`)
+
+```powershell
+# List all available topic packs under data/topics/
+.\.venv\Scripts\python.exe -m media_quotes topics --action list
+
+# Inspect a topic pack as JSON
+.\.venv\Scripts\python.exe -m media_quotes topics --action show --topic ai-policy
+
+# Scaffold a new topic pack (data/topics/<topic_id>.json)
+.\.venv\Scripts\python.exe -m media_quotes topics --action init --topic energy-grid --name "Clean Energy & Grid"
+
+# Run the offline pipeline, digest, or export for a specific topic pack
+.\.venv\Scripts\python.exe -m media_quotes run --topic ai-policy --date 2026-11-19
+.\.venv\Scripts\python.exe -m media_quotes digest --topic ai-policy --date 2026-11-19
+.\.venv\Scripts\python.exe -m media_quotes export --topic ai-policy --date 2026-11-19
+
+# Test live RSS discovery and quote verification for a specific topic pack
+.\.venv\Scripts\python.exe scripts/test_scraper.py --source-id guardian --topic ai-policy --live-feed --limit 2
+```
+
+### 12.2 Adding & Syncing Sources (`mq sources`)
+
+```powershell
+# Scaffold a new T0-safe (disabled/pending_counsel_review) source JSON under data/sources/
+.\.venv\Scripts\python.exe -m media_quotes sources --action add `
+  --source-id examplewire `
+  --name "Example Wire" `
+  --homepage-url https://examplewire.org `
+  --feed-url https://examplewire.org/rss.xml `
+  --topic ai-policy
+
+# Regenerate data/sources.csv and data/source_topic_routes.csv from data/sources/*.json
+.\.venv\Scripts\python.exe -m media_quotes sources --action sync-csv
+
+# Validate all topic packs, source JSONs, T0 gates, and CSV parity
+.\.venv\Scripts\python.exe scripts/validate_data.py
 ```

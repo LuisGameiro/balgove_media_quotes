@@ -7,30 +7,47 @@ holds (24h `[Under Review]`), so the verbatim text stays intact.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime, timedelta
+from collections.abc import Collection, Sequence
+from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from .enums import SECTION_IDS
 from .models import ExportQuoteRecord
 from .risk_controls.models import ObsolescenceFlag
 from .text_utils import normalise_text
 
+if TYPE_CHECKING:
+    from .topics import TopicPack
 
-def allowed_sections() -> tuple[str, ...]:
+
+def allowed_sections(*, topic_pack: TopicPack | None = None) -> tuple[str, ...]:
+    if topic_pack is not None:
+        return tuple(sorted(topic_pack.section_ids()))
     return tuple(sorted(SECTION_IDS))
 
 
-def assign_section(record: ExportQuoteRecord) -> str:
-    """Return the record's section if allowed, otherwise the canonical 'other' bucket."""
-    return record.section_id if record.section_id in SECTION_IDS else "other"
+def assign_section(
+    record: ExportQuoteRecord,
+    *,
+    allowed: Collection[str] | None = None,
+    default_section: str = "other",
+) -> str:
+    """Return the record's section if allowed, otherwise the canonical fallback bucket."""
+    valid = allowed if allowed is not None else SECTION_IDS
+    return record.section_id if record.section_id in valid else default_section
 
 
 def group_by_section(
     records: Sequence[ExportQuoteRecord],
+    *,
+    topic_pack: TopicPack | None = None,
 ) -> dict[str, list[ExportQuoteRecord]]:
-    groups: dict[str, list[ExportQuoteRecord]] = {name: [] for name in allowed_sections()}
+    section_names = allowed_sections(topic_pack=topic_pack)
+    default_section = topic_pack.default_section if topic_pack is not None else "other"
+    groups: dict[str, list[ExportQuoteRecord]] = {name: [] for name in section_names}
     for record in records:
-        groups[assign_section(record)].append(record)
+        target = assign_section(record, allowed=section_names, default_section=default_section)
+        groups.setdefault(target, []).append(record)
     for group in groups.values():
         group.sort(key=lambda item: (item.publication_date, item.quote_id))
     return groups
@@ -46,11 +63,9 @@ def dedupe_quotes(
     """
     if window_days <= 0:
         raise ValueError("window_days must be positive")
-    groups: dict[tuple[str, int], list[ExportQuoteRecord]] = {}
+    groups: dict[str, list[ExportQuoteRecord]] = {}
     for record in records:
-        day_bucket = record.publication_date.toordinal() // window_days
-        bucket = (normalise_text(record.quote_text_original), day_bucket)
-        groups.setdefault(bucket, []).append(record)
+        groups.setdefault(normalise_text(record.quote_text_original), []).append(record)
     chosen: list[ExportQuoteRecord] = []
     for group in groups.values():
         group.sort(
@@ -61,7 +76,12 @@ def dedupe_quotes(
                 item.quote_id,
             )
         )
-        chosen.append(group[0])
+        last_kept: date | None = None
+        for record in group:
+            if last_kept is not None and (record.publication_date - last_kept).days < window_days:
+                continue
+            chosen.append(record)
+            last_kept = record.publication_date
     chosen.sort(key=lambda item: (item.publication_date, item.quote_id))
     return chosen
 

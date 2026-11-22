@@ -21,14 +21,14 @@ decisions, not runtime proof — checks move from defined to passing as T0–T10
 | CHK-05 | Coverage contract rows per source per day (expected vs discovered vs quotes, gap reasons, freshness SLA) | T6/T8 (Dagster asset check) |
 | CHK-06 | `mq logs`: correlated structured logs with `trace_id` | T1/T9 |
 | CHK-07 | Failure-injection tests (network, paywall, low-quality extraction, LLM refusal/truncation) | T8 |
-| CHK-08 | `scripts/docs_qa.py` (also `tests/test_docs_qa.py`): documentation consistency (links, IDs, thresholds, enums, paths) | CI/T10 |
+| CHK-08 | `scripts/docs_qa.py` (also `tests/contract/test_docs_qa.py`): documentation consistency (links, IDs, thresholds, enums, paths) | CI/T10 |
 | CHK-09 | VCR cassette replay suite (offline ingestion/extraction) | T2/T3/T8 |
 | CHK-10 | `make check`: `docs_qa.py` + `ruff format --check .` + `ruff check .` + `mypy --strict src/` + `pytest` + `python -m build` + `mq --help` smoke | CI/T1/T10 |
 | CHK-11 | `uv.lock` freshness and `uv sync --frozen --group dev` in CI/prod; weekly dependency audit | CI/T1/T10 |
 | CHK-12 | Coverage **≥ 85%** on `src/media_quotes` (`pytest --cov`; floor in `[tool.coverage.report]`); unit tests never touch network/DB | T10/CI |
 | CHK-13 | Secret/redaction test: no key material in logs, traces, audit rows or cassettes; `license_reference` is NOT redacted | T1/T10/CI |
 | CHK-14 | Reserved for the Neo4j option: graph parity/provenance/rights check if adopted; see [09](09-neo4j-integration.md) §7 | not active — reserved |
-| CHK-15 | Obsolescence review audit: evidence bundle + reviewer verdict on every flag; SLA met; no obsolete quote without `confirmed` | Unit policy layer implemented (`risk_controls.py`, `tests/test_risk_controls.py`); full audit T5/T6/T8 pending, see [10](10-risk-mitigation-plan.md) |
+| CHK-15 | Obsolescence review audit: evidence bundle + reviewer verdict on every flag; SLA met; no obsolete quote without `confirmed` | Unit policy layer implemented (`risk_controls.py`, `tests/unit/risk_controls/`); full audit T5/T6/T8 pending, see [10](10-risk-mitigation-plan.md) |
 | CHK-16 | Backfill budget guard: dry-run within ±20%, cache hit ≥ 60%, no duplicate calls, hard cost cap | Unit policy layer implemented (`estimate_backfill`, `budget_gate`, tests); integration T2/T4/T9/T10 pending, see [10](10-risk-mitigation-plan.md) |
 | CHK-17 | Storage/lock guard: retention job, detached partitions, longest txn < 60s, prune tombstones | Unit policy layer implemented (`RetentionPolicy`, tests); partitioning/job T1/T9/T10 pending, see [10](10-risk-mitigation-plan.md) |
 | CHK-18 | Prompt-injection suite: adversarial article/feed text cannot alter system prompt, labels or verifier outcome | T4/T8 — planned (RSK-13) |

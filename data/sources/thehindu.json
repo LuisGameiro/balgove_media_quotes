@@ -1,0 +1,46 @@
+{
+  "source_id": "thehindu",
+  "source_name": "The Hindu",
+  "homepage_url": "https://www.thehindu.com",
+  "feed_url": "",
+  "tier": 3,
+  "cadence_hours": 24,
+  "country_region": "India",
+  "source_type": "independent",
+  "claim_only": false,
+  "language": "en",
+  "requires_translation": false,
+  "paywalled": true,
+  "rights_status": "pending_counsel_review",
+  "access_mode": "pending_review",
+  "license_reference": "",
+  "discovery_method": "web",
+  "archive_start_date": "2026-10-01",
+  "enabled": false,
+  "notes": "Partial paywall; rights review required.",
+  "routes": [
+    {
+      "route_id": "route-thehindu-ukraine-default",
+      "route_type": "web",
+      "discovery_url": "https://www.thehindu.com",
+      "topic_rule_id": "ukraine-war-v1",
+      "topic_id": "ukraine-war",
+      "priority": 90,
+      "fallback_route_id": "",
+      "approved": false,
+      "license_reference": "",
+      "translation_rights_confirmed": false,
+      "notes": "Not approved; rights review pending in registry; no live probe."
+    }
+  ],
+  "extractor_hints": {
+    "adapter": null,
+    "default_feed_url": "",
+    "favor_precision": false,
+    "favor_recall": false,
+    "include_comments": false,
+    "include_tables": false,
+    "min_text_length": 200,
+    "strip_selectors": []
+  }
+}

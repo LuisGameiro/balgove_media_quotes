@@ -13,8 +13,8 @@ requirement→decision→task→check mappings in [08](08-traceability.md).
 | Language | Python 3.12, Pydantic v2 **strict mode**, ruff, mypy | core (`pydantic`, `pydantic-settings`) + `dev` | Typed strict boundaries; `'123'` not coerced; validation failures logged. |
 | Orchestration | Dagster daily partitions, asset checks, `code_version` | `orchestration` | Backfills, lineage, fault isolation; prompt/schema changes invalidate downstream assets. |
 | Source registry | `data/sources.csv` + Postgres `sources`, T0 gate | core | Enums in [01](01-requirements-analysis.md) §2; disabled sources never contacted. |
-| Discovery | httpx, feedparser, sitemap parser, GDELT/Guardian/NYT APIs where permitted; robots/ToS gate | `extraction` | Deterministic enumeration; tier cadence (6h/24h); every check traced. |
-| Extraction | trafilatura `bare_extraction()`/`Document` or XML/TEI + selectolax + Playwright fallback | `extraction` | DOM spans, formatting; precision-first + `prune_xpath`, recall fallback; `reset_caches()`; quality gate before LLM. |
+| Discovery | httpx, stdlib XML sitemap/RSS parser, GDELT/Guardian/NYT APIs where permitted; robots/ToS gate | `extraction` | Deterministic enumeration; tier cadence (6h/24h); every check traced. |
+| Extraction | trafilatura `bare_extraction()` and the bundled HTML parser | `extraction` | DOM spans, formatting; quality gate before LLM. |
 | Verification | NFC/smart-quote/whitespace exact-span + deterministic junk/metadata/first-hand gates | core | Fail closed `unverified`; no frankenquotes or hallucinated sources. |
 | LLM | OpenAI structured outputs, pinned snapshot (PydanticAI adapter optional), content-addressed cache, Batch API | `llm` | Replayable reasoning; provider boundary swappable. |
 | Evaluation | Pydantic Evals-style harness; deterministic metrics + calibrated judge; Ragas optional | `eval` | Built in task T0/T8; **never** OpenAI Evals (went read-only 2026-10-31, shuts down 2026-11-30). |
@@ -67,7 +67,7 @@ are discovery only, never substitutes for the mandatory sources.
 
 ## 3. Data model
 
-Revision `0001_initial` (`src/media_quotes/db/schema.sql`) establishes the 9 core tables (`sources`, `pipeline_runs`, `articles`, `quotes`, `llm_decisions`, `quote_classifications`, `obsolescence_flags`, `digests`, `audit_events`); follow-on Alembic revisions in T1–T8 split out dedicated `raw_blobs`, `source_checks`, `verifier_results`, `eval_runs`, and `derived_exports` tables and enable monthly declarative partitioning by `created_at` (DEC-19).
+Revision `0001_initial` (`src/media_quotes/db/schema.sql`) establishes the 9 core tables (`sources`, `pipeline_runs`, `articles`, `quotes`, `llm_decisions`, `quote_classifications`, `obsolescence_flags`, `digests`, `audit_events`). Later revisions add `gold_set_labels`, `eval_runs`, `decision_cache` and `storage_partitions` and add topic/translation provenance columns; monthly table partitioning remains a planned RSK-11 step, not live DDL.
 
 | Append-oriented table | Key fields |
 |---|---|
@@ -77,7 +77,7 @@ Revision `0001_initial` (`src/media_quotes/db/schema.sql`) establishes the 9 cor
 | `articles` | article_id, canonical_url, title, publication_date, byline, extracted_text + offsets, content_hash, extractor version, `trace_id` |
 | `quotes` / `quote_candidates` | quote_id, canonical_quote_id (`Q-YYYYMMDD-NNNN`), article_id, raw/normalised text, char_start/end, DOM path, attribution span, **first-hand evidence** (wire-copy similarity + byline record), content_hash (SHA-256 over `source_id`, `canonical_url`, `quote_text_original`, `char_start`, `raw_blob_hash`) |
 | `llm_decisions` | decision_id, **model snapshot + provider/SDK version**, schema hash, prompt version **+ template hash**, tool definitions, decoding params, **judge model snapshot**, extractor version, **app/CLI version**, **gold_set_version**, **registry version**, raw provider response id, input_hash, output JSON |
-| `verifier_results` | quote_id, span match, metadata checks, junk checks, first-hand check, status (`verified`/`unverified`), verifier version (stored in `quotes.verification_details` in `0001_initial`) |
+| `quotes.verification_details` | span match, metadata checks, junk checks, first-hand check, status (`verified`/`unverified`), verifier version (JSONB column on `quotes`) |
 | `quote_classifications` / `obsolescence_flags` | quote_id, section, rationale, is_obsolete, obsolete_reason, `superseded_by`, decision_id |
 | `digests` | digest_date (`REPORT_DATE`), window_start/end, md path (`digests/…`), template hash, generation manifest (jsonb) |
 | `audit_events` | run_id, step, status, counts, errors, timestamps, `trace_id`, `license_reference` |
@@ -211,9 +211,10 @@ deterministic offline fixture-replay mode; `dagster` prints setup guidance for t
 T9 wires `run`, `audit`, `logs`, `eval`, and `backfill` to live Postgres, Dagster partitions,
 and the pinned OpenAI provider. `mq --help` and an import smoke test run in CI (CHK-10).
 
-**Shared flags:** `--offline` (replay VCR cassettes; no network) · `--dry-run` (plan only, no
-writes) · `--date YYYY-MM-DD` (default `REPORT_DATE`) · `--run-id` / `--trace-id` ·
-`--out PATH` · `--verbose`.
+**Shared flags:** `--topic` (topic pack id) · `--dry-run` (plan only, no writes) ·
+`--date YYYY-MM-DD` (default `REPORT_DATE`) · `--run-id` / `--trace-id` · `--out PATH` ·
+`--verbose`. `--offline` is deprecated and accepted only for compatibility: every `mq` command
+is offline except the explicit `mq fetch` run without `--dry-run`.
 
 **Exit codes:** `0` success · `1` validation/threshold failure · `2` partial success with
 coverage gaps (audit report lists them) · `3` config/T0-gate error. Re-runs are idempotent:
@@ -231,7 +232,9 @@ error resumes from the last successful step and never overwrites append-only row
 | `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id`, spans, errors. |
 | `mq eval --gold-set <version>` | Deterministic metrics + calibrated judge → metrics/calibration report (κ). |
 | `mq export --out data/quotes.jsonl` | Derived, versioned JSONL export. |
-| `mq sources [--tier N] [--rights-status …]` | List the registry (mirrored from `sources.csv`) with rights status, access mode and coverage summary — the T0 state at a glance. |
+| `mq sources [--tier N] [--rights-status …]` | List the registry (mirrored from `data/sources/*.json`) with rights status, access mode and coverage summary — the T0 state at a glance. |
+| `mq topics [--action list/init/show]` | List, scaffold or inspect topic packs in `data/topics/`. |
+| `mq fetch --source-id <id> [--live] [--limit N]` | Plan a rights-cleared fetch; `--live` is required for network contact. No DB writes. |
 | `mq version` | Print the version manifest (app/CLI, schema hash, prompt version, pinned model snapshot, `gold_set_version`). |
 | `mq dashboard` | Launch Streamlit dashboard. |
 | `mq dagster` | Print Dagster asset, partition, schedule and persistence guidance; start the UI with `scripts/run_dagster.ps1`. |
@@ -241,7 +244,8 @@ error resumes from the last successful step and never overwrites append-only row
 | `make audit`, `make logs`, `make run` | Thin wrappers for non-Python users. |
 
 `media_quotes.validation` is wired into the implemented `mq doctor`/`mq validate` commands and
-`scripts/validate_data.py`. All CLI subcommands function in offline fixture replay;
+`scripts/validate_data.py`. All CLI subcommands function in offline fixture replay except the
+explicit `mq fetch` run without `--dry-run`;
 T9 provides the live database, Dagster asset scheduling, and external LLM connections.
 
 ## 6. Not adopted

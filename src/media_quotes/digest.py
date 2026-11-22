@@ -11,10 +11,15 @@ import csv
 from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from .config import DEFAULT_TOPIC_ID
 from .llm import InferenceProvider, LocalStandInProvider
 from .models import ExportQuoteRecord
 from .risk_controls import ObsolescenceFlag
+
+if TYPE_CHECKING:
+    from .topics import TopicPack
 
 __all__ = ["load_sections", "render_digest", "write_digest"]
 
@@ -38,30 +43,43 @@ def render_digest(
     window_end: date,
     sections: Sequence[tuple[str, str]] | None = None,
     sections_csv: Path | None = None,
+    topic_pack: TopicPack | None = None,
     provider: InferenceProvider | None = None,
     obsolescence_flags: Sequence[ObsolescenceFlag] = (),
     review_badges: Mapping[str, str] | None = None,
     notice: str = "",
 ) -> str:
     """Render the Markdown for digests/REPORT_DATE.md without changing quote text."""
-    section_list = (
-        list(sections)
-        if sections is not None
-        else (load_sections(sections_csv) if sections_csv is not None else [])
-    )
-    inference_provider = provider or LocalStandInProvider()
+    if sections is not None:
+        section_list = list(sections)
+    elif topic_pack is not None:
+        section_list = topic_pack.section_pairs()
+    elif sections_csv is not None:
+        section_list = load_sections(sections_csv)
+    else:
+        section_list = []
+    default_section = topic_pack.default_section if topic_pack is not None else "other"
+    inference_provider = provider or LocalStandInProvider(topic_pack=topic_pack)
     hidden = {flag.evidence.old_quote_id for flag in obsolescence_flags if flag.may_hide_quote()}
     grouped: dict[str, list[ExportQuoteRecord]] = {section_id: [] for section_id, _ in section_list}
     for record in records:
         if record.is_obsolete or record.quote_id in hidden:
             continue
-        target_section = str(record.section_id) if record.section_id in grouped else "other"
+        target_section = str(record.section_id) if record.section_id in grouped else default_section
         grouped.setdefault(target_section, []).append(record)
     for group in grouped.values():
         group.sort(key=lambda item: (item.publication_date, item.quote_id))
 
+    if topic_pack is not None and topic_pack.topic_id != DEFAULT_TOPIC_ID:
+        heading = (
+            f"# Media quotes digest ({topic_pack.name}): "
+            f"{window_start.isoformat()} to {window_end.isoformat()}"
+        )
+    else:
+        heading = f"# Media quotes digest: {window_start.isoformat()} to {window_end.isoformat()}"
+
     lines = [
-        f"# Media quotes digest: {window_start.isoformat()} to {window_end.isoformat()}",
+        heading,
         "",
         f"_Report date: {report_date.isoformat()}; source sections: {len(section_list)}._",
         "",
@@ -75,7 +93,8 @@ def render_digest(
         if selected:
             for record in selected:
                 lines.append(f"- {record.quote_text_original}")
-                if record.quote_text_en and record.source_language != "en":
+                quote_language = record.quote_language or record.source_language
+                if record.quote_text_en and quote_language != "en":
                     lines.append(f"  - Translation (EN): {record.quote_text_en}")
                 lines.append(
                     f"  - Source: {record.source_name}; publication: "
@@ -114,6 +133,7 @@ def write_digest(
     out_path: Path,
     sections: Sequence[tuple[str, str]] | None = None,
     sections_csv: Path | None = None,
+    topic_pack: TopicPack | None = None,
     provider: InferenceProvider | None = None,
     obsolescence_flags: Sequence[ObsolescenceFlag] = (),
     review_badges: Mapping[str, str] | None = None,
@@ -127,11 +147,13 @@ def write_digest(
         window_end=window_end,
         sections=sections,
         sections_csv=sections_csv,
+        topic_pack=topic_pack,
         provider=provider,
         obsolescence_flags=obsolescence_flags,
         review_badges=review_badges,
         notice=notice,
     )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(markdown, encoding="utf-8", newline="\n")
+    from .export import atomic_write_text
+
+    atomic_write_text(out_path, markdown)
     return out_path

@@ -41,10 +41,10 @@ It is descriptive, not a decision register. Anything adopted still needs a DEC/R
 
 ```mermaid
 flowchart LR
-    REG[Registry: data/sources.csv] --> GATE{T0 gate}
+    REG[Registry: data/sources/*.json] --> GATE{T0 gate}
     GATE -->|blocked| FIX[Fixture replay: data/fixtures]
-    GATE -->|permitted| LIVE[fetch.py + extraction.py — tested, not wired]
-    FIX --> AD[adapters.py: discover, fetch, parse, extract]
+    GATE -->|permitted| LIVE[live.py + fetch.py + extraction.py — mq fetch --live]
+    FIX --> AD[adapters/: discover, fetch, parse, extract]
     AD --> CAND[QuoteCandidate + char offsets]
     CAND --> PRE[verification_stages.pre_llm_filter]
     PRE --> VER[verification.py: verify_quote]
@@ -63,8 +63,8 @@ flowchart LR
 
 | Module | What it really does today | Status |
 |---|---|---|
-| `adapters.py` | Path-confined `FixtureSource`; `SourceAdapter` discover/fetch/parse/extract; stdlib HTML parser preserving offsets; JSON fixtures. Live refs raise `NotImplementedError`. | Real replay, live stub |
-| `fetch.py` | `FetchPolicy`, `TokenBucket`, `assert_fetch_permitted`, async `fetch_bytes` with SHA-256; tested with MockTransport. | Real, unwired |
+| `adapters/` | Package split into base, blob cache, RSS/Sitemap, HTML/JSON-LD, quote attribution and a plugin registry; `FixtureSource` and `SourceAdapter` preserve offsets. Live refs raise `NotImplementedError`. | Real replay, live stub |
+| `fetch.py` | `FetchPolicy` from settings, `TokenBucket`, T0 + host gates, async `fetch_bytes` with SHA-256 and a streamed byte cap; tested with MockTransport. | Real, wired via `mq fetch` |
 | `extraction.py` | trafilatura extraction, `quality_gate`, `ExtractedArticle`, `RenderingFallback` (absent). | Real core, no fallback |
 | `verification.py` | Pure fail-closed `verify_quote`: span, metadata, source identity, window, attribution, junk, policy flags. | Real |
 | `verification_stages.py` | `pre_llm_filter` → `verify_pipeline` → `publishable`. No LLM stage despite name. | Real, no LLM |
@@ -72,25 +72,27 @@ flowchart LR
 | `rights_guard.py` | `apply_rights_limits()` enforces DEC-10 word/attribution limits. | Real |
 | `registry.py`, `enums.py`, `exceptions.py` | `SourceRegistryRow` from CSV, enums, typed errors. | Real |
 | `gold_set.py`, `evaluation.py` | Strict models, 60/20/20 split, `evaluate_metrics`; κ/precision stand-ins. | Real split, stand-in metrics |
-| `cli/` | 16 commands, shared flags, exit codes 0/1/2/3. | Real offline |
+| `cli/` | 19 commands, shared flags, exit codes 0/1/2/3; `fetch` is the explicit rights-gated live command. | Real offline + explicit fetch |
 | `orchestration.py` | Dagster daily-partitioned `daily_quotes_digest`, optional persistence. | Real, no sensors |
 | `digest.py` | Deterministic Markdown: title, sections, verbatim quotes+links, obsolete hiding. | Real |
 | `llm.py`, `llm_live.py` | Inference protocol + labelled stand-in; pinned OpenAI boundary unused. | Stand-in + boundary |
 | `export.py` | `ExportQuoteRecord`, JSONL I/O, `content_hash`, `quote_record`. | Real offline |
 | `dashboard.py` | Streamlit: digests, coverage, review queue, gaps, logs, sources, schema. | Real, file-backed |
-| `db/`, Alembic | 9 append-oriented tables + 3 migrations; idempotent repository helpers. | Real |
+| `db/`, Alembic | Append-oriented tables + 6 migrations (`0001..0006`); idempotent repository helpers. | Real |
 | `risk_controls/` | Obsolescence, budget/cache, retention/partitioning, restore integrity. | Real planning |
-| `batch.py`, `restore_drill.py` | Offline Batch planning; JSONL integrity. | Real offline |
+| `batch.py`, `restore_drill.py` | `batch.py` is a design stub with no production caller; `restore_drill.py` verifies JSONL integrity via the CLI. | Stub / real offline |
 
 ### 2.3 CLI surface
 
-`doctor`, `validate`, `bootstrap`, `run`, `audit`, `logs`, `eval`, `sources`, `version`,
-`backfill --dry-run`, `digest`, `export`, `dashboard` (guidance only), `review`, `retention`,
-`restore-drill`. `run` is the full offline fixture pipeline; exit 2 signals coverage gaps.
+`doctor`, `validate`, `bootstrap`, `run`, `fetch`, `audit`, `logs`, `eval`, `sources`, `topics`,
+`version`, `backfill --dry-run`, `digest`, `export`, `dashboard` (guidance only), `review`,
+`retention`, `restore-drill`. `run` is the full offline fixture pipeline; `fetch` is the explicit
+live command and dry-runs by default; exit 2 signals coverage gaps. See
+[17](17-connection-and-fetching-reference.md) for the current flag reference.
 
 ### 2.4 Data contract
 
-1. `SourceRegistryRow` (CSV) → `policy_flags` (`source_id`, `source_tier`, `source_type`,
+1. `SourceRegistryRow` (from `data/sources/*.json`, mirrored to CSV) → `policy_flags` (`source_id`, `source_tier`, `source_type`,
    `claim_only`, `requires_translation`, `source_language`, `license_reference`, …).
 2. Fixture metadata → `article_text`, `quote_spans` (`quote_text`, `char_start`, `char_end`,
    `dom_path`, `speaker`, `attribution_span`, `section_id`).

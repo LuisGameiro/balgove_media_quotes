@@ -1,0 +1,29 @@
+source_id,route_id,route_type,discovery_url,topic_rule_id,priority,fallback_route_id,approved,license_reference,translation_rights_confirmed,notes
+reuters,route-reuters-ukraine-default,fixture_replay,,ukraine-war-v1,90,,false,,false,Blocked by rights policy; fixture replay only; no live probe.
+bbc,route-bbc-ukraine-default,fixture_replay,,ukraine-war-v1,90,,false,,false,Blocked by rights policy; fixture replay only; no live probe.
+ap,route-ap-ukraine-default,licensed_database,https://apnews.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
+bloomberg,route-bloomberg-ukraine-default,licensed_database,https://www.bloomberg.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
+ft,route-ft-ukraine-default,licensed_database,https://www.ft.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
+economist,route-economist-ukraine-default,licensed_database,https://www.economist.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
+guardian,route-guardian-ukraine-default,topic_rss,https://www.theguardian.com/world/ukraine/rss,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved topic RSS route; feed is discovery only; translation rights unverified.
+dw,route-dw-ukraine-default,licensed_database,https://www.dw.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
+lemonde,route-lemonde-ukraine-default,licensed_database,https://www.lemonde.fr,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,French-language source; approved licensed database route; translation rights unverified.
+aljazeera,route-aljazeera-ukraine-default,web,https://www.aljazeera.com,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+kyivindependent,route-kyivindependent-ukraine-default,web,https://kyivindependent.com,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+ukrainskapravda,route-ukrainskapravda-ukraine-default,web,https://www.pravda.com.ua,ukraine-war-v1,90,,false,,false,Ukrainian-language source; rights review pending; translation rights unverified.
+suspilne,route-suspilne-ukraine-default,web,https://suspilne.media,ukraine-war-v1,90,,false,,false,Ukrainian-language source; rights review pending; translation rights unverified.
+interfaxukraine,route-interfaxukraine-ukraine-default,web,https://en.interfax.com.ua,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+anadolu,route-anadolu-ukraine-default,web,https://www.aa.com.tr,ukraine-war-v1,90,,false,,false,Claim-only source; rights and policy review pending; no live probe.
+thehindu,route-thehindu-ukraine-default,web,https://www.thehindu.com,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+indianexpress,route-indianexpress-ukraine-default,web,https://indianexpress.com,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+scmp,route-scmp-ukraine-default,web,https://www.scmp.com,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+kyodo,route-kyodo-ukraine-default,web,https://english.kyodonews.net,ukraine-war-v1,90,,false,,false,Not approved; archive access and rights unresolved; no live probe.
+yonhap,route-yonhap-ukraine-default,web,https://en.yna.co.kr,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.
+gdelt,route-gdelt-ukraine-default,gdelt,https://www.gdeltproject.org/,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved aggregator route; translation rights unverified.
+guardian_api,route-guardian-api-ukraine-default,api,https://open-platform.theguardian.com/,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved official API route; query template out of scope; translation rights unverified.
+nyt_api,route-nyt-api-ukraine-default,api,https://developer.nytimes.com/,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved official API route; query template out of scope; translation rights unverified.
+rt,route-rt-ukraine-default,web,https://www.rt.com,ukraine-war-v1,90,,false,,false,Excluded by default; claim-only perspective material; no live probe.
+tass,route-tass-ukraine-default,web,https://tass.com,ukraine-war-v1,90,,false,,false,Excluded by default; claim-only perspective material; no live probe.
+ria,route-ria-ukraine-default,web,https://ria.ru,ukraine-war-v1,90,,false,,false,Russian-language source excluded by default; claim-only; translation rights unverified.
+xinhua,route-xinhua-ukraine-default,web,https://english.news.cn,ukraine-war-v1,90,,false,,false,Excluded by default; claim-only perspective material; no live probe.
+globaltimes,route-globaltimes-ukraine-default,web,https://www.globaltimes.cn,ukraine-war-v1,90,,false,,false,Excluded by default; claim-only perspective material; no live probe.

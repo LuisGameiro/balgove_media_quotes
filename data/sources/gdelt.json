@@ -1,0 +1,46 @@
+{
+  "source_id": "gdelt",
+  "source_name": "GDELT",
+  "homepage_url": "https://www.gdeltproject.org/",
+  "feed_url": "",
+  "tier": 2,
+  "cadence_hours": 24,
+  "country_region": "Global",
+  "source_type": "aggregator",
+  "claim_only": false,
+  "language": "en",
+  "requires_translation": false,
+  "paywalled": false,
+  "rights_status": "license_held",
+  "access_mode": "licensed_database",
+  "license_reference": "TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20",
+  "discovery_method": "licensed_database",
+  "archive_start_date": "2026-10-01",
+  "enabled": true,
+  "notes": "Operator attested written rights on 2026-11-20; source-specific contract reference withheld from chat/repo by owner. T0 approved for engineering validation.",
+  "routes": [
+    {
+      "route_id": "route-gdelt-ukraine-default",
+      "route_type": "gdelt",
+      "discovery_url": "https://www.gdeltproject.org/",
+      "topic_rule_id": "ukraine-war-v1",
+      "topic_id": "ukraine-war",
+      "priority": 10,
+      "fallback_route_id": "",
+      "approved": true,
+      "license_reference": "TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20",
+      "translation_rights_confirmed": false,
+      "notes": "Approved aggregator route; translation rights unverified."
+    }
+  ],
+  "extractor_hints": {
+    "adapter": null,
+    "default_feed_url": "",
+    "favor_precision": false,
+    "favor_recall": false,
+    "include_comments": false,
+    "include_tables": false,
+    "min_text_length": 200,
+    "strip_selectors": []
+  }
+}

@@ -1,9 +1,40 @@
 """Audit gates are mode-aware: DB writes are only a violation in file-only mode."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from media_quotes.cli.audit import _audit_report
 from media_quotes.config import Settings
+from media_quotes.models import ExportQuoteRecord, VerificationRecord
+
+
+def _record() -> ExportQuoteRecord:
+    now = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
+    return ExportQuoteRecord(
+        quote_id="Q-20261119-0001",
+        quote_text_original="A short attributed sentence used for this audit gate test.",
+        source_id="guardian",
+        source_name="Guardian",
+        source_tier=1,
+        source_country_region="UK",
+        source_type="publicly funded",
+        rights_status="license_held",
+        access_mode="licensed_database",
+        license_reference="LIC-1",
+        discovery_method="licensed_database",
+        claim_only=False,
+        original_reporting_flag="first-hand",
+        source_language="en",
+        publication_date=date(2026, 11, 19),
+        article_name="Article",
+        article_url="https://www.theguardian.com/a/test",
+        extraction_date=now,
+        section_id="other",
+        is_obsolete=False,
+        content_hash="a" * 64,
+        verification=VerificationRecord(
+            verbatim_match=True, metadata_verified=True, method="m", verified_at=now
+        ),
+    )
 
 
 def _report(persist: bool) -> dict[str, object]:
@@ -12,7 +43,7 @@ def _report(persist: bool) -> dict[str, object]:
         settings,
         report_date=date(2026, 11, 19),
         run_id="run-test",
-        records=[],
+        records=[_record()],
         coverage=[],
         gaps=[{"source_id": "reuters", "mandatory": True}],
         events=[],

@@ -1,19 +1,22 @@
-"""Operational CLI commands: backfill estimates, sources, digests, exports, dashboard."""
+"""Operational CLI commands: backfill estimates, sources, topics, digests, exports, dashboard."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from ..config import Settings
+from ..config import DEFAULT_TOPIC_ID, Settings
 from ..digest import write_digest
 from ..exceptions import ConfigError
 from ..export import local_store_path, read_jsonl, write_jsonl
 from ..llm import make_provider
 from ..risk_controls import budget_gate, estimate_backfill
+from ..source_configs import scaffold_source_config, sync_sources_to_csv
+from ..topics import list_topic_packs, load_topic_pack, scaffold_topic_pack
 from .common import (
     _ARTICLES_PER_HOUR,
     _ARTICLES_PER_SOURCE_DAY,
@@ -23,7 +26,9 @@ from .common import (
     _PRICE_PER_CALL,
     EXIT_FAILURE,
     EXIT_OK,
+    _digest_path,
     _load_registry,
+    _load_topic_pack,
     _read_json,
     _window,
 )
@@ -68,7 +73,7 @@ def _do_backfill(  # pragma: no cover
     if max_cost is not None:
         note = budget_gate(estimate, max_cost)
     print(
-        f"Backfill {start}..{end} (bounded to {span} day(s)): "
+        f"Backfill {start}..{start + timedelta(days=span - 1)} ({span} day(s)): "
         f"~{estimate.articles} articles, {estimate.calls} billed calls, "
         f"${estimate.cost:.2f}, ~{estimate.duration_hours}h."
     )
@@ -83,8 +88,49 @@ def _do_backfill(  # pragma: no cover
 
 
 def _do_sources(
-    settings: Settings, *, tier: int | None, rights_status: str | None
+    settings: Settings,
+    *,
+    tier: int | None,
+    rights_status: str | None,
+    action: str = "list",
+    source_id: str | None = None,
+    source_name: str | None = None,
+    homepage_url: str | None = None,
+    feed_url: str | None = None,
+    language: str = "en",
+    country_region: str = "Global",
+    topic_id: str | None = None,
 ) -> int:  # pragma: no cover
+    if action == "add":
+        if not source_id or not homepage_url:
+            raise ConfigError("sources --action add requires --source-id and --homepage-url")
+        created = scaffold_source_config(
+            source_id,
+            source_name=source_name or source_id.upper(),
+            homepage_url=homepage_url,
+            feed_url=feed_url or "",
+            tier=tier or 3,
+            country_region=country_region,
+            language=language,
+            topic_id=topic_id or settings.active_topic,
+            out_dir=settings.sources_dir,
+        )
+        print(f"Created source config: {created}")
+        print("Next: complete T0 rights review, then run `mq sources --action sync-csv`.")
+        return EXIT_OK
+
+    if action == "sync-csv":
+        sources_n, routes_n = sync_sources_to_csv(
+            settings.sources_dir,
+            sources_csv=settings.sources_csv,
+            routes_csv=settings.source_topics_csv,
+        )
+        print(
+            f"Synced {sources_n} source(s) to {settings.sources_csv} and "
+            f"{routes_n} route(s) to {settings.source_topics_csv}."
+        )
+        return EXIT_OK
+
     rows = _load_registry(settings)
     report_date = settings.report_date
     report = _read_json(settings.audit_dir / f"audit-{report_date.isoformat()}.json")
@@ -111,10 +157,63 @@ def _do_sources(
     return EXIT_OK
 
 
-def _do_digest(
-    settings: Settings, *, report_date: date, out: str | None
+def _do_topics(
+    settings: Settings,
+    *,
+    action: str = "list",
+    topic_id: str | None = None,
+    name: str = "",
+    description: str = "",
 ) -> int:  # pragma: no cover
-    records = read_jsonl(local_store_path(settings.export_dir, report_date))
+    if action == "init":
+        if not topic_id:
+            raise ConfigError("topics --action init requires --topic <topic_id>")
+        created = scaffold_topic_pack(
+            topic_id,
+            name=name,
+            description=description,
+            out_dir=settings.topics_dir,
+        )
+        print(f"Created topic pack: {created}")
+        return EXIT_OK
+
+    if action == "show":
+        target = topic_id or settings.active_topic
+        try:
+            pack = load_topic_pack(target, settings.topics_dir)
+        except (FileNotFoundError, ValueError) as exc:
+            raise ConfigError(str(exc)) from exc
+        print(json.dumps(pack.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return EXIT_OK
+
+    packs = list_topic_packs(settings.topics_dir)
+    if not packs:
+        print(f"No topic packs found in {settings.topics_dir}.")
+        return EXIT_OK
+    for pack in packs:
+        marker = "*" if pack.topic_id == settings.active_topic else " "
+        sections = ", ".join(pack.section_ids())
+        print(
+            f"{marker} {pack.topic_id:<18} v{pack.version:<6} "
+            f"rule={pack.relevance.rule_id:<18} sections=[{sections}]"
+        )
+    return EXIT_OK
+
+
+def _do_digest(
+    settings: Settings,
+    *,
+    report_date: date,
+    out: str | None,
+    topic_id: str | None = None,
+) -> int:  # pragma: no cover
+    active_topic_id = str(
+        topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
+    )
+    topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
+    records = read_jsonl(
+        local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
+    )
     if not records:
         print(
             f"no verified local quote store for {report_date}; "
@@ -127,9 +226,12 @@ def _do_digest(
         report_date=report_date,
         window_start=_window(report_date, settings)[0],
         window_end=report_date,
-        out_path=Path(out) if out else settings.digest_dir / f"{report_date.isoformat()}.md",
+        out_path=Path(out)
+        if out
+        else _digest_path(settings, report_date, topic_id=active_topic_id),
         sections_csv=settings.sections_csv,
-        provider=make_provider(settings),
+        topic_pack=topic_pack,
+        provider=make_provider(settings, topic_pack=topic_pack),
         notice=_NOTICE,
     )
     print(f"Digest {len(records)} quote(s): {path}")
@@ -137,16 +239,30 @@ def _do_digest(
 
 
 def _do_export(
-    settings: Settings, *, report_date: date, out: str | None
+    settings: Settings,
+    *,
+    report_date: date,
+    out: str | None,
+    topic_id: str | None = None,
 ) -> int:  # pragma: no cover
-    records = read_jsonl(local_store_path(settings.export_dir, report_date))
+    active_topic_id = str(
+        topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
+    )
+    records = read_jsonl(
+        local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
+    )
     if not records:
         print(
             "no verified local quote store; run `mq run --date ...` first",
             file=sys.stderr,
         )
         return EXIT_FAILURE
-    path = Path(out) if out else settings.export_dir / "quotes.jsonl"
+    default_export = (
+        settings.export_dir / active_topic_id / "quotes.jsonl"
+        if active_topic_id != DEFAULT_TOPIC_ID
+        else settings.export_dir / "quotes.jsonl"
+    )
+    path = Path(out) if out else default_export
     count = write_jsonl(records, path)
     print(f"Exported {count} schema-valid quote(s) to {path}")
     return EXIT_OK

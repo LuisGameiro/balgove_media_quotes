@@ -53,8 +53,10 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
                   CHECK (status IN ('running','succeeded','failed','partial')),
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
-    stats         JSONB NOT NULL DEFAULT '{}'::jsonb
+    stats         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    topic_id      TEXT NOT NULL DEFAULT 'ukraine-war'
 );
+CREATE INDEX IF NOT EXISTS pipeline_runs_topic_idx ON pipeline_runs(topic_id);
 
 CREATE TABLE IF NOT EXISTS articles (
     article_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -100,11 +102,30 @@ CREATE TABLE IF NOT EXISTS quotes (
                         CHECK (verification_status IN ('unverified','verified','rejected')),
     verification_details JSONB NOT NULL DEFAULT '{}'::jsonb,
     quote_metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Topic/language/translation provenance (docs/16). Lists are stored as JSONB.
+    topic_id            TEXT NOT NULL DEFAULT 'ukraine-war',
+    topic_status        TEXT NOT NULL DEFAULT 'accepted'
+                        CHECK (topic_status IN ('accepted','uncertain','rejected')),
+    topic_rule_version  TEXT NOT NULL DEFAULT '',
+    topic_score         DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    matched_terms       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    quote_language      TEXT NOT NULL DEFAULT '',
+    language_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.0
+                        CHECK (language_confidence BETWEEN 0.0 AND 1.0),
+    quote_text_en       TEXT NOT NULL DEFAULT '',
+    translation_model_snapshot TEXT NOT NULL DEFAULT '',
+    translation_prompt_version TEXT NOT NULL DEFAULT '',
+    translation_hash    TEXT NOT NULL DEFAULT '',
+    translation_status  TEXT NOT NULL DEFAULT '',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (article_id, quote_text_normalised, char_start, char_end)
+    UNIQUE (article_id, quote_text_normalised, char_start, char_end),
+    CONSTRAINT quotes_topic_accepted_only CHECK (topic_status = 'accepted')
 );
 CREATE INDEX IF NOT EXISTS quotes_article_idx ON quotes(article_id);
 CREATE INDEX IF NOT EXISTS quotes_status_idx ON quotes(verification_status);
+CREATE INDEX IF NOT EXISTS quotes_topic_status_idx ON quotes(topic_status);
+CREATE INDEX IF NOT EXISTS quotes_topic_id_idx ON quotes(topic_id);
+CREATE INDEX IF NOT EXISTS quotes_language_idx ON quotes(quote_language);
 CREATE INDEX IF NOT EXISTS quotes_text_fts_idx
     ON quotes USING gin (to_tsvector('english', quote_text_raw));
 
@@ -154,13 +175,16 @@ CREATE INDEX IF NOT EXISTS obsolescence_flags_quote_idx ON obsolescence_flags(qu
 
 CREATE TABLE IF NOT EXISTS digests (
     digest_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    digest_date DATE NOT NULL UNIQUE,
+    digest_date DATE NOT NULL,
     window_start DATE NOT NULL,
     window_end  DATE NOT NULL,
     md_path     TEXT NOT NULL,
     manifest    JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    topic_id    TEXT NOT NULL DEFAULT 'ukraine-war'
 );
+-- The (topic_id, digest_date) unique constraint is added by migration 0006, so a fresh
+-- install and an upgraded database end up with the same single constraint and index.
 
 -- Append-only audit log; surrogate key, no updates.
 CREATE TABLE IF NOT EXISTS audit_events (

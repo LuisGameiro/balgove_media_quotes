@@ -18,8 +18,8 @@ Plan only; do not write digest/export/log/audit artifacts.
 Set PERSIST_TO_POSTGRES=true for this PowerShell session before running.
 
 .PARAMETER OfflineMarker
-Print the offline flag in the verbose run banner. Runtime collection is already
-fixture/T0-gated; this flag is for documentation parity with `mq run --offline`.
+Pass the deprecated --offline flag for compatibility. Runtime collection is already
+fixture/T0-gated; every mq command is offline without this flag.
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File .\scripts\manual_validate.ps1 -Date 2026-11-19

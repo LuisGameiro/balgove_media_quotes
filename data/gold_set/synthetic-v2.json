@@ -1,0 +1,2337 @@
+{
+  "version": "synthetic-v2",
+  "notice": "SYNTHETIC GOLD SET v2: 28 sources x 6 sections plus 8 off-topic articles; 28 deliberately wrong section labels; Ukrainian and Russian invented quotes; .invalid URLs only.",
+  "split": "train: ~60%, dev: ~20%, test: ~20% by sha256(version:article_ref) hashing",
+  "articles": [
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-topic-war_intensity.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-topic-international_support.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-topic-peace_initiatives.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-topic-sanctions.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-topic-resources.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://reuters/synthetic-reuters-topic-other.html",
+      "source_id": "reuters",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-topic-war_intensity.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-topic-international_support.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-topic-peace_initiatives.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-topic-sanctions.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-topic-resources.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-topic-other.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-topic-war_intensity.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-topic-international_support.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-topic-peace_initiatives.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-topic-sanctions.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-topic-resources.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-topic-other.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-topic-war_intensity.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-topic-international_support.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-topic-peace_initiatives.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-topic-sanctions.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-topic-resources.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-topic-other.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ft/synthetic-ft-topic-war_intensity.html",
+      "source_id": "ft",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ft/synthetic-ft-topic-international_support.html",
+      "source_id": "ft",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ft/synthetic-ft-topic-peace_initiatives.html",
+      "source_id": "ft",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ft/synthetic-ft-topic-sanctions.html",
+      "source_id": "ft",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ft/synthetic-ft-topic-resources.html",
+      "source_id": "ft",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ft/synthetic-ft-topic-other.html",
+      "source_id": "ft",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://economist/synthetic-economist-topic-war_intensity.html",
+      "source_id": "economist",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://economist/synthetic-economist-topic-international_support.html",
+      "source_id": "economist",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://economist/synthetic-economist-topic-peace_initiatives.html",
+      "source_id": "economist",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://economist/synthetic-economist-topic-sanctions.html",
+      "source_id": "economist",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://economist/synthetic-economist-topic-resources.html",
+      "source_id": "economist",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://economist/synthetic-economist-topic-other.html",
+      "source_id": "economist",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-topic-war_intensity.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-topic-international_support.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-topic-peace_initiatives.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-topic-sanctions.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-topic-resources.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-topic-other.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-topic-war_intensity.html",
+      "source_id": "dw",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-topic-international_support.html",
+      "source_id": "dw",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-topic-peace_initiatives.html",
+      "source_id": "dw",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-topic-sanctions.html",
+      "source_id": "dw",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-topic-resources.html",
+      "source_id": "dw",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://dw/synthetic-dw-topic-other.html",
+      "source_id": "dw",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://lemonde/synthetic-lemonde-topic-war_intensity.html",
+      "source_id": "lemonde",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Sur le front oriental de l'Ukraine, des tirs et des frappes de drones ont été simulés cette nuit près de points de contrôle fictifs.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://lemonde/synthetic-lemonde-topic-international_support.html",
+      "source_id": "lemonde",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Le soutien international à l'Ukraine dans ce scénario comprend un programme fictif de formation à la défense aérienne le mois prochain.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://lemonde/synthetic-lemonde-topic-peace_initiatives.html",
+      "source_id": "lemonde",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Un plan de cessez-le-feu pour l'Ukraine exige une surveillance et des garanties irrévocables, selon ce scénario fictif.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://lemonde/synthetic-lemonde-topic-sanctions.html",
+      "source_id": "lemonde",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "De nouvelles sanctions sur les exportations à double usage modifient les délais d'approvisionnement dans ce scénario de sanctions fictif.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://lemonde/synthetic-lemonde-topic-resources.html",
+      "source_id": "lemonde",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "La production fictive de munitions en Ukraine a augmenté, mais le manque de spécialistes formés reste la contrainte principale du modèle.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://lemonde/synthetic-lemonde-topic-other.html",
+      "source_id": "lemonde",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "La responsabilité à long terme pour l'Ukraine est au coeur de ce paragraphe synthétique transversal destiné à un replay hors ligne.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://aljazeera/synthetic-aljazeera-topic-war_intensity.html",
+      "source_id": "aljazeera",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://aljazeera/synthetic-aljazeera-topic-international_support.html",
+      "source_id": "aljazeera",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://aljazeera/synthetic-aljazeera-topic-peace_initiatives.html",
+      "source_id": "aljazeera",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://aljazeera/synthetic-aljazeera-topic-sanctions.html",
+      "source_id": "aljazeera",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://aljazeera/synthetic-aljazeera-topic-resources.html",
+      "source_id": "aljazeera",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://aljazeera/synthetic-aljazeera-topic-other.html",
+      "source_id": "aljazeera",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-topic-war_intensity.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-topic-international_support.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-topic-peace_initiatives.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-topic-sanctions.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-topic-resources.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-topic-other.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-topic-war_intensity.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "На сході України у цій модельованій сцені фіксують обстріли та удари дронів поблизу умовних блокпостів.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-topic-international_support.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Міжнародна допомога Україні у цій фіктивній історії включає вигаданий пакет навчання з повітряної оборони наступного місяця.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-topic-peace_initiatives.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "План перемир'я для України потребує моніторингу та гарантій, яких не можна скасувати в односторонньому порядку, йдеться у цій вигаданій сцені.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-topic-sanctions.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Нові санкції на експорт товарів подвійного призначення змінюють строки закупівель у цій повністю вигаданій санкційній сцені.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-topic-resources.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Умовний випуск боєприпасів в Україні зріс, але навчені фахівці залишаються головним обмеженням у цій моделі.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-topic-other.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Довгострокова відповідальність за події в Україні є предметом цього синтетичного загального абзацу для автономного відтворення.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://suspilne/synthetic-suspilne-topic-war_intensity.html",
+      "source_id": "suspilne",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "На сході України у цій модельованій сцені фіксують обстріли та удари дронів поблизу умовних блокпостів.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://suspilne/synthetic-suspilne-topic-international_support.html",
+      "source_id": "suspilne",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Міжнародна допомога Україні у цій фіктивній історії включає вигаданий пакет навчання з повітряної оборони наступного місяця.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://suspilne/synthetic-suspilne-topic-peace_initiatives.html",
+      "source_id": "suspilne",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "План перемир'я для України потребує моніторингу та гарантій, яких не можна скасувати в односторонньому порядку, йдеться у цій вигаданій сцені.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://suspilne/synthetic-suspilne-topic-sanctions.html",
+      "source_id": "suspilne",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Нові санкції на експорт товарів подвійного призначення змінюють строки закупівель у цій повністю вигаданій санкційній сцені.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://suspilne/synthetic-suspilne-topic-resources.html",
+      "source_id": "suspilne",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Умовний випуск боєприпасів в Україні зріс, але навчені фахівці залишаються головним обмеженням у цій моделі.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://suspilne/synthetic-suspilne-topic-other.html",
+      "source_id": "suspilne",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Довгострокова відповідальність за події в Україні є предметом цього синтетичного загального абзацу для автономного відтворення.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://interfaxukraine/synthetic-interfaxukraine-topic-war_intensity.html",
+      "source_id": "interfaxukraine",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://interfaxukraine/synthetic-interfaxukraine-topic-international_support.html",
+      "source_id": "interfaxukraine",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://interfaxukraine/synthetic-interfaxukraine-topic-peace_initiatives.html",
+      "source_id": "interfaxukraine",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://interfaxukraine/synthetic-interfaxukraine-topic-sanctions.html",
+      "source_id": "interfaxukraine",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://interfaxukraine/synthetic-interfaxukraine-topic-resources.html",
+      "source_id": "interfaxukraine",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://interfaxukraine/synthetic-interfaxukraine-topic-other.html",
+      "source_id": "interfaxukraine",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://anadolu/synthetic-anadolu-topic-war_intensity.html",
+      "source_id": "anadolu",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://anadolu/synthetic-anadolu-topic-international_support.html",
+      "source_id": "anadolu",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://anadolu/synthetic-anadolu-topic-peace_initiatives.html",
+      "source_id": "anadolu",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://anadolu/synthetic-anadolu-topic-sanctions.html",
+      "source_id": "anadolu",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://anadolu/synthetic-anadolu-topic-resources.html",
+      "source_id": "anadolu",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://anadolu/synthetic-anadolu-topic-other.html",
+      "source_id": "anadolu",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://thehindu/synthetic-thehindu-topic-war_intensity.html",
+      "source_id": "thehindu",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://thehindu/synthetic-thehindu-topic-international_support.html",
+      "source_id": "thehindu",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://thehindu/synthetic-thehindu-topic-peace_initiatives.html",
+      "source_id": "thehindu",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://thehindu/synthetic-thehindu-topic-sanctions.html",
+      "source_id": "thehindu",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://thehindu/synthetic-thehindu-topic-resources.html",
+      "source_id": "thehindu",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://thehindu/synthetic-thehindu-topic-other.html",
+      "source_id": "thehindu",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://indianexpress/synthetic-indianexpress-topic-war_intensity.html",
+      "source_id": "indianexpress",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://indianexpress/synthetic-indianexpress-topic-international_support.html",
+      "source_id": "indianexpress",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://indianexpress/synthetic-indianexpress-topic-peace_initiatives.html",
+      "source_id": "indianexpress",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://indianexpress/synthetic-indianexpress-topic-sanctions.html",
+      "source_id": "indianexpress",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://indianexpress/synthetic-indianexpress-topic-resources.html",
+      "source_id": "indianexpress",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://indianexpress/synthetic-indianexpress-topic-other.html",
+      "source_id": "indianexpress",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-topic-war_intensity.html",
+      "source_id": "scmp",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-topic-international_support.html",
+      "source_id": "scmp",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-topic-peace_initiatives.html",
+      "source_id": "scmp",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-topic-sanctions.html",
+      "source_id": "scmp",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-topic-resources.html",
+      "source_id": "scmp",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://scmp/synthetic-scmp-topic-other.html",
+      "source_id": "scmp",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyodo/synthetic-kyodo-topic-war_intensity.html",
+      "source_id": "kyodo",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyodo/synthetic-kyodo-topic-international_support.html",
+      "source_id": "kyodo",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyodo/synthetic-kyodo-topic-peace_initiatives.html",
+      "source_id": "kyodo",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyodo/synthetic-kyodo-topic-sanctions.html",
+      "source_id": "kyodo",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyodo/synthetic-kyodo-topic-resources.html",
+      "source_id": "kyodo",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyodo/synthetic-kyodo-topic-other.html",
+      "source_id": "kyodo",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://yonhap/synthetic-yonhap-topic-war_intensity.html",
+      "source_id": "yonhap",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://yonhap/synthetic-yonhap-topic-international_support.html",
+      "source_id": "yonhap",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://yonhap/synthetic-yonhap-topic-peace_initiatives.html",
+      "source_id": "yonhap",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://yonhap/synthetic-yonhap-topic-sanctions.html",
+      "source_id": "yonhap",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://yonhap/synthetic-yonhap-topic-resources.html",
+      "source_id": "yonhap",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://yonhap/synthetic-yonhap-topic-other.html",
+      "source_id": "yonhap",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://gdelt/synthetic-gdelt-topic-war_intensity.html",
+      "source_id": "gdelt",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://gdelt/synthetic-gdelt-topic-international_support.html",
+      "source_id": "gdelt",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://gdelt/synthetic-gdelt-topic-peace_initiatives.html",
+      "source_id": "gdelt",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://gdelt/synthetic-gdelt-topic-sanctions.html",
+      "source_id": "gdelt",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://gdelt/synthetic-gdelt-topic-resources.html",
+      "source_id": "gdelt",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://gdelt/synthetic-gdelt-topic-other.html",
+      "source_id": "gdelt",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian_api/synthetic-guardian_api-topic-war_intensity.html",
+      "source_id": "guardian_api",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian_api/synthetic-guardian_api-topic-international_support.html",
+      "source_id": "guardian_api",
+      "publication_date": "2026-11-20",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian_api/synthetic-guardian_api-topic-peace_initiatives.html",
+      "source_id": "guardian_api",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian_api/synthetic-guardian_api-topic-sanctions.html",
+      "source_id": "guardian_api",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian_api/synthetic-guardian_api-topic-resources.html",
+      "source_id": "guardian_api",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian_api/synthetic-guardian_api-topic-other.html",
+      "source_id": "guardian_api",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://nyt_api/synthetic-nyt_api-topic-war_intensity.html",
+      "source_id": "nyt_api",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://nyt_api/synthetic-nyt_api-topic-international_support.html",
+      "source_id": "nyt_api",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://nyt_api/synthetic-nyt_api-topic-peace_initiatives.html",
+      "source_id": "nyt_api",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://nyt_api/synthetic-nyt_api-topic-sanctions.html",
+      "source_id": "nyt_api",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://nyt_api/synthetic-nyt_api-topic-resources.html",
+      "source_id": "nyt_api",
+      "publication_date": "2026-11-19",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://nyt_api/synthetic-nyt_api-topic-other.html",
+      "source_id": "nyt_api",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://rt/synthetic-rt-topic-war_intensity.html",
+      "source_id": "rt",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://rt/synthetic-rt-topic-international_support.html",
+      "source_id": "rt",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://rt/synthetic-rt-topic-peace_initiatives.html",
+      "source_id": "rt",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://rt/synthetic-rt-topic-sanctions.html",
+      "source_id": "rt",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://rt/synthetic-rt-topic-resources.html",
+      "source_id": "rt",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://rt/synthetic-rt-topic-other.html",
+      "source_id": "rt",
+      "publication_date": "2026-11-13",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-topic-war_intensity.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-topic-international_support.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-topic-peace_initiatives.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-topic-sanctions.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-18",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-topic-resources.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-topic-other.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-topic-war_intensity.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "На востоке Украины в этой модельной сцене зафиксированы обстрелы и удары дронов возле условных блокпостов.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-topic-international_support.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-12",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Международная помощь Украине в этой вымышленной истории включает условный пакет обучения по противовоздушной обороне в следующем месяце.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-topic-peace_initiatives.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "План перемирия для Украины требует мониторинга и гарантий, которые нельзя отозвать в одностороннем порядке, говорится в этой вымышленной сцене.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-topic-sanctions.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Новые санкции на экспорт товаров двойного назначения меняют сроки закупок в этой полностью вымышленной санкционной сцене.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-topic-resources.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Условный выпуск боеприпасов на Украине вырос, но подготовленные специалисты остаются главным ограничением в этой модели.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-topic-other.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Долгосрочная ответственность за события на Украине - тема этого синтетического общего абзаца для автономного воспроизведения.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://xinhua/synthetic-xinhua-topic-war_intensity.html",
+      "source_id": "xinhua",
+      "publication_date": "2026-11-10",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://xinhua/synthetic-xinhua-topic-international_support.html",
+      "source_id": "xinhua",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://xinhua/synthetic-xinhua-topic-peace_initiatives.html",
+      "source_id": "xinhua",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://xinhua/synthetic-xinhua-topic-sanctions.html",
+      "source_id": "xinhua",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://xinhua/synthetic-xinhua-topic-resources.html",
+      "source_id": "xinhua",
+      "publication_date": "2026-11-14",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://xinhua/synthetic-xinhua-topic-other.html",
+      "source_id": "xinhua",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://globaltimes/synthetic-globaltimes-topic-war_intensity.html",
+      "source_id": "globaltimes",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Ukraine's eastern front saw synthetic shelling and drone strikes near imaginary checkpoints overnight, a fixture scenario said.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://globaltimes/synthetic-globaltimes-topic-international_support.html",
+      "source_id": "globaltimes",
+      "publication_date": "2026-11-11",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "International support for Ukraine in this fixture includes a made-up air defence training package scheduled for next month.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://globaltimes/synthetic-globaltimes-topic-peace_initiatives.html",
+      "source_id": "globaltimes",
+      "publication_date": "2026-11-15",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "A ceasefire plan for Ukraine needs monitoring and guarantees that cannot be withdrawn unilaterally, this synthetic scenario says.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://globaltimes/synthetic-globaltimes-topic-sanctions.html",
+      "source_id": "globaltimes",
+      "publication_date": "2026-11-21",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "New sanctions on dual-use exports are changing procurement timelines inside this entirely invented sanctions scenario.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://globaltimes/synthetic-globaltimes-topic-resources.html",
+      "source_id": "globaltimes",
+      "publication_date": "2026-11-17",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Synthetic ammunition output in Ukraine has risen while trained personnel remain the binding constraint in this model.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://globaltimes/synthetic-globaltimes-topic-other.html",
+      "source_id": "globaltimes",
+      "publication_date": "2026-11-16",
+      "relevant": true,
+      "quotes": [
+        {
+          "quote_text": "Long-term accountability for Ukraine is the focus of this synthetic cross-cutting paragraph for offline replay.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ap/synthetic-ap-offtopic-football-final.invalid.html",
+      "source_id": "ap",
+      "publication_date": "2026-11-12",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "The imaginary striker scored twice in a made-up cup final before a fictional crowd, a synthetic sports desk said.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bbc/synthetic-bbc-offtopic-other-war-conference.invalid.html",
+      "source_id": "bbc",
+      "publication_date": "2026-11-10",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "A fictional conference on a conflict in another region issued an invented statement about humanitarian corridors.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://guardian/synthetic-guardian-offtopic-tv-awards.invalid.html",
+      "source_id": "guardian",
+      "publication_date": "2026-11-18",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "The fictional ensemble accepted an imaginary television award and thanked a make-believe studio audience.",
+          "section_id": "other",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://tass/synthetic-tass-offtopic-chess-event.invalid.html",
+      "source_id": "tass",
+      "publication_date": "2026-11-10",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "Вымышленная шахматная федерация объявила о наградах для двух воображаемых гроссмейстеров в этом сценарии.",
+          "section_id": "resources",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ukrainskapravda/synthetic-ukrainskapravda-offtopic-music-festival.invalid.html",
+      "source_id": "ukrainskapravda",
+      "publication_date": "2026-11-12",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "Вигаданий музичний фестиваль у сусідній країні оголосив уявний склад виконавців на наступний сезон.",
+          "section_id": "peace_initiatives",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://ria/synthetic-ria-offtopic-weather-forecast.invalid.html",
+      "source_id": "ria",
+      "publication_date": "2026-11-19",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "Вымышленная метеослужба пообещала воображаемое похолодание в соседнем регионе на следующей неделе.",
+          "section_id": "international_support",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://bloomberg/synthetic-bloomberg-offtopic-coffee-prices.invalid.html",
+      "source_id": "bloomberg",
+      "publication_date": "2026-11-14",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "A fictional commodity desk projected imaginary coffee prices for the next quarter in this fantasy market note.",
+          "section_id": "sanctions",
+          "human_label": true
+        }
+      ]
+    },
+    {
+      "article_ref": "fixture://kyivindependent/synthetic-kyivindependent-offtopic-baking-club.invalid.html",
+      "source_id": "kyivindependent",
+      "publication_date": "2026-11-21",
+      "relevant": false,
+      "quotes": [
+        {
+          "quote_text": "An invented neighbourhood baking club shared a make-believe recipe for holiday bread in this synthetic lifestyle item.",
+          "section_id": "war_intensity",
+          "human_label": true
+        }
+      ]
+    }
+  ],
+  "negative_candidates": [
+    {
+      "quote_text": "Advertisement: subscribe to the synthetic newsletter for more fixture updates.",
+      "reason": "advertisement boilerplate",
+      "human_label": false
+    },
+    {
+      "quote_text": "Cookie notice: this fixture uses no tracking and stores no personal data.",
+      "reason": "cookie notice",
+      "human_label": false
+    },
+    {
+      "quote_text": "All rights reserved by the imaginary publisher of this synthetic fixture.",
+      "reason": "copyright boilerplate",
+      "human_label": false
+    },
+    {
+      "quote_text": "Click here to read more fictional headlines on page twelve of the fixture.",
+      "reason": "pager link boilerplate",
+      "human_label": false
+    },
+    {
+      "quote_text": "Photo: Fixture Photography Desk; caption is invented for offline replay.",
+      "reason": "photo credit and caption junk",
+      "human_label": false
+    },
+    {
+      "quote_text": "Sponsored message: a make-believe product appears here for layout testing.",
+      "reason": "sponsored content",
+      "human_label": false
+    },
+    {
+      "quote_text": "Table 4: invented economic indicators for the synthetic topic scenario.",
+      "reason": "table furniture",
+      "human_label": false
+    },
+    {
+      "quote_text": "Follow our fictional social account for imaginary breaking news updates.",
+      "reason": "social promotion",
+      "human_label": false
+    }
+  ]
+}

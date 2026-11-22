@@ -7,11 +7,11 @@ check mappings are recorded once, in 08. There are **no open questions** left �
 closed by an explicit decision; the residual licence constraint is accepted, not untracked.
 
 **Document status** (all are *integrated / reviewed*, owner **Balgove Innovations**, last
-reviewed **2026-11-20** against the brief and the scaffold):
+reviewed **2026-11-22** against the brief, the scaffold and the implemented code):
 
 | Doc | Status | Last reviewed | Review trigger |
 |---|---|---|---|
-| 01–04, 06–12, root & data README | integrated / reviewed | 2026-11-20 | Brief change, decision change, or implementation drift |
+| 01–04, 06–18, root & data README | integrated / reviewed | 2026-11-22 | Brief change, decision change, or implementation drift |
 
 > **Status: integrated, reviewed.** Reuters/BBC stay mandatory but `blocked` under the T0
 > rights gate — see [04](04-risks-and-open-questions.md) DEC-01/DEC-14. The minimum
@@ -37,6 +37,10 @@ reviewed **2026-11-20** against the brief and the scaffold):
 | [11-repository-structure.md](11-repository-structure.md) | Canonical whole-monorepo tree: source, data, tests, docs, migrations, tooling and generated artifacts, with placement rules |
 | [12-implementation-plan.md](12-implementation-plan.md) | Bridge from plan to code: phases A–F, vertical slices, exit checks and the cutover from file-based offline handlers to Postgres/Dagster |
 | [14-command-reference.md](14-command-reference.md) | Every command in the repo: CLI flags, scripts, Make/PowerShell, Docker, Dagster, `.env`, recommended order |
+| [15-source-topic-study.md](15-source-topic-study.md) | How each outlet organises the Russia–Ukraine war topic (hubs, tags, feeds, sitemaps, APIs) and the resulting per-source topic config recommendation |
+| [16-topic-language-ai-judge-plan.md](16-topic-language-ai-judge-plan.md) | Consolidated plan for topic validation, language classification, opt-in translation and environment-controlled AI review |
+| [17-connection-and-fetching-reference.md](17-connection-and-fetching-reference.md) | Operational reference for connecting sources, fetching articles/quotes, and every CLI/env switch that controls it |
+| [18-connection-and-fetching-improvements.md](18-connection-and-fetching-improvements.md) | Prioritised improvement plan derived from 17: misleading flags, doc drift, live-fetch command, rights and policy tuning |
 
 ## Reading order
 
@@ -52,6 +56,10 @@ reviewed **2026-11-20** against the brief and the scaffold):
 10. [11](11-repository-structure.md) — where every file in the monorepo belongs.
 11. [12](12-implementation-plan.md) — how to cut over to live Postgres/Dagster implementation, phase by phase.
 12. [14](14-command-reference.md) — exact commands and operational order (Dagster after local Postgres).
+13. [15](15-source-topic-study.md) — how sources organise the war topic and what to configure per source.
+14. [16](16-topic-language-ai-judge-plan.md) — topic gate, language/translation and AI-judge implementation order.
+15. [17](17-connection-and-fetching-reference.md) — how sources connect, how fetching works and which flags control it.
+16. [18](18-connection-and-fetching-improvements.md) — the smallest fixes for the gaps 17 identifies.
 
 The implementation scaffold lives in [`../src`](../src); the registry and frozen schema in
 [`../data`](../data); operator commands in the [root README](../README.md).
@@ -66,7 +74,7 @@ The implementation scaffold lives in [`../src`](../src); the registry and frozen
 - **rights_status / access_mode**: T0 approval state / approved retrieval route (enums in [01](01-requirements-analysis.md) §2).
 - **DEC / RSK / REQ / OUT / CHK**: register IDs in [04](04-risks-and-open-questions.md) and [08](08-traceability.md).
 
-## Docs QA checklist (CHK-08 — `scripts/docs_qa.py`, also wrapped by `tests/test_docs_qa.py` in CI)
+## Docs QA checklist (CHK-08 — `scripts/docs_qa.py`, also wrapped by `tests/contract/test_docs_qa.py` in CI)
 
 - [ ] All relative links resolve (no links to retired doc 05).
 - [ ] One canonical MD path everywhere: `digests/YYYY-MM-DD.md`; no `data/reports/` as output.

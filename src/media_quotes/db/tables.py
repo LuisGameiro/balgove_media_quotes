@@ -10,6 +10,8 @@ from sqlalchemy import (
     Boolean,
     Column,
     Date,
+    DateTime,
+    Float,
     Integer,
     MetaData,
     String,
@@ -79,6 +81,18 @@ quotes_table = Table(
     Column("verification_status", String, nullable=False),
     Column("verification_details", JSON, nullable=False, default=dict),
     Column("quote_metadata", JSON, nullable=False, default=dict),
+    Column("topic_id", String, nullable=False, default="ukraine-war"),
+    Column("topic_status", String, nullable=False, default="accepted"),
+    Column("topic_rule_version", String, nullable=False, default=""),
+    Column("topic_score", Float, nullable=False, default=0.0),
+    Column("matched_terms", JSON, nullable=False, default=list),
+    Column("quote_language", String, nullable=False, default=""),
+    Column("language_confidence", Float, nullable=False, default=0.0),
+    Column("quote_text_en", String, nullable=False, default=""),
+    Column("translation_model_snapshot", String, nullable=False, default=""),
+    Column("translation_prompt_version", String, nullable=False, default=""),
+    Column("translation_hash", String, nullable=False, default=""),
+    Column("translation_status", String, nullable=False, default=""),
 )
 
 quote_classifications_table = Table(
@@ -112,6 +126,7 @@ digests_table = Table(
     Column("window_end", Date, nullable=False),
     Column("md_path", String, nullable=False),
     Column("manifest", JSON, nullable=False, default=dict),
+    Column("topic_id", String, nullable=False, default="ukraine-war"),
 )
 
 eval_runs_table = Table(
@@ -135,6 +150,8 @@ pipeline_runs_table = Table(
     Column("partition_date", Date, nullable=True),
     Column("status", String, nullable=False),
     Column("stats", JSON, nullable=False, default=dict),
+    Column("topic_id", String, nullable=False, default="ukraine-war"),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
 )
 
 audit_events_table = Table(

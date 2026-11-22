@@ -11,7 +11,8 @@ import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,7 +20,32 @@ from pydantic import BaseModel, ConfigDict, Field
 from .exceptions import RateLimitExceededError, SourceNotPermitted
 from .registry import SourceRegistryRow
 
+if TYPE_CHECKING:
+    from .config import Settings
+
 POLITE_USER_AGENT = "MediaQuotesBot/0.1 (+internal research; rights-gated)"
+
+
+def allowed_hosts_for(row: SourceRegistryRow) -> frozenset[str]:
+    """Hosts explicitly registered for this source; never inferred from arbitrary URLs."""
+    hosts: set[str] = set()
+    for value in (row.homepage_url, row.feed_url):
+        host = urlparse(value).hostname
+        if host:
+            hosts.add(host.lower())
+    return frozenset(hosts)
+
+
+def assert_url_permitted(
+    url: str, row: SourceRegistryRow, *, extra_hosts: frozenset[str] = frozenset()
+) -> None:
+    """HTTPS-only host allowlist; blocks using one source's rights for another's host."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError("article URL must be absolute https")
+    host = (parsed.hostname or "").lower()
+    if not host or host not in (allowed_hosts_for(row) | extra_hosts):
+        raise ValueError(f"URL host {host!r} is not registered for source {row.source_id!r}")
 
 
 class FetchPolicy(BaseModel):
@@ -45,6 +71,16 @@ class FetchPolicy(BaseModel):
             "headers": {"User-Agent": self.user_agent},
             "follow_redirects": False,
         }
+
+
+def fetch_policy_from(settings: Settings) -> FetchPolicy:
+    """Build the live fetch policy from settings, keeping the library defaults as fallback."""
+    return FetchPolicy(
+        timeout_seconds=settings.fetch_timeout_seconds,
+        requests_per_second=settings.fetch_requests_per_second,
+        max_bytes=settings.fetch_max_bytes,
+        max_connections=settings.fetch_max_connections,
+    )
 
 
 @dataclass(slots=True)
@@ -77,6 +113,22 @@ def assert_fetch_permitted(row: SourceRegistryRow, *, track_a_approved: bool) ->
         )
 
 
+async def _read_response(response: httpx.Response, max_bytes: int) -> bytes:
+    """Stream a response under a hard byte cap, before and during download."""
+    response.raise_for_status()
+    declared = response.headers.get("content-length")
+    if declared and int(declared) > max_bytes:
+        raise ValueError(f"response too large: {declared} > {max_bytes}")
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"response too large: {total} > {max_bytes}")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def fetch_bytes(
     url: str,
     *,
@@ -86,11 +138,12 @@ async def fetch_bytes(
     bucket: TokenBucket | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     clock: Callable[[], float] | float | None = None,
+    allowed_hosts: frozenset[str] = frozenset(),
+    client: httpx.AsyncClient | None = None,
 ) -> tuple[bytes, str]:
     """Fetch raw article bytes and return (bytes, sha256). Never used without approval."""
     assert_fetch_permitted(row, track_a_approved=track_a_approved)
-    if not url.startswith(("https://", "http://")):
-        raise ValueError("article URL must be absolute http(s)")
+    assert_url_permitted(url, row, extra_hosts=allowed_hosts)
     token_bucket = bucket or TokenBucket(policy.requests_per_second)
 
     if callable(clock):
@@ -102,10 +155,14 @@ async def fetch_bytes(
 
     if not token_bucket.allow(now):
         raise RateLimitExceededError("rate limit exceeded")
-    async with httpx.AsyncClient(transport=transport, **policy.client_kwargs()) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        content = response.content
-        if len(content) > policy.max_bytes:
-            raise ValueError(f"response too large: {len(content)} > {policy.max_bytes}")
-        return content, hashlib.sha256(content).hexdigest()
+
+    if client is not None:
+        async with client.stream("GET", url) as response:
+            content = await _read_response(response, policy.max_bytes)
+    else:
+        async with (
+            httpx.AsyncClient(transport=transport, **policy.client_kwargs()) as owned,
+            owned.stream("GET", url) as response,
+        ):
+            content = await _read_response(response, policy.max_bytes)
+    return content, hashlib.sha256(content).hexdigest()

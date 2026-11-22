@@ -1,7 +1,7 @@
 # 10 — Risk mitigation plan (RSK-07, RSK-08, RSK-11)
 
-**Status:** mitigations **partially applied** in `src/media_quotes/risk_controls.py` with
-27 unit tests in `tests/test_risk_controls.py` (CHK-15/16/17 policy layer, all passing).
+**Status:** mitigations **partially applied** in `src/media_quotes/risk_controls/` with
+27 unit tests in `tests/unit/risk_controls/` (CHK-15/16/17 policy layer, all passing).
 Applied: evidence bundle + triage, review-queue state machine (add/decide/overdue/hideable),
 drift guard, cost estimate + budget gate + canonical cache-key builder, retention policy +
 partition/retention planner. Design decisions (DEC-17/18/19) and policy closures are indexed
@@ -39,18 +39,18 @@ review queue exists in outline but has no evidence bundle, SLA enforcement, or f
    - `p < 0.50` → keep the quote active, log the non-decision for monitoring.
    No quote becomes permanently `is_obsolete=true` without a human `confirmed` verdict — fail-closed.
 3. **Review queue in T6** with states `pending → confirmed | rejected | escalated`;
-   `claim_only` material always shown as perspective. SLA: **1 working day (24h weekday / 48h weekend window)**; on breach the
-   run audit records an overdue-review gap (exit `2`).
+   `claim_only` material always shown as perspective. SLA: **1 calendar day (24h from `raised_at`)**; on breach the
+   review-queue sensor logs an overdue flag. Working-day calendars are not implemented.
 4. **Human override:** a reviewer may reject an LLM flag; reject reason and LLM rationale are
    both retained for calibration. Escalation goes to Balgove Innovations.
 5. **Drift guard:** held-out `obsolete_precision ≥ 0.90` ([01](01-requirements-analysis.md) §7).
    If two consecutive `mq eval` runs fall below it, disable LLM obsoletion and require
    human-only review until recalibrated; record the change in [08](08-traceability.md).
 
-**Code artifact:** `src/media_quotes/risk_controls.py` — `ObsolescenceEvidence`,
+**Code artifact:** `src/media_quotes/risk_controls/` — `ObsolescenceEvidence`,
 `ObsolescenceFlag.may_hide_quote()`, `triage_obsolescence()`, `review_overdue()`,
 `ReviewQueue` (state machine, SLA list, hideable list), `obsoletion_allowed()`;
-`tests/test_risk_controls.py` covers the branches (unit layer done).
+`tests/unit/risk_controls/` covers the branches (unit layer done).
 
 ### Tasks / checks / exit criteria
 
@@ -89,10 +89,10 @@ pre-flight estimate, hard budget, or cache-hit monitoring.
    p95 per-article latency target set at T2; `mq audit` JSON/MD includes calls, cache hits,
    tokens, cost, latency and batch ids per run.
 
-**Code artifact:** `src/media_quotes/risk_controls.py` — `estimate_backfill()`,
-`budget_gate()`, `BudgetExceededError`, `build_cache_key()` (SHA-256 over canonical JSON of
-the six versioned components); `tests/test_risk_controls.py` covers estimate, cache-hit
-reduction, the 80%/100% gate and key stability/sensitivity (unit layer done).
+**Code artifact:** `src/media_quotes/risk_controls/` — `estimate_backfill()`,
+`budget_gate()`, `BudgetExceededError` and the retention/triage helpers. Live decisions use the
+one cache-key helper in each provider boundary; `tests/unit/risk_controls/` covers the estimate,
+cache-hit reduction and the 80%/100% gate.
 
 ### Tasks / checks / exit criteria
 
@@ -112,8 +112,8 @@ rows, and no retention/partitioning job exists.
 
 ### Mitigation design
 
-1. **Monthly declarative partitioning** by `created_at` for `audit_events`, `llm_decisions`,
-   `verifier_results`, `source_checks` and `runs` (Alembic migration, DEC-15). Current month
+1. **Monthly declarative partitioning** by `created_at` for `audit_events` and `llm_decisions`
+   (Alembic migration, DEC-15). Current month
    is hot; older partitions are read-only. Archival = **detach to cold storage, never delete**
    unless counsel sets a legal retention limit — audit history is immutable evidence.
 2. **Raw bytes, logs and exports.** Raw blobs stored externally with pointer + `content_hash`
@@ -130,9 +130,10 @@ rows, and no retention/partitioning job exists.
    index bloat, longest transaction age and retention-job status. Quarterly restore drill:
    rebuild `quotes.jsonl` from a restored partition set + blob store and compare hashes.
 
-**Code artifact:** `src/media_quotes/risk_controls.py` — `RetentionPolicy`
-(`prune_cutoffs`, `allow_prune`, `lock_ok`), `partition_name()`, `RetentionPlan` and
-`retention_plan()` (monthly partitions to detach/keep); `tests/test_risk_controls.py`
+**Code artifact:** `src/media_quotes/risk_controls/` — `RetentionPolicy`
+(`prune_cutoffs`, `allow_prune`, `lock_ok` — `allow_prune` is a policy helper with no live prune
+job yet), `partition_name()`, `RetentionPlan` and
+`retention_plan()` (monthly partitions to detach/keep); `tests/unit/risk_controls/`
 covers cutoffs, tombstones, audit immutability, the 60s lock bound and the planner
 (unit layer done).
 
@@ -167,7 +168,7 @@ CHK-15/16/17 in T5–T10.
 |---|---|---|
 | RSK-07 | `mq eval --gold-set synthetic-v1` passes with train=44, dev=15, test=11; `obsolete_precision=1.0`, `span_exact_match=1.0`, `false_quote_rate=0.0`; audit shows zero rejected quotes in the fixture run | Offline evidence only. Held-out **human** labels and a met review SLA are still required. |
 | RSK-08 | `mq backfill --from 2026-10-01 --to 2026-10-05 --max-cost 0.01` estimated cost 23.0 and exited `3` as required | Budget breach control passes. Three real backfills within ±20% of estimate are still required. |
-| RSK-11 | `mq retention --dry-run` reports audit rows preserved, cutoffs 2026-05-24/2026-08-22, and `longest_txn_ok=true`; `mq restore-drill --date 2026-11-19 --reference var/export/reference-2026-11-19.jsonl` passes for 22 quoted records | Offline plan and deterministic restore pass. A live load test with transactions under 60s and cold-partition/tombstone checks are still required. |
+| RSK-11 | `mq retention --dry-run` reports audit rows preserved and cutoffs 2026-05-24/2026-08-22; lock duration is explicitly **not measured** offline; `mq restore-drill --date 2026-11-19 --reference var/export/reference-2026-11-19.jsonl` passes for 22 quoted records | Offline plan and deterministic restore pass. A live load test with transactions under 60s and cold-partition/tombstone checks are still required. |
 
 These results close only the deterministic/offline portion of CHK-15, CHK-16 and CHK-17. RSK-07,
 RSK-08 and RSK-11 remain accepted until the production evidence in the rows above is recorded

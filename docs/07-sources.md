@@ -6,7 +6,8 @@ Descriptive catalogue of every source in the registry. The authoritative machine
 it is* and *what enabling it requires*. It does not change the registry or the schema.
 
 **Status:** integrated / reviewed · **Owner:** Balgove Innovations · **Last verified against
-`sources.csv`:** 2026-11-20. The registry contains **28 source rows**; all `enabled=false`
+the JSON source configs:** 2026-11-22. The registry contains **28 source rows**: 10 licensed
+sources are `enabled=true`, 16 are pending counsel review, and 2 (Reuters/BBC) are `blocked`
 (re-verify at every enablement, T2/T7).
 
 > **Notation:** "T0 gate" = the rights gate in brief §1; task `T0` = the first task in
@@ -100,8 +101,9 @@ with stored evidence).
 ## Registry mapping (machine view)
 
 Descriptive names above map to these `source_id` / rights / access-mode values in
-`data/sources.csv` (all `enabled=false`, all `rights_status=pending_counsel_review` except
-Tier 1 `blocked`, as verified 2026-11-20):
+`data/sources/*.json` (mirrored to `data/sources.csv`). As verified 2026-11-22: 10 sources are
+`license_held` and `enabled=true`, 16 are `pending_counsel_review` and disabled, and Tier 1
+Reuters/BBC are `blocked`:
 
 | Tier | `source_id` → outlet | `access_mode` | Notes |
 |---|---|---|---|

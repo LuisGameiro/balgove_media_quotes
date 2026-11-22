@@ -73,6 +73,8 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
             errors.append(f"{where}: unknown discovery_method {row['discovery_method']!r}")
         if row["enabled"] == "true" and row["rights_status"] not in APPROVED_RIGHTS:
             errors.append(f"{where}: T0 gate - enabled sources need approved rights_status")
+        if row["enabled"] == "true" and row["discovery_method"] == "web":
+            errors.append(f"{where}: T0 gate - enabled sources cannot use web discovery")
         if row["rights_status"] in APPROVED_RIGHTS and not row["license_reference"]:
             errors.append(f"{where}: approved rights need a license_reference")
         if row["source_type"] == "state-controlled" and row["claim_only"] != "true":

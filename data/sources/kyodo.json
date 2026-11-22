@@ -1,0 +1,46 @@
+{
+  "source_id": "kyodo",
+  "source_name": "Kyodo News",
+  "homepage_url": "https://english.kyodonews.net",
+  "feed_url": "",
+  "tier": 3,
+  "cadence_hours": 24,
+  "country_region": "Japan",
+  "source_type": "independent",
+  "claim_only": false,
+  "language": "en",
+  "requires_translation": false,
+  "paywalled": null,
+  "rights_status": "pending_counsel_review",
+  "access_mode": "pending_review",
+  "license_reference": "",
+  "discovery_method": "web",
+  "archive_start_date": "2026-10-01",
+  "enabled": false,
+  "notes": "Confirm archive depth, access and rights before enabling.",
+  "routes": [
+    {
+      "route_id": "route-kyodo-ukraine-default",
+      "route_type": "web",
+      "discovery_url": "https://english.kyodonews.net",
+      "topic_rule_id": "ukraine-war-v1",
+      "topic_id": "ukraine-war",
+      "priority": 90,
+      "fallback_route_id": "",
+      "approved": false,
+      "license_reference": "",
+      "translation_rights_confirmed": false,
+      "notes": "Not approved; archive access and rights unresolved; no live probe."
+    }
+  ],
+  "extractor_hints": {
+    "adapter": null,
+    "default_feed_url": "",
+    "favor_precision": false,
+    "favor_recall": false,
+    "include_comments": false,
+    "include_tables": false,
+    "min_text_length": 200,
+    "strip_selectors": []
+  }
+}

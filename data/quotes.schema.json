@@ -44,7 +44,33 @@
     },
     "quote_text_en": {
       "type": "string",
-      "description": "English translation, required when source_language is not en. Empty string when the original is already English. Never replaces quote_text_original."
+      "description": "Additional English translation when generated or supplied. Never replaces quote_text_original."
+    },
+    "topic_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "default": "ukraine-war",
+      "description": "Topic pack identifier from data/topics/<topic_id>.json; legacy exports default to ukraine-war."
+    },
+    "topic_status": {
+      "type": "string",
+      "enum": ["accepted", "uncertain", "rejected"],
+      "default": "accepted",
+      "description": "Article-level topic-gate outcome that admitted this quote. Legacy exports default to accepted."
+    },
+    "topic_rule_version": {
+      "type": "string",
+      "description": "Pinned version of the deterministic relevance rule used for the topic decision."
+    },
+    "topic_score": {
+      "type": "number",
+      "default": 0.0,
+      "description": "Score assigned by the topic rule; provenance only, never a publication threshold on its own."
+    },
+    "matched_terms": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Terms that matched the topic rule, recorded for auditability."
     },
     "source_id": {
       "type": "string",
@@ -101,6 +127,35 @@
       "pattern": "^[a-z]{2}$",
       "description": "ISO 639-1 code of the article language."
     },
+    "quote_language": {
+      "type": "string",
+      "pattern": "^([a-z]{2}|und)?$",
+      "description": "Detected ISO 639-1 code of the quote itself, or ISO 639-3 'und' when undetermined; may differ from source_language."
+    },
+    "language_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Confidence of quote-level language detection."
+    },
+    "translation_model_snapshot": {
+      "type": "string",
+      "description": "Pinned model that produced quote_text_en."
+    },
+    "translation_prompt_version": {
+      "type": "string",
+      "description": "Prompt version used for quote_text_en."
+    },
+    "translation_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of inputs and output for the translation decision."
+    },
+    "translation_status": {
+      "type": "string",
+      "enum": ["translated", "skipped", "failed", "fixture", ""],
+      "description": "Outcome of the optional translation step."
+    },
     "publication_date": {
       "type": "string",
       "format": "date",
@@ -126,8 +181,8 @@
     },
     "section_id": {
       "type": "string",
-      "description": "Foreign key to section_id in sections.csv.",
-      "enum": ["war_intensity", "international_support", "peace_initiatives", "sanctions", "resources", "other"]
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Foreign key to section_id in sections.csv or the active topic pack."
     },
     "is_obsolete": {
       "type": "boolean",
@@ -140,7 +195,7 @@
     "content_hash": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
-      "description": "SHA-256 of quote_text_original plus article_url; used for deterministic deduplication and tamper checks."
+      "description": "SHA-256 over [source_id, canonical_url, quote_text_original, char_start (as text), raw_blob_sha256] in that order; used for deterministic deduplication and tamper checks."
     },
     "verification": {
       "type": "object",

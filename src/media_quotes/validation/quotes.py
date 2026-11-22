@@ -20,6 +20,7 @@ def check_quotes(
 ) -> None:
     if not store.exists():
         return
+    validator = jsonschema.Draft202012Validator(schema)
     with store.open(encoding="utf-8") as handle:
         for lineno, line in enumerate(handle, start=1):
             if not line.strip():
@@ -31,7 +32,7 @@ def check_quotes(
                 errors.append(f"{where}: invalid JSON ({exc.msg})")
                 continue
             try:
-                jsonschema.validate(record, schema)
+                validator.validate(record)
             except jsonschema.ValidationError as exc:
                 path = ".".join(str(part) for part in exc.path)
                 errors.append(f"{where}: schema error at {path}: {exc.message}")
@@ -80,7 +81,9 @@ def check_quotes(
                 )
             if record.get("is_obsolete") and not record.get("obsolete_reason"):
                 errors.append(f"{where}: obsolete quotes need an obsolete_reason")
-            if record.get("source_language") not in (None, "en") and not record.get(
-                "quote_text_en"
-            ):
+            quote_language = record.get("quote_language") or ""
+            needs_translation = record.get("source_language") not in (None, "en") or (
+                quote_language not in ("", "en", "und")
+            )
+            if needs_translation and not record.get("quote_text_en"):
                 errors.append(f"{where}: non-English quotes need quote_text_en")

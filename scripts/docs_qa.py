@@ -43,6 +43,9 @@ TABLE_SEPARATOR_RE = re.compile(r"^\|[\s:|-]+\|$")
 TASK_DEF_RE = re.compile(r"^\| \*\*(T\d+)\*\*", re.M)
 TASK_REF_RE = re.compile(r"\bT(\d{1,2})\b")
 WHITESPACE_RE = re.compile(r"\s+")
+FILE_SPAN_PATH_RE = re.compile(
+    r"`((?:src|tests|scripts|data|docs)/[\w./-]+\.(?:py|sql|json|csv|md|toml))`"
+)
 
 # Named constants replace the original magic numbers.
 EXPECTED_DECISIONS = 19
@@ -342,6 +345,17 @@ def check_code_spans(docs: Docs) -> list[CheckResult]:
     return [result("code spans intact", not bad, details(bad))]
 
 
+def check_file_span_paths(docs: Docs) -> list[CheckResult]:
+    """Paths written as inline code must exist, not just Markdown links."""
+    bad: list[str] = []
+    for file in docs.files:
+        for match in FILE_SPAN_PATH_RE.finditer(docs.texts[file.as_posix()]):
+            path = match.group(1)
+            if not (docs.root / path).exists():
+                bad.append(f"{file.name} -> {path}")
+    return [result("code span paths exist", not bad, details(bad))]
+
+
 def check_tables(docs: Docs) -> list[CheckResult]:
     detail = ""
     for file in docs.files:
@@ -507,6 +521,7 @@ CHECKS: tuple[Callable[[Docs], list[CheckResult]], ...] = (
     check_engineering_standards,
     check_registry_rows,
     check_code_spans,
+    check_file_span_paths,
     check_tables,
     check_duplicate_ids,
     check_layout_paths,

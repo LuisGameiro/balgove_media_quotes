@@ -3,18 +3,32 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from ..config import Settings
+from ..config import DEFAULT_TOPIC_ID, Settings
 from ..exceptions import ConfigError
 from ..export import local_store_path, read_jsonl
+from ..pipeline import (
+    JudgeDecisionSnapshot,
+    JudgeProvider,
+    ask_judge,
+    make_judge,
+    normalise_judge_decision,
+)
 from ..restore_drill import retention_readiness, verify_export_integrity
 from ..risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
-from ..risk_controls.obsolescence import ReviewQueue
+from ..risk_controls.obsolescence import (
+    ReviewQueue,
+    flag_with_judge_provenance,
+    judge_obsolescence_verdict,
+    obsolescence_judge_payload,
+    pending_flags,
+)
 from ..risk_controls.retention import RetentionPolicy
-from .common import EXIT_FAILURE, EXIT_OK, _read_json, _write_json
+from .common import EXIT_FAILURE, EXIT_OK, _read_json, _write_json, load_review_flags
 
 QUEUE_FILE = "review-queue.json"
 
@@ -28,8 +42,68 @@ def _load_queue(settings: Settings) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"flags": []}
 
 
-def _flag_from_dict(data: dict[str, Any]) -> ObsolescenceFlag:
-    return ObsolescenceFlag.model_validate_json(json.dumps(data))
+@dataclass(frozen=True, slots=True)
+class JudgeSuggestion:
+    verdict: str
+    decision: JudgeDecisionSnapshot
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "verdict": self.verdict,
+            "confidence": self.decision.confidence,
+            "rationale": self.decision.rationale,
+            "actor": self.decision.actor,
+            "model_snapshot": self.decision.model_snapshot,
+            "prompt_version": self.decision.prompt_version,
+            "input_hash": self.decision.input_hash,
+            "output_hash": self.decision.output_hash,
+            "escalation_reason": self.decision.escalation_reason,
+        }
+
+
+def _judge_mode(settings: Settings) -> str:
+    return str(getattr(settings, "ai_judge_mode", "off")).strip().lower()
+
+
+def _review_judge(settings: Settings) -> JudgeProvider | None:
+    if _judge_mode(settings) not in {"advisory", "decision"}:
+        return None
+    try:
+        return make_judge(settings)
+    except (ImportError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _judge_suggestions(
+    settings: Settings, judge: JudgeProvider, flags: list[ObsolescenceFlag]
+) -> dict[str, JudgeSuggestion]:
+    suggestions: dict[str, JudgeSuggestion] = {}
+    for flag in pending_flags(flags):
+        quote_id = flag.evidence.old_quote_id
+        try:
+            decision = normalise_judge_decision(
+                ask_judge(
+                    judge,
+                    task="obsolescence_review",
+                    payload=obsolescence_judge_payload(flag),
+                )
+            )
+        except (TypeError, ValueError, RuntimeError) as exc:
+            decision = JudgeDecisionSnapshot(
+                task="obsolescence_review",
+                verdict="escalated",
+                confidence=0.0,
+                rationale=f"judge unavailable: {exc}",
+                actor="ai-judge",
+                model_snapshot=str(getattr(settings, "ai_judge_model_snapshot", "") or ""),
+                prompt_version=str(getattr(settings, "judge_prompt_version", "") or ""),
+                input_hash="",
+                output_hash="",
+                escalation_reason=str(exc),
+            )
+        verdict = judge_obsolescence_verdict(decision)
+        suggestions[quote_id] = JudgeSuggestion(verdict=verdict, decision=decision)
+    return suggestions
 
 
 def _do_review(
@@ -43,16 +117,26 @@ def _do_review(
 ) -> int:
     """List, seed, or decide pending obsolete flags using ReviewQueue (fail-closed)."""
     payload = _load_queue(settings)
-    flags_data = cast(list[dict[str, Any]], payload.get("flags", []))
-    flags = [_flag_from_dict(item) for item in flags_data if isinstance(item, dict)]
-    queue = ReviewQueue(flags)
+    flags = load_review_flags(settings)
+    mode = _judge_mode(settings)
+    judge = _review_judge(settings) if action in {"list", "decide"} else None
+    if judge is None:
+        suggestions = {}
+    elif action == "decide":
+        # Only the flag being decided needs a judge call; the rest of the queue does not.
+        selected = [flag for flag in flags if flag.evidence.old_quote_id == quote_id]
+        suggestions = _judge_suggestions(settings, judge, selected)
+    else:
+        suggestions = _judge_suggestions(settings, judge, flags)
 
     if action == "list":
-        pending = [
-            flag.model_dump(mode="json")
-            for flag in flags
-            if flag.state in {"pending", "needs_evidence", "escalated"}
-        ]
+        pending = []
+        for flag in pending_flags(flags):
+            item = flag.model_dump(mode="json")
+            suggestion = suggestions.get(flag.evidence.old_quote_id)
+            if suggestion is not None:
+                item["ai_judge"] = suggestion.as_json()
+            pending.append(item)
         print(json.dumps(pending, ensure_ascii=False, sort_keys=True, indent=2))
         return EXIT_OK
 
@@ -89,6 +173,27 @@ def _do_review(
         raise ConfigError("--quote-id is required for review decide")
 
     chosen_verdict = verdict or ("rejected" if reason_code == "reject" else "confirmed")
+    if mode == "advisory" and quote_id in suggestions:
+        print(
+            "ai-judge advisory: "
+            + json.dumps(suggestions[quote_id].as_json(), ensure_ascii=False, sort_keys=True)
+        )
+
+    if mode == "decision" and quote_id in suggestions:
+        suggestion = suggestions[quote_id]
+        chosen_verdict = suggestion.verdict
+        actor = suggestion.decision.actor or "ai-judge"
+        reviewer = actor
+        reason_code = "ai-judge"
+        # Provenance lives on the flag; ReviewQueue remains the only state mutator.
+        flags = [
+            flag_with_judge_provenance(flag, suggestion.decision)
+            if flag.evidence.old_quote_id == quote_id
+            else flag
+            for flag in flags
+        ]
+
+    queue = ReviewQueue(flags)
     now = datetime.now(UTC)
     try:
         decided_flag = queue.decide(
@@ -122,7 +227,9 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     today: date = settings.report_date
     months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
     report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
+    report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    print("Lock duration is not measured in offline mode.")
     if not dry_run:
         print("Live retention job is not available in blocked/degraded mode; no rows were touched.")
     return EXIT_OK
@@ -133,11 +240,14 @@ def _do_restore_drill(
     *,
     report_date: date | None = None,
     reference: Path | None = None,
+    topic_id: str | None = None,
 ) -> int:
     """Compare the latest derived export with a reference export (identity + hash)."""
     today = report_date or settings.report_date
-    current_path = local_store_path(settings.export_dir, today)
-    files = sorted(settings.export_dir.glob("quotes-*.jsonl"), reverse=True)
+    active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
+    root = local_store_path(settings.export_dir, today, topic_id=active_topic).parent
+    current_path = local_store_path(settings.export_dir, today, topic_id=active_topic)
+    files = sorted(root.glob("quotes-*.jsonl"), reverse=True)
     if reference is None:
         if len(files) < 2:
             print("restore drill requires two exports; pass --reference PATH")

@@ -3,7 +3,7 @@
 This folder holds the auditable inputs and derived outputs of the Media Quotes Collection
 System described in [`../docs/Test_News.md`](../docs/Test_News.md).
 
-**Last verified:** 2026-11-19 against `sources.csv`, `sections.csv` and `quotes.schema.json`
+**Last verified:** 2026-11-22 against the JSON source configs, topic packs, `sources.csv`, `sections.csv` and `quotes.schema.json`
 (owner: Balgove Innovations). `quotes.schema.json` has a placeholder `$id`
 (`https://example.com/schemas/quotes.schema.json`); it is a stable identifier, not a live URL.
 
@@ -16,13 +16,14 @@ System described in [`../docs/Test_News.md`](../docs/Test_News.md).
 
 | File | Role |
 | --- | --- |
-| `sources.csv` | Source registry. One row per outlet, including disabled state-controlled outlets. This is the config the daily checker reads; the T0 gate uses `rights_status` + `license_reference`. |
+| `sources.csv` | Mirrored tabular view of the authoritative `sources/*.json` configs. Regenerate with `mq sources --action sync-csv`. The T0 gate uses `rights_status` + `license_reference`. |
 | `sections.csv` | Canonical catalog of report sections used for deterministic categorisation. |
 | `quotes.schema.json` | Frozen JSON Schema (draft 2020-12) for one **derived export** quote record. Snapshot-tested; its hash is in the version manifest. |
 | `quotes.jsonl` | **Derived export** of the current Postgres quote state. One JSON object per line; generated at runtime (not committed with synthetic data). Not hand-maintained. |
 | `quotes.example.jsonl` | Three clearly marked **synthetic** records showing the shape of the export. Do not treat them as real quotes. |
-| `report_template.md` | Historical Markdown template. The active renderer is Jinja2; keep this as the reference for section ordering and fields. |
-| Validation logic | Lives in `src/media_quotes/validation.py`, exposed via `mq doctor` and `scripts/validate_data.py`. |
+| `report_template.md` | Historical Markdown template. The active renderer is the Python builder in `src/media_quotes/digest.py`; keep this as a reference for section ordering. |
+| `sources/`, `topics/` | Authoritative per-source JSON configs and per-topic packs, plus `source_topic_routes.csv` and `topic_rules.json` for the topic gate. |
+| Validation logic | Lives in the `src/media_quotes/validation/` package, exposed via `mq doctor` and `scripts/validate_data.py`. |
 | `jsonschema` | Declared in `pyproject.toml` dev/test extras; required by validation. |
 | `reports/` | Legacy compatibility directory — no active output is written here. Daily MD files go to `../digests/YYYY-MM-DD.md`. |
 
@@ -52,12 +53,11 @@ Schema and the Postgres `sources` table):
 | `enabled` | Whether the daily checker processes the source; requires T0 approval. |
 | `notes` | Human-readable onboarding and handling notes. |
 
-`anadolu` is `claim_only=true` (state-owned, shown as perspective when enabled) and — like
-every outlet right now — `enabled=false` pending T0 review. `rt`, `tass`, `ria`, `xinhua`,
-`globaltimes` are `enabled=false` and `claim_only=true`; flip `enabled` only if you
-explicitly want to study those narratives. Reuters and BBC are Tier 1 mandatory but
-`blocked` until written rights are recorded (decision DEC-01) — they are never substituted,
-only reported as coverage gaps.
+Ten licensed outlets are currently `enabled=true` in `sources/*.json`; the rest are pending
+T0 review. `rt`, `tass`, `ria`, `xinhua` and `globaltimes` stay `enabled=false` and
+`claim_only=true`; flip `enabled` only if you explicitly want to study those narratives.
+Reuters and BBC are Tier 1 mandatory but `blocked` until written rights are recorded
+(decision DEC-01) — they are never substituted, only reported as coverage gaps.
 
 ## Derived quote export (`quotes.jsonl`)
 
@@ -85,13 +85,14 @@ One object per line, validated against `quotes.schema.json`. Key design choices:
 Run `python -m media_quotes doctor` (or `python scripts/validate_data.py`) after any edit to
 the registry or schema. Exit code 0 means clean, 1 means errors were found. Validation imports
 the shared enums from `media_quotes.enums` and requires `jsonschema` (installed via
-`pip install -e ".[dev]"`). There is no fallback validator: one schema, one code path.
+`uv sync --frozen --group dev`). There is no fallback validator: one schema, one code path.
 
 ## Adding a new source
 
-1. Add a row to `sources.csv` with `enabled=false`, `rights_status=pending_counsel_review`.
+1. Run `mq sources --action add --source-id <id> --homepage-url <url>` to scaffold
+   `sources/<id>.json` with `enabled=false` and `rights_status=pending_counsel_review`.
 2. Verify feed/HTML access, robots.txt, archive depth and paywall; fill `feed_url` and resolve
-   any `unknown` values.
+   any `unknown` values. Then run `mq sources --action sync-csv` to refresh the mirrored CSV.
 3. Sample several articles and confirm first-hand bylines against wire copy
    (`original_reporting_flag` must be `first-hand` for Tier 3 inclusion); record the evidence.
 4. Set `source_type`, `claim_only` and `rights_status`/`access_mode`/`license_reference` per

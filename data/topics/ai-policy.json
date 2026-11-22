@@ -1,0 +1,156 @@
+{
+  "topic_id": "ai-policy",
+  "name": "AI Policy & Governance",
+  "description": "Attributed verbatim media quotes on artificial intelligence regulation, frontier model safety, compute infrastructure, and open-source AI governance.",
+  "version": "1.0.0",
+  "default_section": "other",
+  "sections": [
+    {
+      "section_id": "regulation",
+      "section_name": "Regulation & Legislation",
+      "description": "Quotes on AI laws, executive orders, EU AI Act enforcement, and regulatory agencies.",
+      "keywords": [
+        "regulation",
+        "ai act",
+        "legislation",
+        "regulator",
+        "compliance",
+        "copyright",
+        "antitrust",
+        "executive order"
+      ],
+      "standin_summary": "The selected quotes address AI regulatory frameworks, legislative proposals and enforcement."
+    },
+    {
+      "section_id": "safety_alignment",
+      "section_name": "Safety & Evaluation",
+      "description": "Quotes on frontier model safety testing, red-teaming, alignment, misuse risks and security.",
+      "keywords": [
+        "safety",
+        "alignment",
+        "red-team",
+        "guardrail",
+        "biosecurity",
+        "evaluation",
+        "benchmark",
+        "misuse",
+        "deepfake"
+      ],
+      "standin_summary": "The selected quotes focus on frontier model safety evaluations, guardrails and risk governance."
+    },
+    {
+      "section_id": "compute_infrastructure",
+      "section_name": "Compute & Chips",
+      "description": "Quotes on semiconductor export controls, GPU clusters, data centres and energy supply.",
+      "keywords": [
+        "chip",
+        "semiconductor",
+        "gpu",
+        "data centre",
+        "data center",
+        "compute",
+        "export control",
+        "nvidia",
+        "power grid"
+      ],
+      "standin_summary": "The selected quotes concern compute capacity, semiconductor supply chains and data centre energy demands."
+    },
+    {
+      "section_id": "open_source_models",
+      "section_name": "Open-Weight & Open-Source Models",
+      "description": "Quotes on open-weight model releases, transparency, licensing and developer ecosystems.",
+      "keywords": [
+        "open source",
+        "open-source",
+        "open weight",
+        "open-weight",
+        "weights",
+        "transparency",
+        "training data"
+      ],
+      "standin_summary": "The selected quotes examine open-weight model releases, transparency and ecosystem trade-offs."
+    },
+    {
+      "section_id": "other",
+      "section_name": "Other / Cross-cutting",
+      "description": "Material AI policy quotes spanning labour markets, geopolitics and cross-cutting societal effects.",
+      "keywords": [],
+      "standin_summary": "The selected quotes raise cross-cutting policy implications of artificial intelligence."
+    }
+  ],
+  "relevance": {
+    "rule_id": "ai-policy-v1",
+    "version": "1.0.0",
+    "locales": [
+      "en"
+    ],
+    "anchors": {
+      "en": [
+        "artificial intelligence",
+        "ai regulation",
+        "ai safety",
+        "eu ai act",
+        "frontier model",
+        "foundation model",
+        "generative ai",
+        "large language model"
+      ]
+    },
+    "supporting_terms": {
+      "en": [
+        "openai",
+        "anthropic",
+        "deepmind",
+        "nvidia",
+        "regulator",
+        "copyright",
+        "compute",
+        "semiconductor",
+        "export controls",
+        "open weight",
+        "data centre",
+        "data center",
+        "deepfake",
+        "algorithm"
+      ]
+    },
+    "exclusions": {
+      "en": [
+        "premier league",
+        "champions league",
+        "super bowl",
+        "nfl",
+        "formula one",
+        "box office",
+        "concert tour",
+        "reality show"
+      ]
+    },
+    "weights": {
+      "anchor": 3.0,
+      "supporting_term": 1.0,
+      "exclusion": -5.0,
+      "title_bonus": 1.0
+    },
+    "accept_threshold": 2.0,
+    "uncertain_band": {
+      "lower": 0.5,
+      "upper": 1.9
+    }
+  },
+  "quick_keywords": [
+    "artificial intelligence",
+    "ai regulation",
+    "ai safety",
+    "eu ai act",
+    "frontier model",
+    "foundation model",
+    "generative ai",
+    "large language model",
+    "openai",
+    "anthropic",
+    "deepmind",
+    "chatgpt",
+    "ai governance"
+  ]
+}

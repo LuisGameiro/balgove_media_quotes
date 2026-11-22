@@ -17,8 +17,12 @@ def check_columns(
     if not rows:
         errors.append(f"{label}: no rows found")
         return
-    missing = set(expected) - set(rows[0])
-    extra = set(rows[0]) - set(expected)
+    missing: set[str] = set()
+    extra: set[str] = set()
+    for row in rows:
+        keys = {key for key in row if key is not None}
+        missing |= set(expected) - keys
+        extra |= keys - set(expected)
     if missing:
         errors.append(f"{label}: missing columns {sorted(missing)}")
     if extra:

@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
+from .config import DEFAULT_TOPIC_ID
 from .models import ExportQuoteRecord
 
 
-def local_store_path(export_dir: Path, report_date: date) -> Path:
-    """Canonical offline store path for one report date."""
+def local_store_path(export_dir: Path, report_date: date, *, topic_id: str | None = None) -> Path:
+    """Canonical offline store path for one report date (and optional non-default topic)."""
+    if topic_id and topic_id != DEFAULT_TOPIC_ID:
+        return export_dir / topic_id / f"quotes-{report_date.isoformat()}.jsonl"
     return export_dir / f"quotes-{report_date.isoformat()}.jsonl"
 
 
@@ -42,16 +46,29 @@ def content_hash(parts: Sequence[str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def write_jsonl(records: Iterable[ExportQuoteRecord], path: Path) -> int:
-    """Write validated records as JSONL and return the number of lines written."""
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write through a temporary file so a crash cannot truncate the final artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(temp, path)
+
+
+def write_jsonl(records: Iterable[ExportQuoteRecord], path: Path) -> int:
+    """Stream validated records to a temp file, then replace the final export atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     count = 0
-    with path.open("w", encoding="utf-8", newline="\n") as handle:
+    with temp.open("w", encoding="utf-8", newline="\n") as handle:
         for record in records:
-            payload = record.model_dump(mode="json")
-            handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+            handle.write(
+                json.dumps(
+                    record.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+                )
+            )
             handle.write("\n")
             count += 1
+    os.replace(temp, path)
     return count
 
 
@@ -85,6 +102,7 @@ def quote_record(
     article_author: str = "",
     obsolete_reason: str = "",
     notes: str = "",
+    topic_id: str = DEFAULT_TOPIC_ID,
 ) -> ExportQuoteRecord:
     """Build and validate one schema-compliant exported record."""
     record: dict[str, Any] = {
@@ -116,5 +134,6 @@ def quote_record(
         "content_hash": content_hash,
         "verification": verification,
         "notes": notes,
+        "topic_id": topic_id,
     }
     return ExportQuoteRecord.model_validate(record)

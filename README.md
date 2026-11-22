@@ -17,10 +17,10 @@ plan is in [`docs/12`](docs/12-implementation-plan.md).
 |---|---|---|
 | Postgres schema + T0 gate | `src/media_quotes/db/schema.sql`, config, strict models | Full append-only tables, coverage contract, decision cache |
 | Bootstrap | `python -m media_quotes.bootstrap` (Alembic `upgrade head` + source sync) | Live Dagster pipeline scheduling |
-| CLI | All 17 `mq` subcommands implemented in offline fixture-replay mode | Live Dagster/Postgres/LLM orchestration |
+| CLI | 19 `mq` subcommands: offline fixture replay plus an explicit, rights-gated `mq fetch` | Live Dagster/Postgres/LLM orchestration |
 | Export | `src/media_quotes/export.py` with strict `ExportQuoteRecord` validation | Context packs from live Postgres (`mq export`) |
 | Logs / traces | JSON logging, structlog secret redaction, optional OTLP tracing (`observability.py`) | Distributed tracing with live collectors |
-| Tests | 240+ pytest tests, risk-control policy tests, >90% coverage | VCR.py live recordings, Dagster asset checks |
+| Tests | 630 pytest tests, risk-control policy tests, ~86.7% coverage (85% gate) | VCR.py live recordings, Dagster asset checks |
 | Quality tooling | Alembic migrations, committed `uv.lock`, `Makefile` (`make check`), GitHub Actions CI, ruff/mypy/pytest, `mq doctor` | Continuous asset contracts |
 
 Reuters and BBC **stay mandatory** (DEC-01) but ingestion is operationally blocked until
@@ -42,7 +42,15 @@ src/media_quotes/
   enums.py           # Canonical enums (rights_status, access_mode, source_type, …)
   text_utils.py      # NFC + smart-quote + whitespace normalisation, exact-span check
   observability.py   # JSON logging, optional OTel traces
-  adapters.py        # Single permission-gated source adapter
+  adapters/          # Permission-gated adapters package: base, blob cache, RSS/Sitemap, HTML, quotes, registry
+  topics.py          # Topic packs: sections, keywords, relevance rules, scaffold/load helpers
+  relevance.py       # Deterministic, versioned topic relevance rule engine
+  source_configs.py  # File-per-source JSON config, registry projection and CSV sync
+  source_topics.py   # Strict CSV route loader and topic-route validation
+  language.py        # Offline en/uk/ru/und quote-language detection
+  translation.py     # Optional pinned-boundary translation with deterministic validation
+  judge.py           # Unified AI-judge contract; off/shadow/advisory/decision modes
+  live.py            # Shared live feed + article fetch loop used by mq fetch and the diagnostic script
   export.py          # Derived JSONL export with strict schema validation
   verification.py    # Deterministic quote verification
   verification_stages.py # Two-stage verification: pre-LLM filter + deterministic gate
@@ -53,16 +61,17 @@ src/media_quotes/
   extraction.py      # Trafilatura DOM-aware extraction and quality gate
   llm.py             # Inference provider protocol and local stand-in
   llm_live.py        # Pinned OpenAI client with structured outputs and decision caching
-  batch.py           # Provider batch API planning for backfills
+  llm_openrouter.py  # OpenRouter provider built on the same pinned boundary
+  batch.py           # Provider batch API planner — design stub, no production caller
   rights_guard.py    # DEC-10 word limits and attribution policy guard
   restore_drill.py   # Export integrity verification and retention readiness
   pipeline.py        # shared daily collection/audit service used by CLI and Dagster
-  orchestration.py   # Dagster assets, jobs, 7 checks, resources, schedule and SLA sensor
-  __main__.py        # python -m media_quotes
+  orchestration.py   # Dagster assets, jobs, 6 checks, resources, schedule and SLA sensor
+  __main__.py        # python -m media_quotes (CLI entry point, UTF-8 console fix)
   bootstrap.py       # Alembic upgrade head + source registry sync
-  cli/               # mq command-line interface package (all subcommands)
-  risk_controls/     # RSK-07/08/11 policy package: review queue, budget gate, retention, cache
-  validation/        # Data-asset validation package: sources, sections, quotes
+  cli/               # mq command-line interface package (19 subcommands)
+  risk_controls/     # RSK-07/08/11 policy package: review queue, budget gate, retention
+  validation/        # Data-asset validation package: sources, sections, quotes, modular configs
   db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
 docs/                # Requirements, architecture, tasks, decisions, rationale, repo tree (11), start plan (12), command reference (14)
 data/                # Registry, frozen schema, derived JSONL export, templates (no Python)
@@ -73,6 +82,9 @@ migrations/          # Alembic env.py, script.py.mako and versions/
   versions/0001_initial.py        # initial schema
   versions/0002_gold_set.py       # gold set labels and eval runs
   versions/0003_decision_cache.py # decision cache and partition registry
+  versions/0004_topic_language_judge.py # topic/language/translation provenance
+  versions/0005_topic_packs.py    # topic_id on quotes, digests and pipeline runs
+  versions/0006_digest_topic_unique.py # one digest manifest per topic and date
 digests/, var/{blobs,audit}/ # Generated artifacts (gitignored)
 ```
 
@@ -125,20 +137,22 @@ python -m media_quotes run --date 2026-11-19
 `OPENROUTER_TIMEOUT_SECONDS`, and `OPENROUTER_MAX_RETRIES` are also configurable.
 OpenRouter never changes quote selection, deterministic verification, or the T0 source gate.
 
-Extras: `test` (pytest/VCR.py/syrupy/jsonschema), `eval` (Pydantic Evals/Ragas), `render`
-(Jinja2), `dashboard` (Streamlit/pandas), `orchestration` (Dagster), `extraction`
-(httpx/trafilatura/Playwright), `llm` (OpenAI/PydanticAI). `uv.lock` is committed; CI/prod
-use `uv sync --frozen --all-extras`. Engineering standards (ruff, `mypy --strict`, 85%
+Extras: `dashboard` (Streamlit/pandas), `orchestration` (Dagster), `extraction`
+(httpx/trafilatura), `llm` (OpenAI/PydanticAI). Dev/test tooling is in the `dev`, `test` and
+`lint` dependency groups. Markdown rendering is built into `digest.py` — no template engine.
+`uv.lock` is committed; CI/prod use `uv sync --frozen --all-extras`. Engineering standards (ruff, `mypy --strict`, 85%
 coverage, Alembic, secrets redaction) are specified in
 [`docs/02`](docs/02-stack-and-architecture.md) §7.
 
 ## Command interface (offline fixture-replay CLI implemented today; full live pipeline in T9)
 
 The implemented entry point is `mq` (`python -m media_quotes` / `python -m media_quotes.cli`).
-All implemented subcommands in the table below function today in deterministic offline
-fixture-replay mode, satisfying audit, evaluation and digest workflows without network access.
-T9 completes the live Dagster asset scheduling, external LLM provider calls, and production
-database connections. Full command examples live in [`docs/14`](docs/14-command-reference.md).
+All subcommands below use deterministic offline fixture replay, except `mq fetch`, which is an
+explicit live command and is a no-network dry-run unless you remove `--dry-run`. Live fetching is
+rights-gated and writes no database rows. T9 completes live Dagster asset scheduling, external LLM
+provider calls and production database connections. Full command examples live in
+[`docs/14`](docs/14-command-reference.md); the switch reference is in
+[`docs/17`](docs/17-connection-and-fetching-reference.md).
 
 | Command | Purpose |
 |---|---|
@@ -148,14 +162,17 @@ database connections. Full command examples live in [`docs/14`](docs/14-command-
 | `mq audit [--date …] [--run-id …]` | T0/coverage/schema/false-quote/exact-match/first-hand checks → JSON + MD in `var/audit/` |
 | `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id` |
 | `mq eval --gold-set <version> [--split …]` | Deterministic metrics + κ-calibrated judge (optional `all|train|dev|test` filter) |
-| `mq sources`, `mq version` | Registry + rights status at a glance; version manifest |
+| `mq sources`, `mq topics`, `mq version` | Registry + rights status, topic-pack management, version manifest |
+| `mq fetch --source-id <id> [--live]` | Plan a rights-cleared fetch; add `--live` to actually contact the source |
 | `mq backfill`, `mq digest`, `mq export`, `mq dashboard` | Backfill, regenerate MD, derived JSONL, Streamlit UI |
 | `mq dagster` | Show Dagster asset, partition, schedule and persistence guidance |
 | `mq review`, `mq retention`, `mq restore-drill` | Review queue (`list|seed|decide`), retention plan, derived-export integrity |
 
-Shared flags: `--offline` (VCR replay), `--dry-run`, `--date`, `--run-id`/`--trace-id`,
-`--out`, `--verbose`. Exit codes: `0` pass · `1` validation/threshold failure · `2` partial
-success with coverage gaps · `3` config/T0-gate error. Re-runs are idempotent.
+Shared flags: `--topic`, `--dry-run`, `--date`, `--run-id`/`--trace-id`, `--out`, `--verbose`.
+`--offline` is deprecated and accepted only for compatibility: every `mq` command is offline
+unless you explicitly run `mq fetch` without `--dry-run`. Exit codes: `0` pass · `1`
+validation/threshold failure · `2` partial success with coverage gaps · `3` config/T0-gate error.
+Re-runs are idempotent.
 
 `make docs-qa`, `make format`, `make lint`, `make typecheck`, `make test`, `make coverage`,
 `make build`, `make smoke` and `make check` (the full gate, using `coverage`) wrap the local
@@ -198,19 +215,20 @@ Snapshot tests freeze the clock. Currently that makes the digest window 6–19 N
 
 ## Source registry and adapters
 
-`data/sources.csv` is the authoritative source registry (explained in
-[`docs/07-sources.md`](docs/07-sources.md)). At bootstrap it is validated into
-`SourceRegistryRow` objects and synced into the Postgres `sources` table. The schema
-enforces the T0 rights gate: a source cannot be enabled unless rights are approved, a
-licence reference exists, access mode is permitted and discovery is enumerable.
+The authoritative source definitions are the JSON files in `data/sources/<source_id>.json`
+(explained in [`docs/07-sources.md`](docs/07-sources.md)), mirrored to `data/sources.csv` and
+`data/source_topic_routes.csv`. At bootstrap they are validated into `SourceRegistryRow` objects
+and synced into the Postgres `sources` table. The schema enforces the T0 rights gate: a source
+cannot be enabled unless rights are approved, a licence reference exists, access mode is
+permitted and discovery is enumerable.
 
-Per-source behaviour lives in `src/media_quotes/adapters.py` — a single permission-gated
-adapter selected by `discovery_method` (`sitemap`, `rss`, `api`, `gdelt`, `licensed_database`,
-`web`). All rows are currently disabled, so the adapter refuses network access with
-`SourceNotPermitted`. Methods are skeletons and must be implemented during onboarding after
-rights clearance.
-`CoverageStats` records discovered/fetched/parsed/rejected/failed/skipped counts in
-`pipeline_runs.stats`.
+Per-source behaviour lives in the `src/media_quotes/adapters/` package — permission-gated
+adapters selected by `discovery_method` (`sitemap`, `rss`, `api`, `gdelt`, `licensed_database`,
+`web`) with optional per-source plugins. Ten sources currently pass the T0 gate; the remaining
+16 are pending counsel review and 2 (Reuters and BBC) are blocked, so `mq audit` reports them as
+explicit coverage gaps. `mq fetch` refuses a blocked source with `SourceNotPermitted`.
+Per-source discovered/quotes counts are written to coverage rows in the audit report and to
+`audit_events`; `pipeline_runs.stats` holds run-level totals.
 
 ## Validation commands
 

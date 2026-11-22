@@ -71,9 +71,46 @@ def test_fetch_bytes_uses_mock_transport_and_returns_hash() -> None:
             track_a_approved=True,
             transport=transport,
             clock=lambda: 10.0,
+            allowed_hosts=frozenset({"example.invalid"}),
         )
     )
     assert content == b"article bytes"
+    assert len(digest) == 64
+
+
+def test_fetch_bytes_reuses_a_supplied_client() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, content=b"shared client")
+
+    transport = httpx.MockTransport(handler)
+    policy = FetchPolicy()
+
+    async def run() -> tuple[bytes, str]:
+        async with httpx.AsyncClient(transport=transport) as client:
+            first = await fetch_bytes(
+                "https://example.invalid/a",
+                row=APPROVED,
+                policy=policy,
+                track_a_approved=True,
+                client=client,
+                allowed_hosts=frozenset({"example.invalid"}),
+            )
+            second = await fetch_bytes(
+                "https://example.invalid/b",
+                row=APPROVED,
+                policy=policy,
+                track_a_approved=True,
+                client=client,
+                allowed_hosts=frozenset({"example.invalid"}),
+            )
+            return first[0] + second[0], first[1]
+
+    content, digest = asyncio.run(run())
+    assert content == b"shared clientshared client"
+    assert len(seen) == 2
     assert len(digest) == 64
 
 
@@ -91,6 +128,7 @@ def test_fetch_refuses_oversized_and_relative_urls() -> None:
                 track_a_approved=True,
                 transport=transport,
                 clock=lambda: 10.0,
+                allowed_hosts=frozenset({"example.invalid"}),
             )
         )
     with pytest.raises(ValueError, match="absolute"):

@@ -136,3 +136,18 @@ def test_restore_drill_with_two_files_and_reference(
 
     assert _do_restore_drill(settings, reference=file2) == 0
     assert "PASS" in capsys.readouterr().out
+
+
+def test_restore_drill_uses_topic_export_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = settings_for(tmp_path)
+    topic_dir = settings.export_dir / "ai-policy"
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    current = topic_dir / "quotes-2026-11-19.jsonl"
+    reference = topic_dir / "quotes-2026-11-18.jsonl"
+    current.write_text("", encoding="utf-8")
+    reference.write_text("", encoding="utf-8")
+
+    assert _do_restore_drill(settings, reference=reference, topic_id="ai-policy") == 0
+    assert str(current) in capsys.readouterr().out

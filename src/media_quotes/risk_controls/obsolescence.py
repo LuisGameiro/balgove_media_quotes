@@ -2,14 +2,112 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
+from typing import Any, Protocol
 
 from ..exceptions import ReviewNotFoundError, ReviewStateError
 from .models import ObsolescenceEvidence, ObsolescenceFlag, ReviewState
 
 VERDICTS = frozenset({"confirmed", "rejected", "escalated"})
 TERMINAL_STATES = frozenset({"confirmed", "rejected"})
+JUDGE_CONFIDENCE_THRESHOLD = 0.80
+JUDGE_VERDICTS = {
+    "accept": "confirmed",
+    "accepted": "confirmed",
+    "confirm": "confirmed",
+    "confirmed": "confirmed",
+    "reject": "rejected",
+    "rejected": "rejected",
+    "escalate": "escalated",
+    "escalated": "escalated",
+}
+
+
+class JudgeDecisionLike(Protocol):
+    """Minimal read-only shape needed to apply a judge suggestion to the queue."""
+
+    @property
+    def verdict(self) -> str: ...
+
+    @property
+    def confidence(self) -> float: ...
+
+    @property
+    def rationale(self) -> str: ...
+
+    @property
+    def actor(self) -> str: ...
+
+    @property
+    def escalation_reason(self) -> str: ...
+
+
+def _value(source: Any, name: str, default: Any) -> Any:
+    if isinstance(source, Mapping):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def _label(source: Any, name: str) -> str:
+    value = _value(source, name, "")
+    return value if isinstance(value, str) else str(value) if value is not None else ""
+
+
+def pending_flags(flags: Iterable[ObsolescenceFlag]) -> list[ObsolescenceFlag]:
+    """Flags the review command may still act on."""
+    return [
+        flag
+        for flag in flags
+        if flag.state not in TERMINAL_STATES
+        and flag.state in {"pending", "needs_evidence", "escalated"}
+    ]
+
+
+def obsolescence_judge_payload(flag: ObsolescenceFlag) -> dict[str, Any]:
+    """Deterministic, minimal input for task='obsolescence_review'."""
+    return {
+        "quote_id": flag.evidence.old_quote_id,
+        "old_content_hash": flag.evidence.old_content_hash,
+        "newer_article_id": flag.evidence.newer_article_id,
+        "newer_content_hash": flag.evidence.newer_content_hash,
+        "newer_is_first_hand": flag.evidence.newer_is_first_hand,
+        "newer_rights_cleared": flag.evidence.newer_rights_cleared,
+        "superseding_span": flag.evidence.superseding_span,
+        "rationale": flag.evidence.rationale,
+        "confidence": flag.confidence,
+        "state": flag.state,
+    }
+
+
+def judge_obsolescence_verdict(decision: JudgeDecisionLike) -> str:
+    """Fail closed: refuse/incomplete/low confidence can never confirm a flag."""
+    verdict = _label(decision, "verdict").strip().lower()
+    escalation = _label(decision, "escalation_reason").strip()
+    try:
+        confidence = float(_value(decision, "confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if verdict in {"refused", "refusal", "abstain", "abstained", "unknown", ""}:
+        return "escalated"
+    if escalation or confidence < JUDGE_CONFIDENCE_THRESHOLD:
+        return "escalated"
+    return JUDGE_VERDICTS.get(verdict, "escalated")
+
+
+def flag_with_judge_provenance(
+    flag: ObsolescenceFlag, decision: JudgeDecisionLike
+) -> ObsolescenceFlag:
+    """Attach the judge actor/rationale/confidence without changing the state machine."""
+    actor = _label(decision, "actor") or "ai-judge"
+    rationale = _label(decision, "rationale")
+    combined = f"{flag.evidence.rationale} [ai-judge:{actor}] {rationale}".strip()
+    try:
+        confidence = float(_value(decision, "confidence", flag.confidence))
+    except (TypeError, ValueError):
+        confidence = flag.confidence
+    evidence = flag.evidence.model_copy(update={"rationale": combined})
+    return flag.model_copy(update={"evidence": evidence, "confidence": confidence})
 
 
 def triage_obsolescence(confidence: float) -> ReviewState:
@@ -23,7 +121,7 @@ def triage_obsolescence(confidence: float) -> ReviewState:
 
 
 def review_overdue(flag: ObsolescenceFlag, now: datetime, sla_days: int = 1) -> bool:
-    """One-working-day SLA using ``raised_at`` where available."""
+    """One calendar-day SLA using ``raised_at`` where available."""
     if flag.state not in {"pending", "needs_evidence", "escalated"}:
         return False
     raised = flag.raised_at or flag.reviewed_at or now
@@ -95,7 +193,11 @@ __all__ = [
     "ObsolescenceEvidence",
     "ObsolescenceFlag",
     "ReviewQueue",
+    "flag_with_judge_provenance",
+    "judge_obsolescence_verdict",
+    "obsolescence_judge_payload",
     "obsoletion_allowed",
+    "pending_flags",
     "review_overdue",
     "triage_obsolescence",
 ]

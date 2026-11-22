@@ -2696,15 +2696,8 @@ dashboard = [
     { name = "pandas" },
     { name = "streamlit" },
 ]
-eval = [
-    { name = "pydantic-evals" },
-    { name = "ragas" },
-]
 extraction = [
-    { name = "feedparser" },
     { name = "httpx" },
-    { name = "playwright" },
-    { name = "selectolax" },
     { name = "trafilatura" },
 ]
 llm = [
@@ -2714,9 +2707,6 @@ llm = [
 orchestration = [
     { name = "dagster" },
     { name = "dagster-webserver" },
-]
-render = [
-    { name = "jinja2" },
 ]
 
 [package.dev-dependencies]
@@ -2756,28 +2746,22 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "dagster", marker = "extra == 'orchestration'", specifier = ">=1.8" },
     { name = "dagster-webserver", marker = "extra == 'orchestration'", specifier = ">=1.8" },
-    { name = "feedparser", marker = "extra == 'extraction'", specifier = ">=6.0" },
     { name = "httpx", marker = "extra == 'extraction'", specifier = ">=0.27" },
-    { name = "jinja2", marker = "extra == 'render'", specifier = ">=3.1" },
     { name = "openai", marker = "extra == 'llm'", specifier = ">=1.30" },
     { name = "opentelemetry-api", specifier = ">=1.25" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.25" },
     { name = "opentelemetry-sdk", specifier = ">=1.25" },
     { name = "pandas", marker = "extra == 'dashboard'", specifier = ">=2.2" },
-    { name = "playwright", marker = "extra == 'extraction'", specifier = ">=1.45" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pydantic-ai", marker = "extra == 'llm'", specifier = ">=0.1" },
-    { name = "pydantic-evals", marker = "extra == 'eval'", specifier = ">=0.1" },
     { name = "pydantic-settings", specifier = ">=2.2" },
-    { name = "ragas", marker = "extra == 'eval'", specifier = ">=0.2" },
-    { name = "selectolax", marker = "extra == 'extraction'", specifier = ">=0.3" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.35" },
     { name = "structlog", specifier = ">=24.1" },
     { name = "trafilatura", marker = "extra == 'extraction'", specifier = ">=1.12" },
 ]
-provides-extras = ["eval", "render", "dashboard", "orchestration", "extraction", "llm"]
+provides-extras = ["dashboard", "orchestration", "extraction", "llm"]
 
 [package.metadata.requires-dev]
 dev = [

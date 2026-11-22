@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/topic_rules.schema.json",
+  "title": "Versioned multilingual topic rule",
+  "description": "Frozen schema for versioned topic relevance rules. Matching is case-insensitive; terms are lower-case locale-specific phrases. Additional fields are forbidden so rule changes are explicit and versioned.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rule_id",
+    "version",
+    "locales",
+    "anchors",
+    "supporting_terms",
+    "exclusions",
+    "weights",
+    "accept_threshold",
+    "uncertain_band"
+  ],
+  "properties": {
+    "rule_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable machine key, for example ukraine-war-v1."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the rule definition."
+    },
+    "locales": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["en", "uk", "ru"]
+      }
+    },
+    "anchors": {
+      "$ref": "#/$defs/localeTermMap",
+      "description": "Terms that alone establish the Ukraine-war topic context."
+    },
+    "supporting_terms": {
+      "$ref": "#/$defs/localeTermMap",
+      "description": "Terms that add evidence but cannot establish relevance alone."
+    },
+    "exclusions": {
+      "$ref": "#/$defs/localeTermMap",
+      "description": "Terms for other wars, sport and entertainment that veto relevance."
+    },
+    "weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor", "supporting_term", "exclusion", "title_bonus"],
+      "properties": {
+        "anchor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "supporting_term": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "exclusion": {
+          "type": "number",
+          "maximum": 0
+        },
+        "title_bonus": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "accept_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Score at or above which an article is topic-accepted."
+    },
+    "uncertain_band": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lower", "upper"],
+      "properties": {
+        "lower": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Inclusive lower bound of the uncertain band."
+        },
+        "upper": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Inclusive upper bound of the uncertain band; must be below accept_threshold."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "termList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "localeTermMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["en", "uk", "ru"],
+      "properties": {
+        "en": { "$ref": "#/$defs/termList" },
+        "uk": { "$ref": "#/$defs/termList" },
+        "ru": { "$ref": "#/$defs/termList" }
+      }
+    }
+  }
+}

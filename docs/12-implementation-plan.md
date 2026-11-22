@@ -1,9 +1,9 @@
 # 12 — Implementation start plan
 
 This is the bridge from the planning docs to code. The scaffold already contains: strict
-models, registry/validation, Alembic revision `0001`, 12 CLI commands with deterministic
-file-based offline handlers, OTel/structlog secret redaction (`observability.py`), the
-risk-control policy layer (`risk_controls.py`) and a green 146-test suite at 90%+ coverage.
+models, registry/validation, Alembic revisions `0001..0006`, 19 CLI commands (18 offline plus
+`mq fetch`), OTel/structlog secret redaction (`observability.py`), the `risk_controls/` policy
+package and a green 629-test suite at ~86.7% coverage.
 What remains is cutting over from the file-based stand-in to **PostgreSQL-backed persistence**
 (`db/repository.py`), **live ingestion/LLM adapters**, and **Dagster daily partitioned
 orchestration** (`DEC-04`). This plan sequences that work.
@@ -33,8 +33,8 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 
 | Step | Work | Exit check |
 |---|---|---|
-| B1 | Alembic revision `0003` for append-only privileges + monthly partitioning of `audit_events`, `llm_decisions`, `verifier_results` (RSK-11 plan §3) | CHK-17 |
-| B2 | Wire `risk_controls.build_cache_key()` into a `decision_cache` repository method (idempotent upsert) | CHK-16 |
+| B1 | Monthly partitioning of `audit_events` and `llm_decisions` (RSK-11 plan §3) — planned, not applied | CHK-17 |
+| B2 | Wire the provider cache key into a `decision_cache` repository method (idempotent upsert) | CHK-16 |
 | B3 | Wire `configure_observability` (structlog redaction + OTLP span exporter in `observability.py`) into live Postgres/Dagster pipeline runs and local OTel collector | CHK-13 |
 | B4 | `uv.lock` + `make check` already present; ensure CI runs it on every PR | CHK-10/11 |
 
@@ -45,7 +45,7 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 | C1 | `fetch` adapter using async httpx with `Timeout`/`Limits`/token bucket; VCR cassette replay for blocked Track B fixtures + live fetch for approved Track A sources; dead-letter + coverage rows persisted in Postgres | CHK-05/09 |
 | C2 | Trafilatura extraction with §4.1 params, DOM offsets; quality gate → Playwright fallback | CHK-07 |
 | C3 | Two-stage verifier persisted to Postgres: Stage 1 pre-LLM candidate filter (drops zero-quote boilerplate before LLM spend) + Stage 2 post-LLM exact-span, speaker, metadata and first-hand evidence gate; `unverified` never published | CHK-02 |
-| C4 | Cut over `mq run --offline` and Dagster daily partitioned assets (`DEC-04`) from file-only stand-ins to Postgres-persisted runs producing a degraded digest that explicitly lists blocked Tier 1 sources (Reuters/BBC) as coverage gaps | CHK-01/02 |
+| C4 | Cut over `mq run` and Dagster daily partitioned assets (`DEC-04`) from file-only stand-ins to Postgres-persisted runs producing a degraded digest that explicitly lists blocked Tier 1 sources (Reuters/BBC) as coverage gaps | CHK-01/02 |
 
 **C1/C2/C3/C4 progress:** `fetch.py` (rights-gated async httpx), `extraction.py` (strict
 `ExtractionParams`, fail-closed quality gate, trafilatura Document/dict wrapper, injectable
@@ -84,9 +84,9 @@ remain offline-safe; no live provider/Postgres backend is yet required.
 
 | Step | Work | Exit check |
 |---|---|---|
-| E1 | Jinja2 digest from `digests/` template with verbatim quotes (`quote_text` + `quote_text_en`), DEC-10 limits, `[Under Review]` provisional-hold badges and snapshots | CHK-04 |
+| E1 | Python-built digest (`digest.py`) from verified records with verbatim quotes (`quote_text` + `quote_text_en`), DEC-10 limits, `[Under Review]` provisional-hold badges and snapshots | CHK-04 |
 | E2 | Dashboard: latest/archive digests, per-source coverage view, review queue, logs, DB explorer (read-only against Postgres) | CHK-05/06 |
-| E3 | Cut over all 12 CLI commands (`audit`, `logs`, `eval`, `run`, `sources`, `version`, `backfill`, `digest`, `export`, `dashboard`, `doctor`, `validate`) to live Postgres/Dagster backends with exit codes 0–3 | CHK-01/02/06 |
+| E3 | Cut over all 19 CLI commands to live Postgres/Dagster backends with exit codes 0–3 | CHK-01/02/06 |
 
 ## 6. Phase F — T8 quality gate & closure (continuous, final)
 
@@ -142,7 +142,7 @@ Reuters/BBC coverage gaps are expected while Track B stays blocked.
 
 ```powershell
 docker compose up -d --wait
-python -m media_quotes.bootstrap    # Alembic 0001..0003 + sources.csv sync
+python -m media_quotes.bootstrap    # Alembic 0001..0006 + data/sources/*.json sync
 python -m media_quotes doctor
 python -m media_quotes run --date 2026-11-19   # with PERSIST_TO_POSTGRES=true
 python -m media_quotes sources

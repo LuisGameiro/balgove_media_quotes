@@ -2,20 +2,40 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
-import json
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import FixtureSource, build_adapter
-from ..config import Settings
+from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
 from ..export import content_hash, quote_record
 from ..models import ExportQuoteRecord, QuoteCandidate
+from ..pipeline import (
+    JudgeProvider,
+    LanguageDecisionSnapshot,
+    SourceTopicRoute,
+    TopicAssessment,
+    TranslationSnapshot,
+    _field,
+    _strings,
+    _text,
+    assess_topic,
+    detect_language,
+    load_source_topic_routes,
+    load_topic_rules,
+    make_judge,
+    normalise_language_decision,
+    normalise_translation_result,
+    translate_quote,
+)
 from ..registry import SourceRegistryRow
 from ..risk_controls.models import ObsolescenceFlag
+from ..source_configs import DEFAULT_SOURCES_DIR, SourceConfig, load_routes_from_sources
 from ..text_utils import normalise_text
+from ..topics import DEFAULT_TOPICS_DIR, TopicPack, load_all_topic_rules
 from ..verification_stages import verify_pipeline
 from .common import (
     _MANDATORY,
@@ -26,25 +46,278 @@ from .common import (
     _gap_for,
     _gap_record,
     _load_registry,
-    _read_json,
+    _load_source_configs,
+    _load_topic_pack,
     _trace_id,
     _window,
+    load_review_flags,
 )
+
+_DEFAULT_LOAD_SOURCE_TOPIC_ROUTES = load_source_topic_routes
+_DEFAULT_LOAD_TOPIC_RULES = load_topic_rules
 
 
 def _load_review_flags(settings: Settings) -> list[ObsolescenceFlag]:
-    queue_path = settings.audit_dir / "review-queue.json"
-    if not queue_path.is_file():
-        return []
-    payload = _read_json(queue_path)
-    flags_data = payload.get("flags", [])
-    flags: list[ObsolescenceFlag] = []
-    if isinstance(flags_data, list):
-        for item in flags_data:
-            if isinstance(item, dict):
-                with contextlib.suppress(Exception):
-                    flags.append(ObsolescenceFlag.model_validate_json(json.dumps(item)))
-    return flags
+    return load_review_flags(settings)
+
+
+@dataclass(frozen=True, slots=True)
+class TopicGate:
+    """Approved source routes plus the versioned rules they reference."""
+
+    routes_by_source: dict[str, list[SourceTopicRoute]]
+    rules: dict[str, dict[str, Any]]
+    preferred_rule_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class TopicGateOutcome:
+    assessment: TopicAssessment
+    route: SourceTopicRoute | None = None
+
+
+def _setting(settings: Settings, name: str, default: Any) -> Any:
+    """Read a new setting even when running against an older Settings object."""
+    return getattr(settings, name, default)
+
+
+def _path_setting(settings: Settings, name: str) -> Path | None:
+    value = _setting(settings, name, None)
+    if value is None or value == "":
+        return None
+    return value if isinstance(value, Path) else Path(str(value))
+
+
+def _topic_gate(settings: Settings, *, topic_pack: TopicPack | None = None) -> TopicGate | None:
+    routes_path = _path_setting(settings, "source_topics_csv")
+    rules_path = _path_setting(settings, "topic_rules_path")
+    sources_dir = _path_setting(settings, "sources_dir")
+    topics_dir = _path_setting(settings, "topics_dir")
+    if routes_path is None and sources_dir is None:
+        return None
+    if rules_path is None and topics_dir is None and topic_pack is None:
+        return None
+
+    default_routes_csv = (PROJECT_ROOT / "data" / "source_topic_routes.csv").resolve()
+    default_rules_json = (PROJECT_ROOT / "data" / "topic_rules.json").resolve()
+    custom_routes_csv = routes_path is not None and routes_path.resolve() != default_routes_csv
+    custom_rules_json = rules_path is not None and rules_path.resolve() != default_rules_json
+
+    routes_patched = load_source_topic_routes is not _DEFAULT_LOAD_SOURCE_TOPIC_ROUTES
+    rules_patched = load_topic_rules is not _DEFAULT_LOAD_TOPIC_RULES
+
+    try:
+        if (
+            not routes_patched
+            and sources_dir is not None
+            and sources_dir.is_dir()
+            and not (custom_routes_csv and sources_dir.resolve() == DEFAULT_SOURCES_DIR.resolve())
+        ):
+            routes: dict[str, list[SourceTopicRoute]] = cast(
+                dict[str, list[SourceTopicRoute]],
+                load_routes_from_sources(sources_dir, fallback_csv=routes_path),
+            )
+        elif routes_path is not None:
+            routes = load_source_topic_routes(routes_path)
+        else:
+            routes = {}
+
+        if (
+            not rules_patched
+            and topics_dir is not None
+            and topics_dir.is_dir()
+            and not (custom_rules_json and topics_dir.resolve() == DEFAULT_TOPICS_DIR.resolve())
+        ):
+            rules = load_all_topic_rules(topics_dir, fallback_rules_path=rules_path)
+        elif rules_path is not None:
+            rules = load_topic_rules(rules_path)
+        else:
+            rules = {}
+    except (ImportError, FileNotFoundError, ValueError, TypeError):
+        return None
+
+    preferred_rule_id = ""
+    if topic_pack is not None:
+        preferred_rule_id = topic_pack.relevance.rule_id
+        rule_dict = topic_pack.to_rule_dict()
+        rules[preferred_rule_id] = rule_dict
+        rules.setdefault(topic_pack.topic_id, rule_dict)
+    return TopicGate(
+        routes_by_source=routes,
+        rules=rules,
+        preferred_rule_id=preferred_rule_id,
+    )
+
+
+def _topic_judge(settings: Settings) -> JudgeProvider | None:
+    if str(_setting(settings, "ai_judge_mode", "off")).strip().lower() != "decision":
+        return None
+    try:
+        return make_judge(settings)
+    except (ImportError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _select_topic_route(gate: TopicGate | None, source_id: str) -> SourceTopicRoute | None:
+    if gate is None:
+        return None
+    source_routes = gate.routes_by_source.get(source_id, [])
+    if gate.preferred_rule_id:
+        for route in source_routes:
+            if (
+                _field(route, "approved", False)
+                and _text(_field(route, "topic_rule_id", "")) == gate.preferred_rule_id
+            ):
+                return route
+    for route in source_routes:
+        if _field(route, "approved", False) and _text(_field(route, "topic_rule_id", "")):
+            return route
+    return None
+
+
+def _article_for_topic(
+    metadata: dict[str, Any], *, text: str, canonical_url: str, title: str, ref: str
+) -> dict[str, Any]:
+    tags_raw = (
+        metadata.get("tags")
+        or metadata.get("topics")
+        or metadata.get("keywords")
+        or metadata.get("tags_list")
+        or []
+    )
+    return {
+        "article_text": text,
+        "title": title,
+        "canonical_url": canonical_url,
+        "tags": list(_strings(tags_raw)),
+        "article_ref": ref,
+        "language": str(metadata.get("language") or ""),
+    }
+
+
+def _gate_article(
+    settings: Settings,
+    gate: TopicGate | None,
+    *,
+    source_id: str,
+    metadata: dict[str, Any],
+    text: str,
+    canonical_url: str,
+    title: str,
+    ref: str,
+    judge: JudgeProvider | None = None,
+    allow_default_rule: bool = False,
+) -> TopicGateOutcome | None:
+    route = _select_topic_route(gate, source_id)
+    if gate is None:
+        return None
+    rule_id = _text(_field(route, "topic_rule_id", "")) if route is not None else ""
+    rule = gate.rules.get(rule_id)
+    if rule is None and allow_default_rule and gate.rules:
+        # Only synthetic replay may fall back to the default rule; live data must have
+        # an explicit approved route and rule.
+        if gate.preferred_rule_id and gate.preferred_rule_id in gate.rules:
+            rule = gate.rules[gate.preferred_rule_id]
+        else:
+            rule_id, rule = next(iter(gate.rules.items()))
+    if (route is None and not allow_default_rule) or rule is None:
+        return None
+    article = _article_for_topic(
+        metadata, text=text, canonical_url=canonical_url, title=title, ref=ref
+    )
+    return TopicGateOutcome(assessment=assess_topic(rule, article, judge=judge), route=route)
+
+
+def _topic_event_fields(outcome: TopicGateOutcome, row: SourceRegistryRow) -> dict[str, Any]:
+    assessment = outcome.assessment
+    fields: dict[str, Any] = {
+        "topic_status": assessment.status,
+        "topic_rule_id": assessment.rule_id,
+        "topic_rule_version": assessment.rule_version,
+        "topic_score": assessment.score,
+        "matched_terms": list(assessment.matched_terms),
+        "reasons": list(assessment.reasons),
+        "route_id": _text(_field(outcome.route, "route_id", "")) if outcome.route else "",
+        "translation_rights_confirmed": bool(
+            _field(outcome.route, "translation_rights_confirmed", False)
+        )
+        if outcome.route
+        else False,
+        "escalated": assessment.escalated,
+        "license_reference": row.license_reference or "(none)",
+    }
+    if assessment.judge is not None:
+        fields.update(
+            {
+                "judge_actor": assessment.judge.actor,
+                "judge_verdict": assessment.judge.verdict,
+                "judge_confidence": assessment.judge.confidence,
+                "judge_model_snapshot": assessment.judge.model_snapshot,
+                "judge_prompt_version": assessment.judge.prompt_version,
+                "judge_input_hash": assessment.judge.input_hash,
+                "judge_output_hash": assessment.judge.output_hash,
+            }
+        )
+    return fields
+
+
+def _detect_language_safe(text: str) -> LanguageDecisionSnapshot:
+    try:
+        return normalise_language_decision(detect_language(text))
+    except (ImportError, ValueError, TypeError):
+        return LanguageDecisionSnapshot(language="", confidence=0.0, evidence="unavailable")
+
+
+def _translation_for_quote(
+    settings: Settings,
+    *,
+    quote_text: str,
+    language: LanguageDecisionSnapshot,
+    route: SourceTopicRoute | None,
+    run_id: str,
+    trace_id: str,
+    row: SourceRegistryRow,
+    events: list[dict[str, Any]],
+) -> TranslationSnapshot | None:
+    mode = str(_setting(settings, "translation_mode", "off")).strip().lower()
+    if mode != "translate":
+        return None
+    if route is None or not _field(route, "translation_rights_confirmed", False):
+        return None
+    if not language.language or language.language == "en":
+        return None
+    try:
+        result = normalise_translation_result(
+            translate_quote(quote_text, source_language=language.language, settings=settings)
+        )
+    except (ImportError, ValueError, TypeError) as exc:
+        result = TranslationSnapshot(
+            text="",
+            source_language=language.language,
+            status="failed",
+            model_snapshot="",
+            prompt_version=str(_setting(settings, "translation_prompt_version", "") or ""),
+            content_hash="",
+            error=str(exc),
+            usable=False,
+        )
+    events.append(
+        _event(
+            run_id=run_id,
+            trace_id=trace_id,
+            source_id=row.source_id,
+            step="translation",
+            status="translated" if result.usable else "failed",
+            quote_language=language.language,
+            translation_status=result.status,
+            translation_model_snapshot=result.model_snapshot,
+            translation_prompt_version=result.prompt_version,
+            translation_hash=result.content_hash,
+            error=result.error,
+            license_reference=row.license_reference or "(none)",
+        )
+    )
+    return result
 
 
 def _process_source(  # pragma: no cover
@@ -54,7 +327,9 @@ def _process_source(  # pragma: no cover
     run_id: str,
     window_start: date,
     report_date: date,
-    counters: dict[str, int],
+    used_quote_ids: set[str],
+    topic_pack: TopicPack | None = None,
+    source_config: SourceConfig | None = None,
 ) -> tuple[
     list[ExportQuoteRecord],
     dict[str, Any],
@@ -65,6 +340,12 @@ def _process_source(  # pragma: no cover
 ]:
     """Process one source through discovery, fixture fetch, two-stage verification and metadata."""
     replay = _fixture_mode(row, settings)
+    active_topic_id = (
+        topic_pack.topic_id
+        if topic_pack is not None
+        else str(_setting(settings, "active_topic", DEFAULT_TOPIC_ID))
+    )
+    default_section = topic_pack.default_section if topic_pack is not None else "other"
     events: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
     records: list[ExportQuoteRecord] = []
@@ -98,6 +379,11 @@ def _process_source(  # pragma: no cover
                 "status": "blocked",
                 "gap_reason": _gap_for(row)[1],
                 "mandatory": row.source_id in _MANDATORY,
+                "topic_status": "skipped",
+                "topic_rule_version": "",
+                "topic_score": 0.0,
+                "matched_terms": [],
+                "topic_gate": {"accepted": 0, "uncertain": 0, "rejected": 0, "skipped": 0},
             },
             gaps,
             events,
@@ -108,7 +394,13 @@ def _process_source(  # pragma: no cover
     if not row.usable:
         gaps.append(_gap_record(row, "fixture replay only; the T0 gate refuses live contact"))
 
-    adapter = build_adapter(row, FixtureSource(settings.fixtures_dir), replay=replay)
+    adapter = build_adapter(
+        row,
+        FixtureSource(settings.fixtures_dir),
+        replay=replay,
+        topic_pack=topic_pack,
+        source_config=source_config,
+    )
     refs = adapter.discover(window_start, report_date)
     if replay:
         events.append(
@@ -127,9 +419,18 @@ def _process_source(  # pragma: no cover
         )
 
     policy_flags = dict(adapter.policy_flags())
+    # This pipeline only consumes fixture refs. They are synthetic first-hand material,
+    # even for a rights-cleared source: the T0 gate changes who may be contacted, not the text.
     policy_flags["original_reporting_flag"] = "first-hand"
     policy_flags["fixture_replay"] = replay
     verified_at = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
+    gate = _topic_gate(settings, topic_pack=topic_pack)
+    judge = _topic_judge(settings)
+    topic_counts = {"accepted": 0, "uncertain": 0, "rejected": 0, "skipped": 0}
+    current_route: SourceTopicRoute | None = None
+    topic_terms: set[str] = set()
+    topic_rule_version = ""
+    topic_score = 0.0
 
     for ref in refs:
         trace_id = _trace_id(row.source_id, ref)
@@ -154,6 +455,78 @@ def _process_source(  # pragma: no cover
                 license_reference=row.license_reference or "(none)",
             )
         )
+
+        # Topic gate runs immediately after metadata parsing and before any candidate is built.
+        outcome = _gate_article(
+            settings,
+            gate,
+            source_id=row.source_id,
+            metadata=metadata,
+            text=text,
+            canonical_url=canonical_url,
+            title=article_ref_name,
+            ref=ref,
+            judge=judge,
+            allow_default_rule=replay,
+        )
+        if outcome is None:
+            topic_counts["skipped"] += 1
+            gap = _gap_record(row, "topic_gate unavailable: no approved route or rule")
+            gap.update({"license_reference": row.license_reference or "(none)"})
+            gaps.append(gap)
+            rejected += 1
+            events.append(
+                _event(
+                    run_id=run_id,
+                    trace_id=trace_id,
+                    source_id=row.source_id,
+                    step="topic_gate",
+                    status="config_error",
+                    license_reference=row.license_reference or "(none)",
+                    message="topic gate refused unrouted article; no quote extracted",
+                )
+            )
+            current_route = None
+            continue
+        else:
+            current_route = outcome.route
+            assessment = outcome.assessment
+            event_fields = _topic_event_fields(outcome, row)
+            events.append(
+                _event(
+                    run_id=run_id,
+                    trace_id=trace_id,
+                    source_id=row.source_id,
+                    step="topic_gate",
+                    status=assessment.status,
+                    **event_fields,
+                )
+            )
+            topic_counts[assessment.status] += 1
+            topic_terms.update(assessment.matched_terms)
+            topic_rule_version = assessment.rule_version
+            topic_score = assessment.score
+            if assessment.status != "accepted":
+                gap = _gap_record(
+                    row,
+                    f"topic_gate {assessment.status}: "
+                    + ("; ".join(assessment.reasons) or "no reasons recorded"),
+                )
+                gap.update(
+                    {
+                        "topic_status": assessment.status,
+                        "topic_rule_id": assessment.rule_id,
+                        "topic_rule_version": assessment.rule_version,
+                        "topic_score": assessment.score,
+                        "matched_terms": list(assessment.matched_terms),
+                        "escalated": assessment.escalated,
+                        "license_reference": row.license_reference or "(none)",
+                    }
+                )
+                gaps.append(gap)
+                rejected += 1
+                continue
+
         spans_raw = metadata.get("quote_spans", [])
         spans = [s for s in spans_raw if isinstance(s, dict)] if isinstance(spans_raw, list) else []
         by_text = {normalise_text(str(span.get("quote_text") or "")): span for span in spans}
@@ -205,11 +578,37 @@ def _process_source(  # pragma: no cover
                 )
 
         for candidate in pipeline_outcome.publishable:
+            language = _detect_language_safe(candidate.quote_text)
+            translation = _translation_for_quote(
+                settings,
+                quote_text=candidate.quote_text,
+                language=language,
+                route=current_route,
+                run_id=run_id,
+                trace_id=trace_id,
+                row=row,
+                events=events,
+            )
             span = by_text.get(normalise_text(candidate.quote_text), {})
             publication_date = str(metadata.get("publication_date") or report_date.isoformat())[:10]
-            index = counters.get(publication_date, 0) + 1
-            counters[publication_date] = index
-            quote_id = f"Q-{publication_date.replace('-', '')}-{index:04d}"
+            id_seed = hashlib.sha256(
+                "|".join(
+                    (
+                        row.source_id,
+                        canonical_url,
+                        candidate.quote_text,
+                        str(candidate.char_start),
+                        str(candidate.char_end),
+                        raw_hash,
+                    )
+                ).encode("utf-8")
+            ).hexdigest()
+            sequence = int(id_seed[:8], 16) % 10000
+            while (
+                quote_id := f"Q-{publication_date.replace('-', '')}-{sequence:04d}"
+            ) in used_quote_ids:
+                sequence = (sequence + 1) % 10000
+            used_quote_ids.add(quote_id)
             offsets[quote_id] = {
                 "char_start": candidate.char_start,
                 "char_end": candidate.char_end,
@@ -224,9 +623,44 @@ def _process_source(  # pragma: no cover
                 "article_metadata": {
                     "fixture_replay": replay,
                     "mode": adapter.mode,
+                    "topic_id": active_topic_id,
                 },
             }
-            section_id = str(span.get("section_id") or "other")
+            section_id = str(span.get("section_id") or default_section)
+            if topic_pack is not None and section_id not in topic_pack.section_ids():
+                # A fixture may carry a section from a different topic pack; keep the
+                # record consistent with the topic it was admitted under.
+                section_id = default_section
+            accepted_topic = (
+                outcome.assessment
+                if outcome is not None and outcome.assessment.status == "accepted"
+                else None
+            )
+            topic_updates: dict[str, Any] = {
+                "quote_language": language.language,
+                "language_confidence": language.confidence,
+            }
+            if accepted_topic is not None:
+                topic_updates.update(
+                    {
+                        "topic_status": "accepted",
+                        "topic_rule_version": accepted_topic.rule_version,
+                        "topic_score": accepted_topic.score,
+                        "matched_terms": list(accepted_topic.matched_terms),
+                    }
+                )
+            if translation is not None:
+                topic_updates.update(
+                    {
+                        "quote_text_en": translation.text if translation.usable else "",
+                        "translation_model_snapshot": translation.model_snapshot,
+                        "translation_prompt_version": translation.prompt_version,
+                        "translation_hash": translation.content_hash,
+                        "translation_status": (
+                            "translated" if translation.usable else translation.status or "failed"
+                        ),
+                    }
+                )
             records.append(
                 quote_record(
                     quote_id=quote_id,
@@ -267,7 +701,8 @@ def _process_source(  # pragma: no cover
                     },
                     publication_name=str(metadata.get("publication_name") or row.source_name),
                     notes="synthetic fixture replay" if replay else "offline replay",
-                )
+                    topic_id=active_topic_id,
+                ).model_copy(update=topic_updates)
             )
             events.append(
                 _event(
@@ -293,12 +728,27 @@ def _process_source(  # pragma: no cover
         "status": "degraded" if replay or not row.usable else "ok",
         "gap_reason": "rights_blocked" if replay else "",
         "mandatory": row.source_id in _MANDATORY,
+        "topic_status": (
+            "rejected"
+            if topic_counts["rejected"] or topic_counts["uncertain"]
+            else "accepted"
+            if topic_counts["accepted"]
+            else "skipped"
+        ),
+        "topic_rule_version": topic_rule_version,
+        "topic_score": topic_score,
+        "matched_terms": sorted(topic_terms),
+        "topic_gate": dict(topic_counts),
     }
     return records, coverage, gaps, events, rejected, offsets
 
 
 def _collect(  # pragma: no cover
-    settings: Settings, *, run_id: str, report_date: date
+    settings: Settings,
+    *,
+    run_id: str,
+    report_date: date,
+    topic_pack: TopicPack | None = None,
 ) -> tuple[
     list[ExportQuoteRecord],
     list[dict[str, Any]],
@@ -313,8 +763,10 @@ def _collect(  # pragma: no cover
     gaps: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     rejected = 0
-    counters: dict[str, int] = {}
+    used_quote_ids: set[str] = set()
     offsets: dict[str, dict[str, Any]] = {}
+    source_configs = _load_source_configs(settings)
+    active_pack = topic_pack if topic_pack is not None else _load_topic_pack(settings)
     for row in _load_registry(settings):
         found, cov, row_gaps, row_events, row_rejected, row_offsets = _process_source(
             row,
@@ -322,7 +774,9 @@ def _collect(  # pragma: no cover
             run_id=run_id,
             window_start=window_start,
             report_date=report_date,
-            counters=counters,
+            used_quote_ids=used_quote_ids,
+            topic_pack=active_pack,
+            source_config=source_configs.get(row.source_id),
         )
         records.extend(found)
         coverage.append(cov)
@@ -341,6 +795,7 @@ def _do_run(  # pragma: no cover
     dry_run: bool,
     run_id: str | None,
     verbose: bool,
+    topic_id: str | None = None,
 ) -> int:
     from ..pipeline import run_daily_pipeline
 
@@ -350,11 +805,13 @@ def _do_run(  # pragma: no cover
         run_id=run_id,
         dry_run=dry_run,
         pipeline="mq-run",
+        topic_id=topic_id,
     )
 
     if result.dry_run:
         print(
-            f"Dry run {result.run_id}: {len(result.records)} quote(s) would be stored, "
+            f"Dry run {result.run_id} (topic={result.topic_id}): "
+            f"{len(result.records)} quote(s) would be stored, "
             f"{len(result.gaps)} coverage gap(s), {result.rejected} candidate(s) rejected; "
             "no files written."
         )
@@ -368,7 +825,8 @@ def _do_run(  # pragma: no cover
             f"{result.persistence['stored_quotes']} quote(s) persisted"
         )
     print(
-        f"Run {result.run_id}: {len(result.records)} verified fixture quote(s), "
+        f"Run {result.run_id} (topic={result.topic_id}): "
+        f"{len(result.records)} verified fixture quote(s), "
         f"{result.rejected} rejected, {len(result.gaps)} coverage gap(s)."
     )
     print(f"Digest: {result.digest_path}")

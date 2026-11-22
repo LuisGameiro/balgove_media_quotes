@@ -13,7 +13,6 @@ from media_quotes.risk_controls import (
     RetentionPolicy,
     ReviewQueue,
     budget_gate,
-    build_cache_key,
     estimate_backfill,
     obsoletion_allowed,
     partition_name,
@@ -187,22 +186,6 @@ def test_budget_gate_warns_blocks_and_allows_forced() -> None:
     assert "FORCED" in budget_gate(est, 50.0, force=True)
 
 
-def test_cache_key_is_canonical_and_version_sensitive() -> None:
-    kwargs = {
-        "source_hash": "a" * 64,
-        "extractor_version": "v1",
-        "prompt_version": "p1",
-        "schema_hash": "b" * 64,
-        "model_snapshot": "snap-1",
-    }
-    k1 = build_cache_key(**kwargs, decoding_params={"temperature": 0, "top_p": 1})
-    k2 = build_cache_key(**kwargs, decoding_params={"top_p": 1, "temperature": 0})
-    assert k1 == k2
-    assert len(k1) == 64
-    k3 = build_cache_key(**{**kwargs, "prompt_version": "p2"}, decoding_params={})
-    assert k3 != k1
-
-
 # --- CHK-17: retention and lock bounds -----------------------------------------------------
 
 
@@ -238,5 +221,5 @@ def test_partition_name_and_retention_plan() -> None:
     assert plan.log_cutoff == date(2026, 8, 22)
     assert all(name.endswith("2026_10") for name in plan.detach)
     assert all(name.endswith("2026_11") for name in plan.keep_hot)
-    assert len(plan.detach) == 3
-    assert len(plan.keep_hot) == 3
+    assert len(plan.detach) == 2
+    assert len(plan.keep_hot) == 2

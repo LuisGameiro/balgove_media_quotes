@@ -1,0 +1,46 @@
+{
+  "source_id": "bbc",
+  "source_name": "BBC News",
+  "homepage_url": "https://www.bbc.co.uk/",
+  "feed_url": "https://feeds.bbci.co.uk/news/rss.xml",
+  "tier": 1,
+  "cadence_hours": 6,
+  "country_region": "UK",
+  "source_type": "publicly funded",
+  "claim_only": false,
+  "language": "en",
+  "requires_translation": false,
+  "paywalled": false,
+  "rights_status": "blocked",
+  "access_mode": "scraped_prohibited",
+  "license_reference": "",
+  "discovery_method": "rss",
+  "archive_start_date": "2026-10-01",
+  "enabled": false,
+  "notes": "Feed host permits a fetch but Terms forbid systematic extraction, datasets, RAG, grounding and business use. T0 permission required before feed or article text is used.",
+  "routes": [
+    {
+      "route_id": "route-bbc-ukraine-default",
+      "route_type": "fixture_replay",
+      "discovery_url": "",
+      "topic_rule_id": "ukraine-war-v1",
+      "topic_id": "ukraine-war",
+      "priority": 90,
+      "fallback_route_id": "",
+      "approved": false,
+      "license_reference": "",
+      "translation_rights_confirmed": false,
+      "notes": "Blocked by rights policy; fixture replay only; no live probe."
+    }
+  ],
+  "extractor_hints": {
+    "adapter": null,
+    "default_feed_url": "https://feeds.bbci.co.uk/news/rss.xml",
+    "favor_precision": false,
+    "favor_recall": false,
+    "include_comments": false,
+    "include_tables": false,
+    "min_text_length": 200,
+    "strip_selectors": []
+  }
+}
