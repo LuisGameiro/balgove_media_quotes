@@ -1,8 +1,8 @@
 # 12 — Implementation start plan
 
 This is the bridge from the planning docs to code. The scaffold already contains: strict
-models, registry/validation, Alembic revisions `0001..0006`, 19 CLI commands (18 offline plus
-`mq fetch`), OTel/structlog secret redaction (`observability.py`), the `risk_controls/` policy
+models, registry/validation, Alembic revisions `0001..0006`, 20 CLI commands (18 offline plus
+`mq fetch` and `mq batch`), OTel/structlog secret redaction (`observability.py`), the `risk_controls/` policy
 package and a green 629-test suite at ~86.7% coverage.
 What remains is cutting over from the file-based stand-in to **PostgreSQL-backed persistence**
 (`db/repository.py`), **live ingestion/LLM adapters**, and **Dagster daily partitioned
@@ -65,7 +65,8 @@ never written without exact offsets from the verifier.
 **D progress:** `llm_live.py` (pinned model, cache-first, strict JSON schema, refusal/incomplete,
 injected client), `llm_openrouter.py` (env-selected `LLM_PROVIDER=openrouter`, OpenAI-compatible
 Chat Completions client, pinned OpenRouter model id, JSON inference validation), `batch.py`
-(deterministic `custom_id` + Batch JSONL), `curation.py` (section allow-list, cross-outlet dedup,
+(deterministic `custom_id` + inline OpenRouter batch payload driven by `mq batch`), `curation.py`
+(section allow-list, cross-outlet dedup,
 `[Under Review]` badges) and `rights_guard.py` (DEC-10 limits before rendering) are implemented
 with offline tests. There is no CLI flag for provider selection.
 
@@ -86,7 +87,7 @@ remain offline-safe; no live provider/Postgres backend is yet required.
 |---|---|---|
 | E1 | Python-built digest (`digest.py`) from verified records with verbatim quotes (`quote_text` + `quote_text_en`), DEC-10 limits, `[Under Review]` provisional-hold badges and snapshots | CHK-04 |
 | E2 | Done: dashboard shows latest digests, per-source coverage, review queue, logs and read-only Postgres row counts | CHK-05/06 |
-| E3 | Cut over all 19 CLI commands to live Postgres/Dagster backends with exit codes 0–3 | CHK-01/02/06 |
+| E3 | Cut over all 20 CLI commands to live Postgres/Dagster backends with exit codes 0–3 | CHK-01/02/06 |
 
 ## 6. Phase F — T8 quality gate & closure (continuous, final)
 

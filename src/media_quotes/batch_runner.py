@@ -16,8 +16,6 @@ from .exceptions import ConfigError
 if TYPE_CHECKING:
     from .config import Settings
 
-_TERMINAL = {"completed", "failed", "cancelled", "expired", "cancelling"}
-
 
 @dataclass(frozen=True, slots=True)
 class BatchJob:
@@ -77,7 +75,3 @@ class OpenRouterBatchClient:
                 dict(item) for item in (payload.get("results") or []) if isinstance(item, dict)
             ],
         )
-
-    @staticmethod
-    def is_terminal(job: BatchJob) -> bool:
-        return job.status in _TERMINAL

@@ -9,11 +9,13 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
-from pydantic import SecretStr
+import pytest
+from pydantic import SecretStr, ValidationError
 
 from media_quotes.batch_runner import BatchJob, OpenRouterBatchClient
 from media_quotes.cli import app
 from media_quotes.config import Settings
+from media_quotes.exceptions import ConfigError
 from media_quotes.extraction import extract_article, quality_gate
 from media_quotes.risk_controls.retention import retention_plan
 
@@ -105,7 +107,7 @@ def test_batch_client_submit_and_status_with_mock_transport() -> None:
         batch_id = batch_client.submit({"endpoint": "/v1/responses", "requests": []})
         job = batch_client.status(batch_id)
     assert batch_id == "batch-1"
-    assert batch_client.is_terminal(job) is True
+    assert job.status == "completed"
     assert job.results[0]["custom_id"] == "decision-x"
 
 
@@ -120,7 +122,6 @@ def test_batch_cli_status_uses_client(monkeypatch: Any) -> None:
     )
     client = MagicMock()
     client.status.return_value = job
-    client.is_terminal.return_value = True
     monkeypatch.setattr(batch_cli, "OpenRouterBatchClient", lambda settings: client)
     assert (
         batch_cli._do_batch(
@@ -160,9 +161,26 @@ def test_batch_apply_results_writes_cache(tmp_path: Path, monkeypatch: Any) -> N
         "custom_id": "decision-x",
         "response": {"body": {"output_text": "summary"}},
     }
-    applied = batch_cli._apply_results(settings, [result], {"decision-x": "cache-k"})
+    from media_quotes.batch import custom_id
+    from media_quotes.llm_live import LLMRequest
+
+    request = LLMRequest(
+        decision_type="section-inference",
+        cache_key="cache-k",
+        input_hash="input-k",
+        model_snapshot="openai/gpt-4o-mini-2024-07-18",
+        prompt_version="p1",
+        schema_hash="s1",
+        system_prompt="system",
+        user_prompt="user",
+    )
+    result["custom_id"] = custom_id("cache-k")
+    applied = batch_cli._apply_results(settings, [result], [request])
     assert applied == 1
     assert written[0].cache_key == "cache-k"
+    assert written[0].model_snapshot == request.model_snapshot
+    assert written[0].prompt_version == "p1"
+    assert written[0].schema_hash == "s1"
     assert written[0].output == {"text": "summary"}
 
 
@@ -181,6 +199,99 @@ def test_batch_cli_dry_run_writes_no_network(tmp_path: Path, monkeypatch: Any) -
     ]
     path = tmp_path / "requests.json"
     path.write_text(json.dumps(requests), encoding="utf-8")
-    monkeypatch.setattr(app, "get_settings", lambda: _settings(tmp_path))
+    monkeypatch.setattr(
+        app, "get_settings", lambda: _settings(tmp_path, batch_endpoint="/v1/chat/completions")
+    )
     assert app.main(["batch", "--requests", str(path), "--max-cost", "10"]) == 0
-    assert path.with_suffix(".batch.json").is_file()
+    out = path.with_suffix(".batch.json")
+    assert out.is_file()
+    assert json.loads(out.read_text(encoding="utf-8"))["endpoint"] == "/v1/chat/completions"
+
+
+def test_extract_text_reads_responses_shape() -> None:
+    from media_quotes.cli.batch import _extract_text
+
+    result = {
+        "response": {
+            "body": {
+                "object": "response",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": "positive"},
+                            {"type": "output_text", "text": " negative"},
+                        ],
+                    }
+                ],
+            }
+        }
+    }
+    assert _extract_text(result) == "positive negative"
+    assert _extract_text({"response": None}) is None
+
+
+def test_batch_load_requests_rejects_non_dict(tmp_path: Path) -> None:
+    from media_quotes.cli.batch import _load_requests
+
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(["not-an-object"]), encoding="utf-8")
+    with pytest.raises(ValidationError):
+        _load_requests(path)
+
+
+def test_batch_status_failed_returns_failure(monkeypatch: Any) -> None:
+    from media_quotes.cli import batch as batch_cli
+
+    job = BatchJob(
+        id="batch-1",
+        status="failed",
+        request_counts={"total": 1, "failed": 1},
+        results=[],
+    )
+    client = MagicMock()
+    client.status.return_value = job
+    monkeypatch.setattr(batch_cli, "OpenRouterBatchClient", lambda settings: client)
+    assert (
+        batch_cli._do_batch(
+            _settings(Path(".")),
+            requests_path=Path("."),
+            max_cost=None,
+            execute=False,
+            status_id="batch-1",
+            dry_run=False,
+        )
+        == 1
+    )
+
+
+def test_batch_apply_requires_requests(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(app, "get_settings", lambda: _settings(tmp_path))
+    assert app.main(["batch", "--status", "batch-1", "--apply"]) == 3
+
+
+def test_execute_rejects_model_mismatch(tmp_path: Path) -> None:
+    from media_quotes.cli.batch import _do_batch
+
+    request = {
+        "decision_type": "section-inference",
+        "cache_key": "k1",
+        "input_hash": "i",
+        "model_snapshot": "openai/gpt-4o-mini-2024-07-18",
+        "prompt_version": "p1",
+        "schema_hash": "s1",
+        "system_prompt": "system",
+        "user_prompt": "user",
+    }
+    path = tmp_path / "requests.json"
+    path.write_text(json.dumps([request]), encoding="utf-8")
+    settings = _settings(tmp_path, batch_model_snapshot="anthropic/claude-3-5-haiku:batch")
+    with pytest.raises(ConfigError, match="model_snapshot"):
+        _do_batch(
+            settings,
+            requests_path=path,
+            max_cost=10.0,
+            execute=True,
+            status_id=None,
+            dry_run=False,
+        )

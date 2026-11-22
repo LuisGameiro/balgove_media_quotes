@@ -7,7 +7,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..batch import batch_payload, build_batch_requests, validate_batch_size, write_batch_file
+from ..batch import (
+    batch_payload,
+    build_batch_requests,
+    custom_id,
+    validate_batch_size,
+    write_batch_file,
+)
 from ..batch_runner import OpenRouterBatchClient
 from ..config import Settings
 from ..exceptions import ConfigError
@@ -21,7 +27,7 @@ def _load_requests(path: Path) -> list[LLMRequest]:
     payload: object = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise ConfigError("batch requests file must be a JSON array of LLMRequest objects")
-    return [LLMRequest.model_validate(item) for item in payload if isinstance(item, dict)]
+    return [LLMRequest.model_validate(item) for item in payload]
 
 
 def _extract_text(result: dict[str, Any]) -> str | None:
@@ -32,6 +38,19 @@ def _extract_text(result: dict[str, Any]) -> str | None:
     body = response.get("body")
     if not isinstance(body, dict):
         return None
+    # Responses API (the default endpoint): output[].content[].text.
+    pieces: list[str] = []
+    for item in body.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for part in item.get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "output_text":
+                text = part.get("text")
+                if isinstance(text, str):
+                    pieces.append(text)
+    if pieces:
+        return "".join(pieces)
+    # Chat Completions shape, for operators who override BATCH_ENDPOINT.
     text = body.get("output_text")
     if isinstance(text, str):
         return str(text)
@@ -43,28 +62,37 @@ def _extract_text(result: dict[str, Any]) -> str | None:
     return None
 
 
+def _require_matching_model(requests: list[LLMRequest], model: str) -> None:
+    """Cache keys encode the model, so a batch must run under that same model."""
+    if any(item.model_snapshot != model for item in requests):
+        raise ConfigError(
+            "every request model_snapshot must equal BATCH_MODEL_SNAPSHOT; "
+            "rebuild the requests file with the batch model"
+        )
+
+
 def _apply_results(
     settings: Settings,
     results: list[dict[str, Any]],
-    mapping: dict[str, str],
+    requests: list[LLMRequest],
 ) -> int:
     from ..db.repository import DecisionCacheEntry, upsert_decision_cache
     from ..pipeline import _default_session_context
 
+    by_cache_key = {custom_id(item.cache_key): item for item in requests}
     applied = 0
     with _default_session_context(settings) as session:
         for result in results:
-            cid = str(result.get("custom_id") or "")
-            cache_key = mapping.get(cid)
+            request = by_cache_key.get(str(result.get("custom_id") or ""))
             text = _extract_text(result)
-            if not cache_key or text is None:
+            if request is None or text is None:
                 continue
             entry = DecisionCacheEntry(
-                cache_key=cache_key,
-                model_snapshot=settings.batch_model_snapshot,
-                prompt_version=settings.prompt_version,
-                schema_hash="batch",
-                input_hash=cache_key,
+                cache_key=request.cache_key,
+                model_snapshot=request.model_snapshot,
+                prompt_version=request.prompt_version,
+                schema_hash=request.schema_hash,
+                input_hash=request.input_hash,
                 output={"text": text},
             )
             upsert_decision_cache(session, entry)
@@ -91,19 +119,21 @@ def _do_batch(
         print(json.dumps(asdict(job), ensure_ascii=False, sort_keys=True, indent=2))
         if job.status == "completed" and apply and settings.persist_to_postgres:
             requests = _load_requests(requests_path)
-            _, mapping = build_batch_requests(
-                requests, model=settings.batch_model_snapshot or "unset"
-            )
-            applied = _apply_results(settings, job.results, mapping)
+            _require_matching_model(requests, settings.batch_model_snapshot)
+            applied = _apply_results(settings, job.results, requests)
             print(f"Applied {applied} batch result(s) to decision_cache.")
-        return EXIT_OK if client.is_terminal(job) else EXIT_FAILURE
+        return EXIT_OK if job.status == "completed" else EXIT_FAILURE
 
     if dry_run or not execute:
         requests = _load_requests(requests_path)
         batch_requests, _mapping = build_batch_requests(
             requests, model=settings.batch_model_snapshot or "unset"
         )
-        payload = batch_payload(batch_requests, model=settings.batch_model_snapshot or "unset")
+        payload = batch_payload(
+            batch_requests,
+            model=settings.batch_model_snapshot or "unset",
+            endpoint=settings.batch_endpoint,
+        )
         size = validate_batch_size(payload)
         estimate = BackfillEstimate(
             articles=len(requests),
@@ -138,8 +168,13 @@ def _do_batch(
         raise ConfigError("--max-cost is required to submit a batch")
 
     requests = _load_requests(requests_path)
+    _require_matching_model(requests, settings.batch_model_snapshot)
     batch_requests, _mapping = build_batch_requests(requests, model=settings.batch_model_snapshot)
-    payload = batch_payload(batch_requests, model=settings.batch_model_snapshot)
+    payload = batch_payload(
+        batch_requests,
+        model=settings.batch_model_snapshot,
+        endpoint=settings.batch_endpoint,
+    )
     validate_batch_size(payload)
     estimate = BackfillEstimate(
         articles=len(requests),
@@ -176,7 +211,6 @@ def _do_batch(
                 "requests": len(requests),
                 "estimated_cost": estimate.cost,
                 "max_cost": max_cost,
-                "mapping_file": str(requests_path.with_suffix(".batch.json")),
             },
             commit=False,
         )

@@ -63,7 +63,7 @@ src/media_quotes/
   llm_live.py        # Pinned OpenAI client with structured outputs and decision caching
   llm_cache.py       # Postgres-backed decision cache hooks for the pinned LLM boundary
   llm_openrouter.py  # OpenRouter provider built on the same pinned boundary
-  batch.py           # Provider batch API planner — design stub, no production caller
+  batch.py           # OpenRouter batch request builder wired to mq batch (dry-run default)
   rights_guard.py    # DEC-10 word limits and attribution policy guard
   restore_drill.py   # Export integrity verification and retention readiness
   pipeline.py        # shared daily collection/audit service used by CLI and Dagster

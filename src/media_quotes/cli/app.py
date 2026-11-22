@@ -223,8 +223,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         topic_arg = getattr(args, "topic", None)
         if command == "batch":
             requests_arg = getattr(args, "requests", None)
-            if not getattr(args, "status_id", None) and requests_arg is None:
-                raise ConfigError("batch requires --requests PATH or --status BATCH_ID")
+            if requests_arg is None and (
+                not getattr(args, "status_id", None) or getattr(args, "apply", False)
+            ):
+                raise ConfigError(
+                    "batch requires --requests PATH (or --status BATCH_ID without --apply)"
+                )
             return _do_batch(
                 settings,
                 requests_path=Path(requests_arg) if requests_arg else Path("."),

@@ -726,10 +726,11 @@ def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
     ]
     statement = pg_insert(storage_partitions_table).values(rows)
     statement = statement.on_conflict_do_nothing(index_elements=["table_name", "month"])
-    session.execute(statement)
+    result = session.execute(statement)
+    rowcount = getattr(result, "rowcount", 0) or 0
     if commit:
         session.commit()
-    return len(rows)
+    return rowcount
 
 
 def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: bool = True) -> int:

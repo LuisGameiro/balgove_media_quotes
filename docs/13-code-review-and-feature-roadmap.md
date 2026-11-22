@@ -65,14 +65,14 @@ flowchart LR
 |---|---|---|
 | `adapters/` | Package split into base, blob cache, RSS/Sitemap, HTML/JSON-LD, quote attribution and a plugin registry; `FixtureSource` and `SourceAdapter` preserve offsets. Live refs raise `NotImplementedError`. | Real replay, live stub |
 | `fetch.py` | `FetchPolicy` from settings, `TokenBucket`, T0 + host gates, async `fetch_bytes` with SHA-256 and a streamed byte cap; tested with MockTransport. | Real, wired via `mq fetch` |
-| `extraction.py` | trafilatura extraction, `quality_gate`, `ExtractedArticle`, `RenderingFallback` (absent). | Real core, no fallback |
+| `extraction.py` | trafilatura extraction, `quality_gate`, `ExtractedArticle`, opt-in `EXTRACTION_FALLBACK=static` second pass. | Real core, static fallback |
 | `verification.py` | Pure fail-closed `verify_quote`: span, metadata, source identity, window, attribution, junk, policy flags. | Real |
 | `verification_stages.py` | `pre_llm_filter` → `verify_pipeline` → `publishable`. No LLM stage despite name. | Real, no LLM |
 | `curation.py` | `assign_section`, `group_by_section`, `dedupe_quotes`, `review_badge`. | Real |
 | `rights_guard.py` | `apply_rights_limits()` enforces DEC-10 word/attribution limits. | Real |
 | `registry.py`, `enums.py`, `exceptions.py` | `SourceRegistryRow` from CSV, enums, typed errors. | Real |
 | `gold_set.py`, `evaluation.py` | Strict models, 60/20/20 split, `evaluate_metrics`; κ/precision stand-ins. | Real split, stand-in metrics |
-| `cli/` | 19 commands, shared flags, exit codes 0/1/2/3; `fetch` is the explicit rights-gated live command. | Real offline + explicit fetch |
+| `cli/` | 20 commands, shared flags, exit codes 0/1/2/3; `fetch` is the explicit rights-gated live command and `batch` is dry-run by default. | Real offline + explicit live commands |
 | `orchestration.py` | Dagster daily-partitioned `daily_quotes_digest`, optional persistence. | Real, no sensors |
 | `digest.py` | Deterministic Markdown: title, sections, verbatim quotes+links, obsolete hiding. | Real |
 | `llm.py`, `llm_live.py` | Inference protocol + labelled stand-in; pinned OpenAI boundary unused. | Stand-in + boundary |
@@ -80,12 +80,12 @@ flowchart LR
 | `dashboard.py` | Streamlit: digests, coverage, review queue, gaps, logs, sources, schema. | Real, file-backed |
 | `db/`, Alembic | Append-oriented tables + 6 migrations (`0001..0006`); idempotent repository helpers. | Real |
 | `risk_controls/` | Obsolescence, budget/cache, retention/partitioning, restore integrity. | Real planning |
-| `batch.py`, `restore_drill.py` | `batch.py` is a design stub with no production caller; `restore_drill.py` verifies JSONL integrity via the CLI. | Stub / real offline |
+| `batch.py`, `restore_drill.py` | `batch.py` builds inline OpenRouter batch payloads for `mq batch` (dry-run default; live submit is opt-in); `restore_drill.py` verifies JSONL integrity via the CLI. | Real offline, opt-in live |
 
 ### 2.3 CLI surface
 
 `doctor`, `validate`, `bootstrap`, `run`, `fetch`, `audit`, `logs`, `eval`, `sources`, `topics`,
-`version`, `backfill --dry-run`, `digest`, `export`, `dashboard` (guidance only), `review`,
+`version`, `backfill --dry-run`, `batch` (dry-run default), `digest`, `export`, `dashboard` (guidance only), `review`,
 `retention`, `restore-drill`. `run` is the full offline fixture pipeline; `fetch` is the explicit
 live command and dry-runs by default; exit 2 signals coverage gaps. See
 [17](17-connection-and-fetching-reference.md) for the current flag reference.

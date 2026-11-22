@@ -36,15 +36,15 @@ def test_custom_id_is_stable_and_safe() -> None:
     assert custom_id("k1").startswith("decision-")
 
 
-def test_batch_requests_use_custom_id_and_strict_schema() -> None:
+def test_batch_requests_use_custom_id_and_model() -> None:
     requests, mapping = build_batch_requests(
         [req("k1"), req("k2")], model="openai/gpt-4o-mini-2024-07-18"
     )
     assert [item.custom_id for item in requests] == [custom_id("k1"), custom_id("k2")]
     assert mapping[custom_id("k1")] == "k1"
     body = requests[0].body
-    assert body["text"]["format"]["strict"] is True
     assert body["model"] == "openai/gpt-4o-mini-2024-07-18"
+    assert "text" not in body  # plain text output, parsed by the live boundary contract
 
 
 def test_duplicate_custom_id_rejected() -> None:

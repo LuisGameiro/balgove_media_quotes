@@ -71,7 +71,7 @@ src/media_quotes/
 ├── validation/                       # data-asset validation (package with flat re-exports)
 │   ├── common.py / sources.py / sections.py / quotes.py
 │   └── modular.py                    # per-source JSON and per-topic pack checks
-├── batch.py                          # provider Batch API planner (design stub, no production caller)
+├── batch.py                          # OpenRouter batch request builder (mq batch, dry-run default)
 ├── curation.py                       # section assignment, cross-outlet dedup, review badges
 ├── dashboard.py                      # Streamlit dashboard projection
 ├── digest.py                         # daily Markdown digest assembly

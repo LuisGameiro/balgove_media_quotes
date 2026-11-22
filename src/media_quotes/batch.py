@@ -9,6 +9,7 @@ provider result order is not guaranteed. No network call happens here.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -57,13 +58,6 @@ def build_batch_requests(
                     "input": item.user_prompt,
                     "instructions": item.system_prompt,
                     "temperature": float(item.decoding_params.get("temperature", 0.0)),
-                    "text": {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "structured_decision",
-                            "strict": True,
-                        }
-                    },
                 },
             )
         )
@@ -85,7 +79,7 @@ def batch_payload(
 
 def validate_batch_size(payload: dict[str, Any]) -> int:
     """Reject payloads over OpenRouter's 200 MB batch limit; return byte size."""
-    encoded = __import__("json").dumps(payload, ensure_ascii=False).encode("utf-8")
+    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     if len(encoded) > MAX_BATCH_BYTES:
         raise ValueError(f"batch payload too large: {len(encoded)} > {MAX_BATCH_BYTES}")
     return len(encoded)
@@ -93,8 +87,6 @@ def validate_batch_size(payload: dict[str, Any]) -> int:
 
 def write_batch_file(payload: dict[str, Any], path: Path) -> int:
     """Write the request body for audit/replay; returns the number of requests."""
-    import json
-
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.tmp")
     temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

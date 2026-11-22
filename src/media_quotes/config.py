@@ -97,9 +97,6 @@ class Settings(BaseSettings):
     # Batch backfill policy (Opt-in; requires an explicit cost cap on the CLI).
     batch_model_snapshot: str = "unset"
     batch_endpoint: str = "/v1/responses"
-    batch_completion_window: str = "24h"
-    batch_poll_seconds: float = Field(default=10.0, gt=0)
-    batch_max_wait_minutes: int = Field(default=1440, gt=0)
 
     # Live fetch policy (used by scripts/test_scraper.py and mq fetch).
     fetch_timeout_seconds: float = Field(default=10.0, gt=0)
