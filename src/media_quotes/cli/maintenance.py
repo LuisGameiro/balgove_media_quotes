@@ -233,9 +233,9 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
         from ..pipeline import _default_session_context
 
         with _default_session_context(settings) as session:
-            registered = sync_storage_partitions(session)
-        report["registered_partitions"] = registered
-        print(f"Registered {registered} audit month(s) in storage_partitions.")
+            observed = sync_storage_partitions(session)
+        report["observed_partitions"] = observed
+        print(f"Observed {observed} audit month(s) in storage_partitions (existing rows kept).")
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     print("Lock duration is not measured in offline mode.")
     if not dry_run:
