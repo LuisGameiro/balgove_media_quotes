@@ -19,6 +19,7 @@ from .app import (
     main,
 )
 from .audit import _audit_markdown, _audit_report, _do_audit, _write_audit
+from .batch import _do_batch
 from .common import (
     _ARTICLES_PER_HOUR,
     _ARTICLES_PER_SOURCE_DAY,
@@ -81,6 +82,7 @@ __all__ = [
     "_digest_path",
     "_do_audit",
     "_do_backfill",
+    "_do_batch",
     "_do_dagster",
     "_do_dashboard",
     "_do_digest",

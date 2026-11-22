@@ -80,6 +80,13 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     shared: dict[str, Any] = {"parents": [_shared_parser()]}
 
+    batch_parser = subparsers.add_parser("batch", help="cost-capped OpenRouter batch backfill")
+    batch_parser.add_argument("--requests", dest="requests", required=False, type=Path)
+    batch_parser.add_argument("--max-cost", dest="max_cost", type=float)
+    batch_parser.add_argument("--execute", action="store_true")
+    batch_parser.add_argument("--status", dest="status_id")
+    batch_parser.add_argument("--apply", action="store_true")
+
     subparsers.add_parser("doctor", help="validate config, registry and schema", **shared)
     subparsers.add_parser("validate", help="alias for doctor", **shared)
     subparsers.add_parser("bootstrap", help="initialise database and sync sources", **shared)
@@ -189,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _bootstrap,
         _do_audit,
         _do_backfill,
+        _do_batch,
         _do_dagster,
         _do_dashboard,
         _do_digest,
@@ -213,6 +221,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         command = str(args.command)
         topic_arg = getattr(args, "topic", None)
+        if command == "batch":
+            requests_arg = getattr(args, "requests", None)
+            if not getattr(args, "status_id", None) and requests_arg is None:
+                raise ConfigError("batch requires --requests PATH or --status BATCH_ID")
+            return _do_batch(
+                settings,
+                requests_path=Path(requests_arg) if requests_arg else Path("."),
+                max_cost=getattr(args, "max_cost", None),
+                execute=bool(getattr(args, "execute", False)),
+                status_id=getattr(args, "status_id", None),
+                dry_run=not bool(getattr(args, "execute", False)),
+                apply=bool(getattr(args, "apply", False)),
+            )
         if command in {"doctor", "validate"}:
             return _do_doctor(settings)
         if command == "bootstrap":

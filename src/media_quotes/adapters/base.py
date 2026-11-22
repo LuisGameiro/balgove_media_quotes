@@ -129,11 +129,18 @@ class SourceAdapter:
             return _parse_json_fixture(decoded)
         # If the HTML has no synthetic <span class="quote"> tags, use the real parser.
         if 'class="quote"' not in decoded and (use_trafilatura or "<article" in decoded.lower()):
+            from ..config import get_settings
+            from ..extraction import static_html_fallback
+
+            fallback = (
+                static_html_fallback if get_settings().extraction_fallback == "static" else None
+            )
             return parse_newspaper_html(
                 decoded,
                 source_url=source_url,
                 topic_pack=topic_pack,
                 extractor_hints=extractor_hints,
+                fallback=fallback,
             )
         parser = _FixtureHTMLParser(topic_pack=topic_pack)
         parser.feed(decoded)

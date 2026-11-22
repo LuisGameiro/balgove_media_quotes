@@ -26,6 +26,7 @@ from .tables import (
     quote_classifications_table,
     quotes_table,
     sources_table,
+    storage_partitions_table,
 )
 
 if TYPE_CHECKING:
@@ -697,6 +698,38 @@ def read_export_records(
             )
         )
     return records
+
+
+def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
+    """Register observed audit_event months in storage_partitions as hot.
+
+    No DDL and no data movement: this only records which partitions exist so the
+    retention planner and operator have one source of truth.
+    """
+    from sqlalchemy import func
+
+    months = (
+        session.execute(
+            select(
+                func.date_trunc("month", audit_events_table.c.created_at).label("month")
+            ).distinct()
+        )
+        .scalars()
+        .all()
+    )
+    if not months:
+        return 0
+    rows = [
+        {"table_name": "audit_events", "month": month.date(), "state": "hot"}
+        for month in months
+        if month is not None
+    ]
+    statement = pg_insert(storage_partitions_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["table_name", "month"])
+    session.execute(statement)
+    if commit:
+        session.commit()
+    return len(rows)
 
 
 def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: bool = True) -> int:

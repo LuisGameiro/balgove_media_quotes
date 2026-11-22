@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     ai_judge_model_snapshot: str = "unset"
     judge_prompt_version: str = "judge-v1"
     translation_prompt_version: str = "translation-v1"
+    extraction_fallback: str = "off"  # off | static
+
+    # Batch backfill policy (Opt-in; requires an explicit cost cap on the CLI).
+    batch_model_snapshot: str = "unset"
+    batch_endpoint: str = "/v1/responses"
+    batch_completion_window: str = "24h"
+    batch_poll_seconds: float = Field(default=10.0, gt=0)
+    batch_max_wait_minutes: int = Field(default=1440, gt=0)
 
     # Live fetch policy (used by scripts/test_scraper.py and mq fetch).
     fetch_timeout_seconds: float = Field(default=10.0, gt=0)
@@ -128,6 +136,22 @@ class Settings(BaseSettings):
         mode = str(value).strip().lower()
         if mode not in {"off", "detect_only", "translate"}:
             raise ValueError("translation_mode must be off, detect_only or translate")
+        return mode
+
+    @field_validator("batch_model_snapshot", mode="before")
+    @classmethod
+    def _validate_batch_model_snapshot(cls, value: object) -> str:
+        snapshot = str(value).strip()
+        if snapshot.lower() == "latest":
+            raise ValueError("batch_model_snapshot must be pinned (no 'latest')")
+        return snapshot
+
+    @field_validator("extraction_fallback", mode="before")
+    @classmethod
+    def _validate_extraction_fallback(cls, value: object) -> str:
+        mode = str(value).strip().lower()
+        if mode not in {"off", "static"}:
+            raise ValueError("extraction_fallback must be off or static")
         return mode
 
     @field_validator("ai_judge_mode", mode="before")

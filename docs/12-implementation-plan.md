@@ -33,7 +33,7 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 
 | Step | Work | Exit check |
 |---|---|---|
-| B1 | Monthly partitioning of `audit_events` and `llm_decisions` (RSK-11 plan §3) — planned, not applied | CHK-17 |
+| B1 | Done (contract layer): audit_events partition names in `retention_plan`, `storage_partitions` registration via `mq retention --dry-run` with persistence on, `created_at` in the SQLAlchemy table. Physical partitioning still needs a maintenance window and migration 0007 | CHK-17 |
 | B2 | Done: `llm_cache.DbDecisionCache` wires the pinned LLM boundary to `decision_cache` when `PERSIST_TO_POSTGRES=true` | CHK-16 |
 | B3 | Wire `configure_observability` (structlog redaction + OTLP span exporter in `observability.py`) into live Postgres/Dagster pipeline runs and local OTel collector | CHK-13 |
 | B4 | `uv.lock` + `make check` already present; ensure CI runs it on every PR | CHK-10/11 |
@@ -43,7 +43,7 @@ refs come from [03](03-work-breakdown.md) and [08](08-traceability.md).
 | Step | Work | Exit check |
 |---|---|---|
 | C1 | `fetch` adapter using async httpx with `Timeout`/`Limits`/token bucket; VCR cassette replay for blocked Track B fixtures + live fetch for approved Track A sources; dead-letter + coverage rows persisted in Postgres | CHK-05/09 |
-| C2 | Trafilatura extraction with §4.1 params, DOM offsets; quality gate → Playwright fallback | CHK-07 |
+| C2 | Trafilatura extraction with §4.1 params, DOM offsets; quality gate → optional `EXTRACTION_FALLBACK=static` second pass. A rendered JS fallback still needs a rights-cleared source to justify the dependency | CHK-07 |
 | C3 | Two-stage verifier persisted to Postgres: Stage 1 pre-LLM candidate filter (drops zero-quote boilerplate before LLM spend) + Stage 2 post-LLM exact-span, speaker, metadata and first-hand evidence gate; `unverified` never published | CHK-02 |
 | C4 | Cut over `mq run` and Dagster daily partitioned assets (`DEC-04`) from file-only stand-ins to Postgres-persisted runs producing a degraded digest that explicitly lists blocked Tier 1 sources (Reuters/BBC) as coverage gaps | CHK-01/02 |
 
@@ -72,7 +72,7 @@ with offline tests. There is no CLI flag for provider selection.
 | Step | Work | Exit check |
 |---|---|---|
 | PD1 | Live OpenAI boundary with pinned snapshot, strict structured output (preserving native `quote_text` + generating English `quote_text_en` translation), provider response id, refusal/incomplete logging, and Postgres `decision_cache` lookup before call | CHK-02 |
-| PD2 | Batch API path for backfills using `custom_id` (still a stub); done: `mq backfill` records budget estimate and gate result in `pipeline_runs` when persistence is on | CHK-16 |
+| PD2 | Done (offline layer): OpenRouter-shaped batch builder, cost-capped `mq batch` (dry-run default), injectable submit/poll client and `pipeline_runs` persistence. Live submission and result import need a pinned batch model and operator validation | CHK-16 |
 | PD3 | Section assignment from the 6-slug allow-list in `data/sections.csv`, cross-outlet quote deduplication (14-day window), and obsolescence rule with evidence bundle + `risk_controls.ReviewQueue` (24h `provisional_hold` `[Under Review]` badge) | CHK-15 |
 | PD4 | Held-out eval: obsolete precision ≥ 0.90 and drift guard (`obsoletion_allowed`) persisted in Postgres | CHK-03 |
 

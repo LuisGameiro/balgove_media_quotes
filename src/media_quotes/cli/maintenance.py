@@ -228,6 +228,14 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
     report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
     report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
+    if settings.persist_to_postgres:
+        from ..db.repository import sync_storage_partitions
+        from ..pipeline import _default_session_context
+
+        with _default_session_context(settings) as session:
+            registered = sync_storage_partitions(session)
+        report["registered_partitions"] = registered
+        print(f"Registered {registered} audit month(s) in storage_partitions.")
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     print("Lock duration is not measured in offline mode.")
     if not dry_run:

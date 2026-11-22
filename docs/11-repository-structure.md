@@ -201,9 +201,11 @@ migrations/
     ├── 0005_topic_packs.py           # topic_id on quotes, digests and runs
     └── 0006_digest_topic_unique.py   # one digest per topic and date
 
-`decision_cache` is now used by `llm_cache.DbDecisionCache` for the pinned LLM boundary when
-`PERSIST_TO_POSTGRES=true`. `storage_partitions` (migration 0003) and `batch.py` remain contract
-stubs with no production caller, kept for the planned partitioning and Batch API work.
+`decision_cache` is used by `llm_cache.DbDecisionCache` for the pinned LLM boundary when
+`PERSIST_TO_POSTGRES=true`. `storage_partitions` (migration 0003) is registered by
+`mq retention --dry-run` with persistence on. `batch.py`, `batch_runner.py` and `cli/batch.py`
+provide the cost-capped OpenRouter Batch API path; live submission needs a pinned batch model.
+Physical table partitioning and a rendered (JS) extraction fallback remain deferred.
 
 scripts/
 ├── docs_qa.py                        # documentation QA checker (CHK-08)

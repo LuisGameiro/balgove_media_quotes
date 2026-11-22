@@ -63,9 +63,31 @@ class ExtractedArticle(BaseModel):
 
 
 class RenderingFallback(Protocol):
-    """Injectable Playwright/etc. renderer; kept out of the pure unit path."""
+    """Injectable second-pass extractor; kept out of the pure unit path."""
 
     def __call__(self, raw_html: str, *, source_url: str) -> str: ...
+
+
+def static_html_fallback(raw_html: str, *, source_url: str) -> str:
+    """Second pass with recall-favouring trafilatura settings, no new dependency.
+
+    Used only when the strict quality gate rejects the precision-first extraction.
+    It cannot render JavaScript; a rendered fallback needs a separate, rights-gated tool.
+    """
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"SOCKS support in urllib3 requires.*")
+        import trafilatura
+
+    relaxed = ExtractionParams(
+        include_comments=True,
+        include_tables=True,
+        favor_precision=False,
+        favor_recall=True,
+    )
+    document = trafilatura.bare_extraction(raw_html, url=source_url, **relaxed.trafilatura_kwargs())
+    return str(_as_mapping(document).get("text") or "") if document is not None else ""
 
 
 def quality_gate(

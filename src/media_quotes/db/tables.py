@@ -165,6 +165,7 @@ audit_events_table = Table(
     Column("entity_id", String, nullable=True),
     Column("status", String, nullable=False),
     Column("details", JSON, nullable=False, default=dict),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 decision_cache_table = Table(

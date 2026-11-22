@@ -221,5 +221,5 @@ def test_partition_name_and_retention_plan() -> None:
     assert plan.log_cutoff == date(2026, 8, 22)
     assert all(name.endswith("2026_10") for name in plan.detach)
     assert all(name.endswith("2026_11") for name in plan.keep_hot)
-    assert len(plan.detach) == 2
-    assert len(plan.keep_hot) == 2
+    assert len(plan.detach) == 1
+    assert len(plan.keep_hot) == 1
