@@ -154,7 +154,16 @@ async def fetch_bytes(
         now = time.monotonic()
 
     if not token_bucket.allow(now):
-        raise RateLimitExceededError("rate limit exceeded")
+        if clock is not None:
+            raise RateLimitExceededError("rate limit exceeded")
+        # Real fetches wait for a token; injected clocks stay deterministic.
+        deadline = time.monotonic() + max(1.0, 2.0 / token_bucket.rate_per_second)
+        while time.monotonic() < deadline:
+            time.sleep(min(0.05, 1.0 / token_bucket.rate_per_second))
+            if token_bucket.allow(time.monotonic()):
+                break
+        else:
+            raise RateLimitExceededError("rate limit exceeded")
 
     if client is not None:
         async with client.stream("GET", url) as response:

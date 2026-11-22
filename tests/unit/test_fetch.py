@@ -145,6 +145,29 @@ def test_fetch_bytes_reuses_a_supplied_client() -> None:
     assert len(digest) == 64
 
 
+def test_shared_bucket_waits_for_next_token() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ok")
+
+    bucket = TokenBucket(rate_per_second=100.0)  # fast refill keeps the test quick
+    results = []
+    for url in ("https://example.invalid/a", "https://example.invalid/b"):
+        results.append(
+            asyncio.run(
+                fetch_bytes(
+                    url,
+                    row=APPROVED,
+                    policy=FetchPolicy(requests_per_second=100.0),
+                    track_a_approved=True,
+                    bucket=bucket,
+                    transport=httpx.MockTransport(handler),
+                    allowed_hosts=frozenset({"example.invalid"}),
+                )
+            )
+        )
+    assert [content for content, _ in results] == [b"ok", b"ok"]
+
+
 def test_fetch_refuses_oversized_and_relative_urls() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"x" * 20)
