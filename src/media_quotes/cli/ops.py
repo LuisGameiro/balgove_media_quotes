@@ -58,8 +58,20 @@ def _do_backfill(  # pragma: no cover
     cached_hashes: set[str] = set()
     for day in range(span):
         current = start + timedelta(days=day)
-        for record in read_jsonl(local_store_path(settings.export_dir, current)):
-            cached_hashes.add(record.content_hash)
+        path = local_store_path(settings.export_dir, current)
+        if not path.is_file():
+            continue
+        # Only hashes are needed: never parse hundreds of full records into memory.
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict) and isinstance(payload.get("content_hash"), str):
+                    cached_hashes.add(payload["content_hash"])
     cache_rate = min(0.9, len(cached_hashes) / max(1, base.calls))
     estimate = estimate_backfill(
         articles_per_source_day=_ARTICLES_PER_SOURCE_DAY,

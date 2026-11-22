@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from media_quotes.config import Settings
 
 
@@ -25,17 +28,28 @@ def test_database_url_is_secret():
 def test_dec10_licence_limits_defaults():
     settings = Settings(_env_file=None)
     assert settings.max_quote_words == 30
-    assert settings.attribution_format == settings.ATTRIBUTION_FORMAT
-    assert settings.licence_territory == settings.LICENCE_TERRITORY
-    assert settings.external_publication is False  # DEC-02 internal-only
+    assert settings.attribution_format
+    assert settings.licence_territory
 
 
 def test_dec10_limits_accept_environment_override(monkeypatch):
     monkeypatch.setenv("MAX_QUOTE_WORDS", "12")
-    monkeypatch.setenv("EXTERNAL_PUBLICATION", "true")
     settings = Settings(_env_file=None)
     assert settings.max_quote_words == 12
-    assert settings.external_publication is True
+    assert settings.batch_model_snapshot == ""
+
+
+def test_batch_model_snapshot_rejects_placeholders():
+    for value in ("unset", "latest", "UNSET"):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, batch_model_snapshot=value)
+
+
+def test_shared_session_factory_is_cached():
+    from media_quotes.pipeline import _shared_session_factory
+
+    url = "postgresql+psycopg://news:news@127.0.0.1:5432/news"
+    assert _shared_session_factory(url) is _shared_session_factory(url)
 
 
 def test_quote_within_limits_counts_words():

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -40,6 +43,28 @@ def _queue_path(settings: Settings) -> Path:
 def _load_queue(settings: Settings) -> dict[str, Any]:
     payload = _read_json(_queue_path(settings))
     return payload if isinstance(payload, dict) else {"flags": []}
+
+
+@contextmanager
+def _queue_lock(path: Path) -> Iterator[None]:
+    """Keep the review-queue read-modify-write to one process at a time."""
+    lock = path.with_name(f".{path.name}.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            handle = lock.open("x", encoding="utf-8")
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                # shortcut: a crashed process leaves a lock; add a TTL if this recurs
+                raise ConfigError("review queue is locked by another process") from None
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        handle.close()
+        lock.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,31 +166,34 @@ def _do_review(
         return EXIT_OK
 
     if action == "seed":
-        target_id = quote_id or "Q-20261119-0001"
-        if any(flag.evidence.old_quote_id == target_id for flag in flags):
-            print(f"review flag already exists: {target_id}")
+        with _queue_lock(_queue_path(settings)):
+            payload = _load_queue(settings)
+            flags = load_review_flags(settings)
+            target_id = quote_id or "Q-20261119-0001"
+            if any(flag.evidence.old_quote_id == target_id for flag in flags):
+                print(f"review flag already exists: {target_id}")
+                return EXIT_OK
+            sample_flag = ObsolescenceFlag(
+                evidence=ObsolescenceEvidence(
+                    old_quote_id=target_id,
+                    old_content_hash="a" * 64,
+                    newer_article_id="art-2026-11-19-02",
+                    newer_content_hash="b" * 64,
+                    newer_is_first_hand=True,
+                    newer_rights_cleared=True,
+                    superseding_span="Negotiations have been paused pending security verification.",
+                    decision_id="dec-seed-001",
+                    rationale="Newer official statement supersedes earlier negotiation position.",
+                ),
+                confidence=0.95,
+                raised_at=datetime.now(UTC),
+                state="pending",
+            )
+            flags.append(sample_flag)
+            payload["flags"] = [flag.model_dump(mode="json") for flag in flags]
+            _write_json(_queue_path(settings), payload)
+            print(f"review flag seeded: {target_id} -> pending")
             return EXIT_OK
-        sample_flag = ObsolescenceFlag(
-            evidence=ObsolescenceEvidence(
-                old_quote_id=target_id,
-                old_content_hash="a" * 64,
-                newer_article_id="art-2026-11-19-02",
-                newer_content_hash="b" * 64,
-                newer_is_first_hand=True,
-                newer_rights_cleared=True,
-                superseding_span="Negotiations have been paused pending security verification.",
-                decision_id="dec-seed-001",
-                rationale="Newer official statement supersedes earlier negotiation position.",
-            ),
-            confidence=0.95,
-            raised_at=datetime.now(UTC),
-            state="pending",
-        )
-        flags.append(sample_flag)
-        payload["flags"] = [flag.model_dump(mode="json") for flag in flags]
-        _write_json(_queue_path(settings), payload)
-        print(f"review flag seeded: {target_id} -> pending")
-        return EXIT_OK
 
     if action != "decide":
         raise ConfigError(f"unknown review action: {action}")
@@ -179,47 +207,49 @@ def _do_review(
             + json.dumps(suggestions[quote_id].as_json(), ensure_ascii=False, sort_keys=True)
         )
 
-    if mode == "decision" and quote_id in suggestions:
-        suggestion = suggestions[quote_id]
-        chosen_verdict = suggestion.verdict
-        actor = suggestion.decision.actor or "ai-judge"
-        reviewer = actor
-        reason_code = "ai-judge"
-        # Provenance lives on the flag; ReviewQueue remains the only state mutator.
-        flags = [
-            flag_with_judge_provenance(flag, suggestion.decision)
-            if flag.evidence.old_quote_id == quote_id
-            else flag
-            for flag in flags
-        ]
+    with _queue_lock(_queue_path(settings)):
+        # Re-read under the lock so a second operator's verdict is not overwritten.
+        payload = _load_queue(settings)
+        flags = load_review_flags(settings)
+        if mode == "decision" and quote_id in suggestions:
+            suggestion = suggestions[quote_id]
+            chosen_verdict = suggestion.verdict
+            actor = suggestion.decision.actor or "ai-judge"
+            reviewer = actor
+            reason_code = "ai-judge"
+            flags = [
+                flag_with_judge_provenance(flag, suggestion.decision)
+                if flag.evidence.old_quote_id == quote_id
+                else flag
+                for flag in flags
+            ]
 
-    queue = ReviewQueue(flags)
-    now = datetime.now(UTC)
-    try:
-        decided_flag = queue.decide(
-            quote_id,
-            chosen_verdict,
-            reviewer=reviewer,
-            now=now,
-            reason_code=reason_code,
-        )
-    except KeyError:
-        print(f"no pending flag for {quote_id}", end="\n")
-        return EXIT_FAILURE
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
+        queue = ReviewQueue(flags)
+        now = datetime.now(UTC)
+        try:
+            decided_flag = queue.decide(
+                quote_id,
+                chosen_verdict,
+                reviewer=reviewer,
+                now=now,
+                reason_code=reason_code,
+            )
+        except KeyError:
+            print(f"no pending flag for {quote_id}", end="\n")
+            return EXIT_FAILURE
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
 
-    # Persist updated flags
-    updated_list = []
-    for flag in flags:
-        if flag.evidence.old_quote_id == quote_id:
-            updated_list.append(decided_flag.model_dump(mode="json"))
-        else:
-            updated_list.append(flag.model_dump(mode="json"))
-    payload["flags"] = updated_list
-    _write_json(_queue_path(settings), payload)
-    print(f"review recorded: {quote_id} -> {chosen_verdict}")
-    return EXIT_OK
+        updated_list = []
+        for flag in flags:
+            if flag.evidence.old_quote_id == quote_id:
+                updated_list.append(decided_flag.model_dump(mode="json"))
+            else:
+                updated_list.append(flag.model_dump(mode="json"))
+        payload["flags"] = updated_list
+        _write_json(_queue_path(settings), payload)
+        print(f"review recorded: {quote_id} -> {chosen_verdict}")
+        return EXIT_OK
 
 
 def _do_retention(settings: Settings, *, dry_run: bool) -> int:

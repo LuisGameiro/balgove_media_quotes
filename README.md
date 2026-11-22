@@ -76,7 +76,7 @@ src/media_quotes/
   db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
 docs/                # Requirements, architecture, tasks, decisions, rationale, repo tree (11), start plan (12), command reference (14)
 data/                # Registry, frozen schema, derived JSONL export, templates (no Python)
-tests/               # pytest suite incl. test_docs_qa.py; VCR.py/syrupy planned for full stack
+tests/               # pytest suite incl. test_docs_qa.py; network paths use injected transports
 scripts/             # docs_qa.py (CHK-08), validate_data.py, check.ps1, run_dagster.ps1, run_dashboard.ps1, manual_validate.ps1
 alembic.ini          # Alembic config; database URL comes from Settings, not this file
 migrations/          # Alembic env.py, script.py.mako and versions/

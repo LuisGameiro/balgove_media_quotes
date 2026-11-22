@@ -71,7 +71,6 @@ class Settings(BaseSettings):
     max_quote_words: int = Field(default=MAX_QUOTE_WORDS, gt=0)
     attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
     licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)
-    external_publication: bool = False  # DEC-02: internal-only by default
     persist_to_postgres: bool = False  # C4: Dagster persists run/audit rows only when enabled
 
     # Inference provider is selected by environment only. There is no CLI flag.
@@ -95,7 +94,7 @@ class Settings(BaseSettings):
     extraction_fallback: str = "off"  # off | static
 
     # Batch backfill policy (Opt-in; requires an explicit cost cap on the CLI).
-    batch_model_snapshot: str = "unset"
+    batch_model_snapshot: str = ""
     batch_endpoint: str = "/v1/responses"
 
     # Live fetch policy (used by scripts/test_scraper.py and mq fetch).
@@ -139,8 +138,8 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_batch_model_snapshot(cls, value: object) -> str:
         snapshot = str(value).strip()
-        if snapshot.lower() == "latest":
-            raise ValueError("batch_model_snapshot must be pinned (no 'latest')")
+        if snapshot.lower() in {"unset", "latest"}:
+            raise ValueError("batch_model_snapshot must be pinned (no 'unset'/'latest')")
         return snapshot
 
     @field_validator("extraction_fallback", mode="before")
@@ -207,35 +206,6 @@ class Settings(BaseSettings):
     def database_url_value(self) -> str:
         """Raw connection string; never log this value."""
         return self.database_url.get_secret_value()
-
-    # Uppercase aliases are the names used in docs/01 §6 #4; env vars are case-insensitive.
-    @property
-    def REPORT_DATE(self) -> date:
-        return self.report_date
-
-    @property
-    def BACKFILL_START(self) -> date:
-        return self.backfill_start
-
-    @property
-    def REPORT_WINDOW_DAYS(self) -> int:
-        return self.report_window_days
-
-    @property
-    def GOLD_SET_VERSION(self) -> str:
-        return self.gold_set_version
-
-    @property
-    def MAX_QUOTE_WORDS(self) -> int:
-        return self.max_quote_words
-
-    @property
-    def ATTRIBUTION_FORMAT(self) -> str:
-        return self.attribution_format
-
-    @property
-    def LICENCE_TERRITORY(self) -> str:
-        return self.licence_territory
 
     def quote_within_limits(self, quote_text: str) -> bool:
         """DEC-10 word-count gate; strict counting on Unicode whitespace."""

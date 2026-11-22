@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -394,17 +395,19 @@ class DailyPipelineResult:
     persistence: dict[str, Any] = field(default_factory=dict)
 
 
+@cache
+def _shared_session_factory(database_url: str) -> Any:
+    """One engine per database URL, reused across every call in this process."""
+    from .db.engine import create_db_engine_from_url, make_session_factory
+
+    return make_session_factory(create_db_engine_from_url(database_url))
+
+
 @contextmanager
 def _default_session_context(settings: Settings) -> Any:
-    """Create and dispose an engine for a caller-owned session."""
-    from .db.engine import create_db_engine, make_session_factory
-
-    engine = create_db_engine(settings)
-    try:
-        with make_session_factory(engine)() as session:
-            yield session
-    finally:
-        engine.dispose()
+    """Yield a caller-owned session from the process-wide engine."""
+    with _shared_session_factory(settings.database_url_value)() as session:
+        yield session
 
 
 def _persist_result(
@@ -508,7 +511,7 @@ def run_daily_pipeline(
     from .cli.run import _collect, _load_review_flags
     from .curation import dedupe_quotes, review_badge
     from .digest import write_digest
-    from .export import local_store_path, write_jsonl
+    from .export import atomic_write_text, local_store_path, write_jsonl
     from .llm import make_provider
     from .rights_guard import apply_rights_limits
 
@@ -568,13 +571,13 @@ def run_daily_pipeline(
     )
 
     logs_path = settings.logs_dir / f"{actual_run_id}.jsonl"
-    logs_path.parent.mkdir(parents=True, exist_ok=True)
-    with logs_path.open("w", encoding="utf-8", newline="\n") as handle:
-        for event in events:
-            handle.write(
-                json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            )
-            handle.write("\n")
+    atomic_write_text(
+        logs_path,
+        "".join(
+            json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            for event in events
+        ),
+    )
 
     report = _audit_report(
         settings,

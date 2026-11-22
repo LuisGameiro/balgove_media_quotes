@@ -12,8 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..config import Settings
 
 
+def create_db_engine_from_url(url: str) -> Engine:
+    return create_engine(url, pool_pre_ping=True, future=True)
+
+
 def create_db_engine(settings: Settings) -> Engine:
-    return create_engine(settings.database_url_value, pool_pre_ping=True, future=True)
+    return create_db_engine_from_url(settings.database_url_value)
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:

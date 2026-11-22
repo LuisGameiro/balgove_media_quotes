@@ -34,7 +34,7 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _make_client(settings: Settings) -> Any:
+def make_openrouter_client(settings: Settings) -> Any:
     """Build an OpenAI-compatible client pointed at OpenRouter."""
     try:
         from openai import OpenAI
@@ -71,7 +71,7 @@ class OpenRouterInferenceProvider(InferenceProvider):
     ) -> None:
         if settings.llm_provider != "openrouter":
             raise ConfigError("OpenRouterInferenceProvider requires LLM_PROVIDER=openrouter")
-        base_client = client or _make_client(settings)
+        base_client = client or make_openrouter_client(settings)
         self.client = PinnedOpenAIClient(
             base_client,
             model_snapshot=settings.llm_model_snapshot,
@@ -80,7 +80,6 @@ class OpenRouterInferenceProvider(InferenceProvider):
             cache_lookup=cache_lookup,
             cache_write=cache_write,
             cache_hooks=cache_hooks,
-            api_style="chat",
         )
 
     def infer(self, *, section_id: str, section_name: str, quote_texts: Sequence[str]) -> str:

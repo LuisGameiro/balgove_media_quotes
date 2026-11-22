@@ -124,7 +124,7 @@ class SourceAdapter:
         topic_pack: TopicPack | None = None,
         extractor_hints: ExtractorHints | None = None,
     ) -> dict[str, Any]:  # pragma: no cover
-        decoded = raw.decode("utf-8")
+        decoded = raw.decode("utf-8", errors="replace")
         if decoded.lstrip().startswith(("{", "[")):
             return _parse_json_fixture(decoded)
         # If the HTML has no synthetic <span class="quote"> tags, use the real parser.

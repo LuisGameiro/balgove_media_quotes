@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from .config import Settings
 from .exceptions import ConfigError
 from .llm_live import LLMRequest, PinnedOpenAIClient, contains_instruction_override
+from .llm_openrouter import make_openrouter_client
 
 _VALID_MODES = frozenset({"off", "shadow", "advisory", "decision"})
 _ALLOWED_VERDICTS = frozenset(
@@ -135,27 +136,6 @@ class LocalJudgeProvider:
         )
 
 
-def _make_judge_client(settings: Settings) -> object:
-    try:
-        from openai import OpenAI
-    except ImportError as exc:  # pragma: no cover - depends on the optional extra
-        raise ConfigError(
-            "AI_JUDGE_MODE != off requires the 'llm' extra: pip install -e '.[llm]'"
-        ) from exc
-    if settings.openrouter_api_key is None or not settings.openrouter_api_key.get_secret_value():
-        raise ConfigError("OPENROUTER_API_KEY is required when AI_JUDGE_MODE != off")
-    return OpenAI(
-        api_key=settings.openrouter_api_key.get_secret_value(),
-        base_url=settings.openrouter_base_url,
-        timeout=settings.openrouter_timeout_seconds,
-        max_retries=settings.openrouter_max_retries,
-        default_headers={
-            "HTTP-Referer": settings.openrouter_app_url,
-            "X-Title": settings.openrouter_app_title,
-        },
-    )
-
-
 class OpenRouterJudgeProvider:
     """Judge through a pinned, injectable OpenAI-compatible client boundary."""
 
@@ -186,13 +166,12 @@ class OpenRouterJudgeProvider:
             prompt_version=self._settings.judge_prompt_version,
             schema_hash_value=_hash({"judge-schema": self._settings.judge_prompt_version}),
             cache_hooks=self._cache_hooks,
-            api_style="chat",
         )
 
     @property
     def _pinned_client(self) -> PinnedOpenAIClient:
         if self._pinned is None:
-            self._pinned = self._build_pinned(_make_judge_client(self._settings))
+            self._pinned = self._build_pinned(make_openrouter_client(self._settings))
         return self._pinned
 
     def _escalate(self, task: str, input_digest: str, reason: str) -> JudgeDecision:

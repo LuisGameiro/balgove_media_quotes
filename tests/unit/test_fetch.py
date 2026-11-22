@@ -50,6 +50,37 @@ def test_token_bucket_refills_and_limits() -> None:
     assert bucket.allow(1.5)
 
 
+def test_feed_documents_share_one_rate_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    import media_quotes.live as live
+
+    feed = (
+        b"<rss><channel><item><link>https://example.invalid/a</link>"
+        b"<title>Article</title></item></channel></rss>"
+    )
+    seen: list[object] = []
+
+    async def fake_fetch(url: str, **kwargs: object) -> tuple[bytes, str]:
+        seen.append(kwargs["bucket"])
+        return (feed if url.endswith("/feed") else b"article"), "abc"
+
+    class FakeCache:
+        def store(self, source_id: str, raw: bytes) -> tuple[str, Path]:
+            return "abc", Path("blob.html")
+
+    monkeypatch.setattr(live, "fetch_bytes", fake_fetch)
+    live.fetch_feed_documents(
+        APPROVED,
+        "https://example.invalid/feed",
+        policy=FetchPolicy(),
+        topic_pack=None,
+        require_topic=False,
+        limit=1,
+        cache=FakeCache(),
+    )
+    assert len(seen) == 2
+    assert seen[0] is seen[1]
+
+
 def test_t0_gate_and_track_a_approval_required() -> None:
     with pytest.raises(SourceNotPermitted, match="Track A"):
         assert_fetch_permitted(APPROVED, track_a_approved=False)

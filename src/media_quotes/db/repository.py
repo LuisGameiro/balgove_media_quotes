@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -143,7 +143,7 @@ def sync_gold_set_labels(session: Session, gold_set: GoldSet, *, commit: bool = 
     result = session.execute(statement)
     if commit:
         session.commit()
-    return getattr(result, "rowcount", 0) or len(rows)
+    return _inserted_count(result, len(rows))
 
 
 def _inserted_count(result: object, attempted: int) -> int:
@@ -201,6 +201,7 @@ def persist_articles_and_quotes(
                     "access_mode": record.access_mode,
                     "license_reference": record.license_reference,
                     "discovery_method": record.discovery_method,
+                    "extraction_date": record.extraction_date,
                     **(detail.get("article_metadata") or {}),
                 }
             ),
@@ -232,6 +233,7 @@ def persist_articles_and_quotes(
                         "section_id": record.section_id,
                         "topic_id": record.topic_id,
                         "claim_only": record.claim_only,
+                        "original_reporting_flag": record.original_reporting_flag,
                     }
                 ),
                 "topic_id": record.topic_id,
@@ -647,11 +649,18 @@ def read_export_records(
         meta = q["q_meta"] or {}
         article_meta = a["a_meta"] or {}
         details = q["q_details"] or {}
+        stored_verified_at = details.get("verified_at")
+        if isinstance(stored_verified_at, str):
+            verified_at = datetime.fromisoformat(stored_verified_at.replace("Z", "+00:00"))
+        elif isinstance(stored_verified_at, datetime):
+            verified_at = stored_verified_at
+        else:
+            verified_at = datetime.combine(a["a_date"], time(12, 0), tzinfo=UTC)
         verification = VerificationRecord(
             verbatim_match=bool(details.get("verbatim_match", True)),
             metadata_verified=bool(details.get("metadata_verified", True)),
             method=str(details.get("method") or q["q_method"] or "db-export"),
-            verified_at=datetime.now(UTC),
+            verified_at=verified_at,
         )
         records.append(
             ExportQuoteRecord.model_validate(
@@ -670,15 +679,15 @@ def read_export_records(
                     "license_reference": s["s_license"] or "",
                     "discovery_method": s["s_discovery"],
                     "claim_only": s["s_claim"],
-                    "original_reporting_flag": (
-                        "first-hand" if q["q_topic_status"] == "accepted" else "unknown"
-                    ),
+                    "original_reporting_flag": meta.get("original_reporting_flag") or "first-hand",
                     "source_language": a["a_language"] or s["s_language"],
                     "publication_date": a["a_date"].isoformat(),
                     "article_name": a["a_title"] or "",
                     "article_author": str(article_meta.get("byline") or ""),
                     "article_url": a["a_url"],
-                    "extraction_date": datetime.now(UTC).isoformat(),
+                    "extraction_date": str(
+                        article_meta.get("extraction_date") or a["a_date"].isoformat()
+                    ),
                     "section_id": meta.get("section_id") or "other",
                     "is_obsolete": False,
                     "content_hash": a["a_hash"],

@@ -98,10 +98,12 @@ def recent_logs(logs_dir: Path, limit: int = 50) -> list[str]:  # pragma: no cov
     lines: list[str] = []
     for path in files:
         with path.open(encoding="utf-8") as handle:
-            lines.extend(line.strip() for line in handle if line.strip())
-        if len(lines) >= limit:
-            break
-    return lines[:limit]
+            for line in handle:
+                if line.strip():
+                    lines.append(line.strip())
+                    if len(lines) >= limit:
+                        return lines
+    return lines
 
 
 def schema_summary(schema_sql: Path) -> list[str]:  # pragma: no cover

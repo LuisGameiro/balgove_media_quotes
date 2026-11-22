@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from .adapters import BlobCache, parse_rss_feed, parse_sitemap_xml
-from .fetch import fetch_bytes
+from .fetch import TokenBucket, fetch_bytes
 
 if TYPE_CHECKING:
     from .fetch import FetchPolicy
@@ -48,10 +48,17 @@ def fetch_feed_documents(
     cache = cache or BlobCache()
 
     async def run() -> tuple[list[dict[str, str]], list[FetchedArticle]]:
+        # Share one bucket across the feed and every article so the rate limit applies.
+        bucket = TokenBucket(policy.requests_per_second)
         # One client for the feed and every article, so the policy's connection limit applies.
         async with httpx.AsyncClient(**policy.client_kwargs()) as client:
             feed_bytes, _ = await fetch_bytes(
-                feed_url, row=row, policy=policy, track_a_approved=row.usable, client=client
+                feed_url,
+                row=row,
+                policy=policy,
+                track_a_approved=row.usable,
+                bucket=bucket,
+                client=client,
             )
             feed_text = feed_bytes.decode("utf-8", errors="replace")
             if "<urlset" in feed_text or "<sitemapindex" in feed_text:
@@ -68,7 +75,12 @@ def fetch_feed_documents(
                 url = item["url"]
                 try:
                     raw, digest = await fetch_bytes(
-                        url, row=row, policy=policy, track_a_approved=row.usable, client=client
+                        url,
+                        row=row,
+                        policy=policy,
+                        track_a_approved=row.usable,
+                        bucket=bucket,
+                        client=client,
                     )
                     _, blob_path = cache.store(row.source_id, raw)
                     results.append(

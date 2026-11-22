@@ -13,7 +13,7 @@ from media_quotes.config import Settings
 from media_quotes.exceptions import ConfigError
 from media_quotes.llm import make_provider
 from media_quotes.llm_live import PinnedOpenAIClient
-from media_quotes.llm_openrouter import OpenRouterInferenceProvider, _make_client
+from media_quotes.llm_openrouter import OpenRouterInferenceProvider, make_openrouter_client
 
 
 def _settings(**kwargs: object) -> Settings:
@@ -69,7 +69,7 @@ def test_openrouter_requires_key_and_pinned_model() -> None:
 def test_make_provider_selects_openrouter_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings()
     fake = _client(FakeCompletions())
-    monkeypatch.setattr(llm_openrouter, "_make_client", lambda passed: fake)
+    monkeypatch.setattr(llm_openrouter, "make_openrouter_client", lambda passed: fake)
     provider = make_provider(settings)
     assert isinstance(provider, OpenRouterInferenceProvider)
 
@@ -177,7 +177,9 @@ def test_cache_key_changes_with_model_and_prompt(monkeypatch: pytest.MonkeyPatch
         return original(self, request)
 
     monkeypatch.setattr(PinnedOpenAIClient, "respond", spy)
-    monkeypatch.setattr(llm_openrouter, "_make_client", lambda passed: _client(FakeCompletions()))
+    monkeypatch.setattr(
+        llm_openrouter, "make_openrouter_client", lambda passed: _client(FakeCompletions())
+    )
 
     OpenRouterInferenceProvider(_settings()).infer(
         section_id="s", section_name="S", quote_texts=["quoted text"]
@@ -201,7 +203,7 @@ def test_make_client_builder(monkeypatch: pytest.MonkeyPatch) -> None:
     dummy_module.OpenAI = DummyOpenAI  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "openai", dummy_module)
 
-    client = _make_client(settings)
+    client = make_openrouter_client(settings)
     assert isinstance(client, DummyOpenAI)
     assert recorded["api_key"] == "test-key"
     assert recorded["base_url"] == settings.openrouter_base_url

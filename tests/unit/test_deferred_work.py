@@ -41,6 +41,17 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
     return Settings(_env_file=None, **values)  # type: ignore[arg-type]
 
 
+def test_parse_replaces_invalid_utf8() -> None:
+    from media_quotes.adapters.base import SourceAdapter
+
+    result = SourceAdapter._parse(
+        b"<html><body><article>caf\xe9 summary</article></body></html>",
+        use_trafilatura=True,
+        source_url="https://example.invalid/a",
+    )
+    assert isinstance(result, dict)
+
+
 def test_partition_plan_names_only_audit_events() -> None:
     from media_quotes.risk_controls.models import RetentionPolicy
 
@@ -109,6 +120,13 @@ def test_batch_client_submit_and_status_with_mock_transport() -> None:
     assert batch_id == "batch-1"
     assert job.status == "completed"
     assert job.results[0]["custom_id"] == "decision-x"
+
+
+def test_batch_status_rejects_path_like_id() -> None:
+    client = OpenRouterBatchClient(_settings(Path(".")), client=MagicMock())
+    with pytest.raises(ConfigError, match="invalid batch id"):
+        client.status("../models")
+    client.close()
 
 
 def test_batch_cli_status_uses_client(monkeypatch: Any) -> None:

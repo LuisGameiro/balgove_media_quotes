@@ -6,6 +6,7 @@ dry-run, and only successful results are applied to decision_cache by custom_id.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -64,6 +65,9 @@ class OpenRouterBatchClient:
         return batch_id
 
     def status(self, batch_id: str) -> BatchJob:
+        # batch_id becomes a URL path segment; keep the API key on the batches path.
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", batch_id):
+            raise ConfigError("invalid batch id")
         response = self._client.get(f"{self._url}/{batch_id}", headers=self._headers)
         response.raise_for_status()
         payload = response.json()

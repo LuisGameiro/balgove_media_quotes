@@ -29,6 +29,28 @@ def settings_for(tmp_path: Path) -> Settings:
     )
 
 
+def test_malformed_review_flag_is_not_silently_dropped(tmp_path: Path) -> None:
+    from media_quotes.cli.common import load_review_flags
+
+    settings = settings_for(tmp_path)
+    settings.audit_dir.mkdir(parents=True, exist_ok=True)
+    (settings.audit_dir / "review-queue.json").write_text(
+        json.dumps({"flags": [{"not_a_flag": True}]}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError):
+        load_review_flags(settings)
+
+
+def test_queue_lock_is_released(tmp_path: Path) -> None:
+    from media_quotes.cli.maintenance import _queue_lock
+
+    path = tmp_path / "review-queue.json"
+    lock = path.with_name(".review-queue.json.lock")
+    with _queue_lock(path):
+        assert lock.is_file()
+    assert not lock.exists()
+
+
 def test_review_queue_list_and_decide(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     settings.audit_dir.mkdir(parents=True, exist_ok=True)

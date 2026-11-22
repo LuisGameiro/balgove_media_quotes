@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import sys
@@ -71,13 +70,12 @@ def load_review_flags(settings: Settings) -> list[ObsolescenceFlag]:  # pragma: 
     if isinstance(flags_data, list):
         for item in flags_data:
             if isinstance(item, dict):
-                with contextlib.suppress(Exception):
-                    flag = ObsolescenceFlag.model_validate_json(json.dumps(item))
-                    for field in ("reviewed_at", "raised_at"):
-                        value = getattr(flag, field)
-                        if isinstance(value, datetime) and value.tzinfo is None:
-                            flag = flag.model_copy(update={field: value.replace(tzinfo=UTC)})
-                    flags.append(flag)
+                flag = ObsolescenceFlag.model_validate_json(json.dumps(item))
+                for field in ("reviewed_at", "raised_at"):
+                    value = getattr(flag, field)
+                    if isinstance(value, datetime) and value.tzinfo is None:
+                        flag = flag.model_copy(update={field: value.replace(tzinfo=UTC)})
+                flags.append(flag)
     return flags
 
 
