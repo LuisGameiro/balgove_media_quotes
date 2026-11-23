@@ -30,7 +30,7 @@ Steps executed by `scripts/check.ps1`:
 
 ---
 
-## 2. All 19 CLI subcommands (`media_quotes.cli` / `mq`)
+## 2. All 20 CLI subcommands (`media_quotes.cli` / `mq`)
 
 The CLI entrypoint is `.\.venv\Scripts\python.exe -m media_quotes` (or `python -m media_quotes` / `mq` when the virtualenv is active).
 
@@ -51,6 +51,7 @@ The CLI entrypoint is `.\.venv\Scripts\python.exe -m media_quotes` (or `python -
 | `topics` | List, scaffold (`init`) or show topic packs (`--action`, `--name`, `--description`) | `python -m media_quotes topics --action list` |
 | `fetch` | Plan a rights-cleared fetch; add `--live` to contact the source | `python -m media_quotes fetch --source-id guardian` |
 | `backfill` | Estimate historical backfill articles, cache hit rate, duration, and cost vs `--max-cost` | `python -m media_quotes backfill --from 2026-10-01 --to 2026-11-19 --max-cost 100 --dry-run` |
+| `batch` | Plan or submit a cost-capped OpenRouter batch; `--status` / `--apply` import results | `python -m media_quotes batch --requests requests.json --max-cost 10 --dry-run` |
 | `review` | Manage human-in-the-loop obsolescence review queue (`--action list\|seed\|decide`) | `python -m media_quotes review --action list` |
 | `retention` | Check RSK-11 monthly partition detach readiness and 180d blob / 90d log cutoffs | `python -m media_quotes retention --dry-run` |
 | `restore-drill` | Compare two derived JSONL exports for round-trip identity and SHA-256 `content_hash` integrity | `python -m media_quotes restore-drill --date 2026-11-19 --reference var/export/quotes-2026-11-18.jsonl` |

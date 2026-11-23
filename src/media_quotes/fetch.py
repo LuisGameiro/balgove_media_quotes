@@ -7,6 +7,7 @@ until DEC-14 is recorded. Tests use httpx.MockTransport, so the suite never touc
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from collections.abc import Callable
@@ -159,7 +160,7 @@ async def fetch_bytes(
         # Real fetches wait for a token; injected clocks stay deterministic.
         deadline = time.monotonic() + max(1.0, 2.0 / token_bucket.rate_per_second)
         while time.monotonic() < deadline:
-            time.sleep(min(0.05, 1.0 / token_bucket.rate_per_second))
+            await asyncio.sleep(min(0.05, 1.0 / token_bucket.rate_per_second))
             if token_bucket.allow(time.monotonic()):
                 break
         else:

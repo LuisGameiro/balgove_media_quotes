@@ -341,3 +341,41 @@ def test_execute_rejects_model_mismatch(tmp_path: Path) -> None:
             status_id=None,
             dry_run=False,
         )
+
+
+def test_batch_submit_without_postgres_never_opens_db(tmp_path: Path, monkeypatch: Any) -> None:
+    from media_quotes.cli import batch as batch_cli
+
+    request = {
+        "decision_type": "section-inference",
+        "cache_key": "k1",
+        "input_hash": "i",
+        "model_snapshot": "openai/gpt-4o-mini-2024-07-18",
+        "prompt_version": "p1",
+        "schema_hash": "s1",
+        "system_prompt": "system",
+        "user_prompt": "user",
+    }
+    path = tmp_path / "requests.json"
+    path.write_text(json.dumps([request]), encoding="utf-8")
+    settings = _settings(tmp_path, batch_model_snapshot="openai/gpt-4o-mini-2024-07-18")
+    client = MagicMock()
+    client.submit.return_value = "batch-1"
+    monkeypatch.setattr(batch_cli, "OpenRouterBatchClient", lambda _settings: client)
+
+    def forbid_db(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("batch submission must not touch Postgres when persistence is off")
+
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", forbid_db)
+    assert (
+        batch_cli._do_batch(
+            settings,
+            requests_path=path,
+            max_cost=10.0,
+            execute=True,
+            status_id=None,
+            dry_run=False,
+        )
+        == 0
+    )
+    client.submit.assert_called_once()

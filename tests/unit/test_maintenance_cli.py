@@ -100,6 +100,15 @@ def test_retention_live_attempt(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert "Live retention job is not available" in out
 
 
+def test_retention_dry_run_never_writes_partitions(tmp_path: Path, monkeypatch) -> None:
+    def forbid_db(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("dry-run must not write storage_partitions")
+
+    monkeypatch.setattr("media_quotes.db.repository.sync_storage_partitions", forbid_db)
+    settings = settings_for(tmp_path).model_copy(update={"persist_to_postgres": True})
+    assert _do_retention(settings, dry_run=True) == 0
+
+
 def test_restore_drill_needs_two_exports(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -202,30 +202,31 @@ def _do_batch(
     finally:
         client.close()
 
-    run_id = f"batch-{batch_id}"
-    from ..db.repository import finish_pipeline_run, start_pipeline_run
-    from ..pipeline import _default_session_context
+    if settings.persist_to_postgres:
+        run_id = f"batch-{batch_id}"
+        from ..db.repository import finish_pipeline_run, start_pipeline_run
+        from ..pipeline import _default_session_context
 
-    with _default_session_context(settings) as session:
-        start_pipeline_run(
-            session,
-            run_id=run_id,
-            pipeline="mq-batch",
-            partition_date=settings.report_date,
-            commit=False,
-        )
-        finish_pipeline_run(
-            session,
-            run_id=run_id,
-            status="running",
-            stats={
-                "batch_id": batch_id,
-                "requests": len(requests),
-                "estimated_cost": estimate.cost,
-                "max_cost": max_cost,
-            },
-            commit=False,
-        )
-        session.commit()
+        with _default_session_context(settings) as session:
+            start_pipeline_run(
+                session,
+                run_id=run_id,
+                pipeline="mq-batch",
+                partition_date=settings.report_date,
+                commit=False,
+            )
+            finish_pipeline_run(
+                session,
+                run_id=run_id,
+                status="running",
+                stats={
+                    "batch_id": batch_id,
+                    "requests": len(requests),
+                    "estimated_cost": estimate.cost,
+                    "max_cost": max_cost,
+                },
+                commit=False,
+            )
+            session.commit()
     print(f"Submitted batch {batch_id}; poll with `mq batch --status {batch_id}`.")
     return EXIT_OK

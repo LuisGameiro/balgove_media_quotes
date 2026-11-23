@@ -348,13 +348,25 @@ def _process_source(  # pragma: no cover
     default_section = topic_pack.default_section if topic_pack is not None else "other"
     events: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
+    gap_keys: set[tuple[str, ...]] = set()
+
+    def add_gap(gap: dict[str, Any]) -> None:
+        # One gap per source/reason: fixture articles repeat the same rights/topic problem.
+        key = tuple(
+            str(gap.get(field) or "")
+            for field in ("source_id", "gap_reason", "detail", "topic_status")
+        )
+        if key not in gap_keys:
+            gap_keys.add(key)
+            gaps.append(gap)
+
     records: list[ExportQuoteRecord] = []
     offsets: dict[str, dict[str, Any]] = {}
     rejected = 0
 
     if not row.usable and not replay:
         # T0 gate: never call discovery/fetch for a disabled source with no fixture.
-        gaps.append(_gap_record(row, "no permitted route and no fixture available"))
+        add_gap(_gap_record(row, "no permitted route and no fixture available"))
         events.append(
             _event(
                 run_id=run_id,
@@ -392,7 +404,7 @@ def _process_source(  # pragma: no cover
         )
 
     if not row.usable:
-        gaps.append(_gap_record(row, "fixture replay only; the T0 gate refuses live contact"))
+        add_gap(_gap_record(row, "fixture replay only; the T0 gate refuses live contact"))
 
     adapter = build_adapter(
         row,
@@ -473,7 +485,7 @@ def _process_source(  # pragma: no cover
             topic_counts["skipped"] += 1
             gap = _gap_record(row, "topic_gate unavailable: no approved route or rule")
             gap.update({"license_reference": row.license_reference or "(none)"})
-            gaps.append(gap)
+            add_gap(gap)
             rejected += 1
             events.append(
                 _event(
@@ -523,7 +535,7 @@ def _process_source(  # pragma: no cover
                         "license_reference": row.license_reference or "(none)",
                     }
                 )
-                gaps.append(gap)
+                add_gap(gap)
                 rejected += 1
                 continue
 
@@ -834,8 +846,13 @@ def _do_run(  # pragma: no cover
     print(f"Logs:   {result.logs_path}")
     if verbose:
         print(f"Audit:  {result.audit_md_path}")
+    reported: set[tuple[str, ...]] = set()
     for gap in result.gaps:
         if gap.get("mandatory"):
+            key = tuple(str(gap.get(field) or "") for field in ("source_id", "gap_reason"))
+            if key in reported:
+                continue
+            reported.add(key)
             print(
                 f"COVERAGE GAP: {gap['source_id']} is {gap['rights_status']}; "
                 f"{gap['gap_reason']} (fixture replay logged, no live contact)."

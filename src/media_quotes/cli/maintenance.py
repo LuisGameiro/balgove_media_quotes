@@ -258,7 +258,7 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
     report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
     report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
-    if settings.persist_to_postgres:
+    if settings.persist_to_postgres and not dry_run:
         from ..db.repository import sync_storage_partitions
         from ..pipeline import _default_session_context
 

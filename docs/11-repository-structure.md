@@ -52,7 +52,7 @@ src/media_quotes/
 │   ├── registry.py                   # adapter plugin registry and build_adapter()
 │   ├── rss.py                        # RSS 2.0 / Atom discovery
 │   └── sitemap.py                    # standard and Google News sitemap discovery
-├── cli/                              # mq command-line interface (19 subcommands)
+├── cli/                              # mq command-line interface (20 subcommands)
 │   ├── __init__.py / __main__.py / app.py   # exports, python -m entry, parser and dispatch
 │   ├── common.py                     # shared helpers: paths, run IDs, registry, topic pack, JSON I/O
 │   ├── audit.py / logs.py / eval.py  # audit reports, log inspection, gold-set evaluation

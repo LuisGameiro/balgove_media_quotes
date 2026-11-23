@@ -43,6 +43,7 @@ sources_table = Table(
     Column("archive_start_date", Date, nullable=False),
     Column("enabled", Boolean, nullable=False, default=False),
     Column("notes", String, nullable=False, default=""),
+    Column("updated_at", DateTime(timezone=True), nullable=True),
 )
 
 articles_table = Table(

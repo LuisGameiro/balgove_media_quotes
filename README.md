@@ -70,7 +70,7 @@ src/media_quotes/
   orchestration.py   # Dagster assets, jobs, 6 checks, resources, schedule and SLA sensor
   __main__.py        # python -m media_quotes (CLI entry point, UTF-8 console fix)
   bootstrap.py       # Alembic upgrade head + source registry sync
-  cli/               # mq command-line interface package (19 subcommands)
+  cli/               # mq command-line interface package (20 subcommands)
   risk_controls/     # RSK-07/08/11 policy package: review queue, budget gate, retention
   validation/        # Data-asset validation package: sources, sections, quotes, modular configs
   db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
@@ -149,7 +149,7 @@ coverage, Alembic, secrets redaction) are specified in
 
 The implemented entry point is `mq` (`python -m media_quotes` / `python -m media_quotes.cli`).
 All subcommands below use deterministic offline fixture replay, except `mq fetch`, which is an
-explicit live command and is a no-network dry-run unless you remove `--dry-run`. Live fetching is
+explicit live command and is a no-network dry-run unless you add `--live`. Live fetching is
 rights-gated and writes no database rows. T9 completes live Dagster asset scheduling, external LLM
 provider calls and production database connections. Full command examples live in
 [`docs/14`](docs/14-command-reference.md); the switch reference is in
@@ -165,13 +165,13 @@ provider calls and production database connections. Full command examples live i
 | `mq eval --gold-set <version> [--split …]` | Deterministic metrics + κ-calibrated judge (optional `all|train|dev|test` filter) |
 | `mq sources`, `mq topics`, `mq version` | Registry + rights status, topic-pack management, version manifest |
 | `mq fetch --source-id <id> [--live]` | Plan a rights-cleared fetch; add `--live` to actually contact the source |
-| `mq backfill`, `mq digest`, `mq export`, `mq dashboard` | Backfill, regenerate MD, derived JSONL, Streamlit UI |
+| `mq backfill`, `mq batch`, `mq digest`, `mq export`, `mq dashboard` | Backfill estimate, cost-capped OpenRouter batch, regenerate MD, derived JSONL, Streamlit UI |
 | `mq dagster` | Show Dagster asset, partition, schedule and persistence guidance |
 | `mq review`, `mq retention`, `mq restore-drill` | Review queue (`list|seed|decide`), retention plan, derived-export integrity |
 
 Shared flags: `--topic`, `--dry-run`, `--date`, `--run-id`/`--trace-id`, `--out`, `--verbose`.
 `--offline` is deprecated and accepted only for compatibility: every `mq` command is offline
-unless you explicitly run `mq fetch` without `--dry-run`. Exit codes: `0` pass · `1`
+unless you explicitly run `mq fetch --live`. Exit codes: `0` pass · `1`
 validation/threshold failure · `2` partial success with coverage gaps · `3` config/T0-gate error.
 Re-runs are idempotent.
 
@@ -236,7 +236,7 @@ Per-source discovered/quotes counts are written to coverage rows in the audit re
 
 | Goal | Command | State |
 |---|---|---|
-| Documentation consistency (CHK-08) | `python scripts/docs_qa.py` or `pytest tests/test_docs_qa.py` | works today |
+| Documentation consistency (CHK-08) | `python scripts/docs_qa.py` or `pytest tests/contract/test_docs_qa.py` | works today |
 | Unit/full test suite | `python -m pytest -q` | works today; targeted and full runs stay fast |
 | Full gate with 85% coverage | `make coverage` or `make check` | coverage is enforced only in these full-gate commands |
 | Lint/format | `python -m ruff check .` / `ruff format --check .` | works today |

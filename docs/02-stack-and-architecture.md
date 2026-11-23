@@ -205,7 +205,7 @@ Targets are planning placeholders until T2 measurement; record any change in [08
 
 One entry point, `mq` (`python -m media_quotes.cli` via `src/media_quotes/__main__.py`,
 plus a console script declared in `[project.scripts]`). All implemented subcommands (`doctor`,
-`validate`, `bootstrap`, `run`, `audit`, `logs`, `eval`, `backfill`, `digest`, `export`, `sources`,
+`validate`, `bootstrap`, `run`, `batch`, `audit`, `logs`, `eval`, `backfill`, `digest`, `export`, `sources`,
 `version`, `dashboard`, `dagster`, `review`, `retention`, `restore-drill`) are available today in
 deterministic offline fixture-replay mode; `dagster` prints setup guidance for the optional asset.
 T9 wires `run`, `audit`, `logs`, `eval`, and `backfill` to live Postgres, Dagster partitions,
@@ -214,7 +214,7 @@ and the pinned OpenAI provider. `mq --help` and an import smoke test run in CI (
 **Shared flags:** `--topic` (topic pack id) · `--dry-run` (plan only, no writes) ·
 `--date YYYY-MM-DD` (default `REPORT_DATE`) · `--run-id` / `--trace-id` · `--out PATH` ·
 `--verbose`. `--offline` is deprecated and accepted only for compatibility: every `mq` command
-is offline except the explicit `mq fetch` run without `--dry-run`.
+is offline except the explicit `mq fetch --live` run.
 
 **Exit codes:** `0` success · `1` validation/threshold failure · `2` partial success with
 coverage gaps (audit report lists them) · `3` config/T0-gate error. Re-runs are idempotent:
@@ -227,6 +227,7 @@ error resumes from the last successful step and never overwrites append-only row
 | `mq validate` | Validate registry/CSV, frozen JSON Schema and derived JSONL paths; **available today** via `media_quotes.validation`. |
 | `mq run --date …` | **One command**: discover → fetch → extract → verify → LLM → digest → `audit` → log summary; writes run/trace IDs and `var/audit/…` report. |
 | `mq backfill --from 2026-10-01 --to 2026-11-19` | Same path for an arbitrary period; Batch API + cache; idempotent. |
+| `mq batch [--requests PATH] [--max-cost N] [--execute] [--status ID] [--apply]` | Plan, submit, poll or import a cost-capped OpenRouter batch; no paid call without `--execute`. |
 | `mq digest --date …` | Regenerate `digests/YYYY-MM-DD.md` from Postgres only. |
 | `mq audit [--date …] [--run-id …] [--out var/audit/…]` | Deterministic checks (T0, coverage contract, schema-valid, refusal/incomplete, false-quote, exact-match, first-hand, version manifest, trace completeness) → JSON + MD report. |
 | `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id`, spans, errors. |
@@ -245,7 +246,7 @@ error resumes from the last successful step and never overwrites append-only row
 
 `media_quotes.validation` is wired into the implemented `mq doctor`/`mq validate` commands and
 `scripts/validate_data.py`. All CLI subcommands function in offline fixture replay except the
-explicit `mq fetch` run without `--dry-run`;
+explicit `mq fetch --live` run;
 T9 provides the live database, Dagster asset scheduling, and external LLM connections.
 
 ## 6. Not adopted

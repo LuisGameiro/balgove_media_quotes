@@ -51,3 +51,27 @@ def test_licensed_row_is_permitted() -> None:
     assert adapter.permitted is True
     with pytest.raises(NotImplementedError):
         adapter.fetch("licensed://article/1")
+
+
+def test_fixture_parser_ignores_script_and_style_bodies() -> None:
+    from media_quotes.adapters.html_extractor import _FixtureHTMLParser
+
+    parser = _FixtureHTMLParser()
+    parser.feed(
+        "<html><head><title>Real headline</title>"
+        '<script type="application/ld+json">'
+        '{"headline":"SYNTHETIC FIXTURE - Other / Cross-cutting",'
+        '"publisher":{"name":"New York Times APIs (synthetic fixture)"}}'
+        '</script><style>.x { content: "css-only quote text here"; }</style></head>'
+        '<body><article><p><span class="quote">Minister said "Every synthetic JSON quote must '
+        'stay out of the published digest."</span></p></article></body></html>'
+    )
+    meta = parser.metadata()
+    text = str(meta["article_text"])
+    assert "SYNTHETIC FIXTURE" not in text
+    assert "New York Times APIs" not in text
+    assert "css-only quote text here" not in text
+    assert str(meta["title"]) == "Real headline"
+    assert [span["quote_text"] for span in meta["quote_spans"]] == [
+        "Every synthetic JSON quote must stay out of the published digest."
+    ]

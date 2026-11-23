@@ -60,10 +60,14 @@ class _FixtureHTMLParser(HTMLParser):
         self._capture: str | None = None
         self._captured: list[str] = []
         self._paragraphs = 0
+        self._ignored_depth = 0
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
     ) -> None:  # pragma: no cover
+        if tag in {"script", "style"}:
+            self._ignored_depth += 1
+            return
         values = {key: value or "" for key, value in attrs}
         if tag == "link" and "canonical" in values.get("rel", ""):
             self.canonical_url = values.get("href", "")
@@ -88,6 +92,8 @@ class _FixtureHTMLParser(HTMLParser):
             self._buffers.append(_QuoteBuffer(self.length, path, values))
 
     def handle_data(self, data: str) -> None:  # pragma: no cover
+        if self._ignored_depth:
+            return
         self._append(data)
         for buffer in self._buffers:
             buffer.parts.append(data)
@@ -95,6 +101,9 @@ class _FixtureHTMLParser(HTMLParser):
             self._captured.append(data)
 
     def handle_endtag(self, tag: str) -> None:  # pragma: no cover
+        if tag in {"script", "style"}:
+            self._ignored_depth = max(0, self._ignored_depth - 1)
+            return
         if (self._capture == "title" and tag == "title") or (self._capture == "h1" and tag == "h1"):
             self.title = "".join(self._captured).strip()
             self._capture = None
