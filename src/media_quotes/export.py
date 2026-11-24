@@ -16,16 +16,24 @@ from pathlib import Path
 from typing import Any, cast
 
 from .config import DEFAULT_TOPIC_ID
+from .enums import AcquisitionProvenance
 from .models import ExportQuoteRecord
 from .text_utils import require_safe_id
 
 
-def local_store_path(export_dir: Path, report_date: date, *, topic_id: str | None = None) -> Path:
-    """Canonical offline store path for one report date (and optional non-default topic)."""
+def local_store_path(
+    export_dir: Path,
+    report_date: date,
+    *,
+    topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
+) -> Path:
+    """Store path for one report date; fixtures are isolated, live stays canonical."""
+    root = export_dir / "fixtures" if provenance == "fixture" else export_dir
+    name = f"quotes-{report_date.isoformat()}.jsonl"
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        safe_topic = require_safe_id(topic_id, "topic_id")
-        return export_dir / safe_topic / f"quotes-{report_date.isoformat()}.jsonl"
-    return export_dir / f"quotes-{report_date.isoformat()}.jsonl"
+        return root / require_safe_id(topic_id, "topic_id") / name
+    return root / name
 
 
 def read_jsonl(path: Path) -> list[ExportQuoteRecord]:
@@ -150,9 +158,11 @@ def quote_record(
     obsolete_reason: str = "",
     notes: str = "",
     topic_id: str = DEFAULT_TOPIC_ID,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> ExportQuoteRecord:
     """Build and validate one schema-compliant exported record."""
     record: dict[str, Any] = {
+        "provenance": provenance,
         "quote_id": quote_id,
         "quote_text_original": quote_text_original,
         "quote_html": quote_html,

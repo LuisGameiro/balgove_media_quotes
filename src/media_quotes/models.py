@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .enums import (
     SECTION_IDS,
     AccessMode,
+    AcquisitionProvenance,
     DiscoveryMethod,
     OriginalReportingFlag,
     RightsStatus,
@@ -127,8 +128,10 @@ class ExportQuoteRecord(BaseModel):
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     verification: VerificationRecord
     notes: str = ""
-    # Topic-gate provenance. Defaults keep legacy exports valid; content_hash is computed
-    # before these fields are attached and its semantics are deliberately unchanged.
+    # Provenance defaults keep legacy exports valid; content_hash is computed before these
+    # fields are attached and its semantics are deliberately unchanged.
+    provenance: AcquisitionProvenance = "fixture"
+    # Topic-gate provenance.
     topic_id: str = Field(default="ukraine-war", pattern=r"^[a-z0-9][a-z0-9_-]*$")
     topic_status: Literal["accepted", "uncertain", "rejected"] = "accepted"
     topic_rule_version: str = ""

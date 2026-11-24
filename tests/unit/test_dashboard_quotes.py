@@ -7,7 +7,7 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from media_quotes.dashboard import browse_quotes, filter_quotes
+from media_quotes.dashboard import browse_quotes, filter_quotes, latest_digests
 
 
 def _row(
@@ -56,6 +56,28 @@ def test_browse_quotes_is_topic_scoped_deduplicated_and_bounded(tmp_path: Path) 
     ]
     assert browse_quotes(export_dir, topic_id="missing") == []
     assert browse_quotes(export_dir, topic_id="ukraine-war", limit=0) == []
+
+
+def test_dashboard_readers_prefer_live_artifacts_and_fall_back_to_fixtures(tmp_path: Path) -> None:
+    export_dir = tmp_path / "quotes"
+    fixture_dir = export_dir / "fixtures"
+    fixture_dir.mkdir(parents=True)
+    (fixture_dir / "quotes-2026-11-19.jsonl").write_text(
+        json.dumps(_row("Q-20261119-0001")) + "\n", encoding="utf-8"
+    )
+    assert browse_quotes(export_dir)[0]["quote_id"] == "Q-20261119-0001"
+
+    (export_dir / "quotes-2026-11-19.jsonl").write_text(
+        json.dumps(_row("Q-20261119-0002")) + "\n", encoding="utf-8"
+    )
+    assert [row["quote_id"] for row in browse_quotes(export_dir)] == ["Q-20261119-0002"]
+
+    digest_dir = tmp_path / "digests"
+    (digest_dir / "fixtures").mkdir(parents=True)
+    (digest_dir / "fixtures" / "2026-11-19.md").write_text("fixture", encoding="utf-8")
+    assert latest_digests(digest_dir) == [("2026-11-19", "fixture")]
+    (digest_dir / "2026-11-19.md").write_text("live", encoding="utf-8")
+    assert latest_digests(digest_dir) == [("2026-11-19", "live")]
 
 
 def test_filter_quotes_matches_text_source_section_and_obsolete_state() -> None:

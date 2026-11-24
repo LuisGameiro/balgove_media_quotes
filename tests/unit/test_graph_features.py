@@ -279,6 +279,18 @@ def test_build_graph_context_pack() -> None:
         build_graph_context_pack(subgraph_quotes, max_tokens=0)
 
 
+def test_graph_sync_uses_fixture_isolated_export(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    from media_quotes.cli.graph import _do_graph_sync
+
+    mock_driver = MockDriver(MockSession({}))
+    monkeypatch.setattr("media_quotes.cli.graph.get_driver", lambda _: mock_driver)
+    settings = Settings(_env_file=None, export_dir=tmp_path / "quotes")
+    assert _do_graph_sync(settings, report_date=date(2026, 11, 19), topic_id="ukraine-war") == 1
+    assert "fixtures" in capsys.readouterr().err
+
+
 def test_cli_graph_subcommands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     mock_session = MockSession(
         {

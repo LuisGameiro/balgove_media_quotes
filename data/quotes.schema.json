@@ -28,6 +28,12 @@
     "verification"
   ],
   "properties": {
+    "provenance": {
+      "type": "string",
+      "enum": ["live_feed", "live_bing", "manual_sample", "fixture"],
+      "default": "fixture",
+      "description": "How the article text was acquired. Legacy exports default to fixture; fixture and live artifacts are stored separately."
+    },
     "quote_id": {
       "type": "string",
       "pattern": "^Q-[0-9]{8}-[0-9]{4}$",

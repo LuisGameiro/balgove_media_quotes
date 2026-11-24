@@ -32,7 +32,7 @@ def test_schema_sql_and_sqlalchemy_tables_match() -> None:
 def test_digest_uniqueness_declared_once_in_schema() -> None:
     sql = SCHEMA.read_text(encoding="utf-8")
     assert sql.count("digests_topic_date_unique") == 1
-    assert "UNIQUE (topic_id, digest_date)" in sql
+    assert "UNIQUE (topic_id, digest_date, provenance)" in sql
 
 
 def test_later_migrations_are_noops() -> None:
@@ -82,6 +82,23 @@ def test_tier4_migration_preserves_claim_only_gate() -> None:
     assert "sources_tier4_claim_only" in source
     assert "CHECK (tier <> 4 OR claim_only)" in source
     assert "sources_tier4_disabled" in source
+
+
+def test_provenance_migration_adds_columns_and_scopes_digest_unique() -> None:
+    module = _load("0010_article_provenance")
+    assert module.revision == "0010_article_provenance"
+    assert module.down_revision == "0009_source_availability"
+    source = inspect.getsource(module)
+    assert "articles" in source and "provenance" in source
+    assert "TEXT NOT NULL DEFAULT 'fixture'" in source
+    assert "operator" in source
+    assert "DROP COLUMN IF EXISTS provenance" in source
+    assert "UNIQUE (topic_id, digest_date, provenance)" in source
+    assert "UNIQUE (topic_id, digest_date)" in source  # symmetric downgrade
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "provenance       TEXT NOT NULL DEFAULT 'fixture'" in schema
+    assert 'provenance          TEXT NOT NULL DEFAULT \'fixture\'' in schema
+    assert "UNIQUE (topic_id, digest_date, provenance)" in schema
 
 
 def test_initial_migration_executes_schema_sql() -> None:

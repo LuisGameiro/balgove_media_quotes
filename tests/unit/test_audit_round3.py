@@ -43,7 +43,7 @@ def _report(topic_id: str) -> dict[str, Any]:
 def test_non_default_topic_gets_its_own_audit_file(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     json_path, _md = _write_audit(settings, _report("ai-policy"))
-    assert json_path.parent == settings.audit_dir / "ai-policy"
+    assert json_path.parent == settings.audit_dir / "fixtures" / "ai-policy"
     assert _load_audit_report(settings, REPORT_DATE, "ai-policy")["topic_id"] == "ai-policy"
 
 

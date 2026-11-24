@@ -18,8 +18,9 @@ _SENSITIVE_PATTERNS = (
     "token",
     "api_key",
     "authorization",
+    "auth_token",
+    "access_token",
     "database_url",
-    "auth",
     "private_key",
 )
 
@@ -100,7 +101,7 @@ def configure_logging(settings: Settings) -> None:
 
     structlog.configure(
         processors=processors,
-        logger_factory=structlog.PrintLoggerFactory(sys.stdout),
+        logger_factory=structlog.PrintLoggerFactory(sys.stderr),
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         cache_logger_on_first_use=True,
     )
@@ -113,17 +114,24 @@ def configure_tracing(settings: Settings) -> Any | None:
 
     from importlib import import_module
 
-    trace = import_module("opentelemetry.trace")
-    provider = import_module("opentelemetry.sdk.trace").TracerProvider()
-    export = import_module("opentelemetry.sdk.trace.export")
-    if settings.otel_exporter_otlp_endpoint:
-        otlp = import_module("opentelemetry.exporter.otlp.proto.http.trace_exporter")
-        exporter = otlp.OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint)
-    else:
-        exporter = export.ConsoleSpanExporter()
-    provider.add_span_processor(export.BatchSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
-    return trace.get_tracer("media_quotes")
+    try:
+        trace = import_module("opentelemetry.trace")
+        provider = import_module("opentelemetry.sdk.trace").TracerProvider()
+        export = import_module("opentelemetry.sdk.trace.export")
+        if settings.otel_exporter_otlp_endpoint:
+            otlp = import_module("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+            exporter = otlp.OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint)
+        else:
+            exporter = export.ConsoleSpanExporter()
+        provider.add_span_processor(export.BatchSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+        return trace.get_tracer("media_quotes")
+    except ImportError:
+        # Fail closed: OTEL_ENABLED without the SDK must not crash process startup.
+        logging.getLogger(__name__).warning(
+            "OTEL_ENABLED=true but OpenTelemetry packages are unavailable; tracing disabled"
+        )
+        return None
 
 
 def configure_observability(settings: Settings) -> Any | None:

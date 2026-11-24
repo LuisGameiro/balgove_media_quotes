@@ -29,6 +29,22 @@ def test_verify_export_integrity() -> None:
     assert not ok and any("hash_changed" in reason for reason in reasons)
 
 
+def test_restore_drill_reads_fixture_isolated_exports(tmp_path: Path, capsys) -> None:
+    from media_quotes.cli.maintenance import _do_restore_drill
+    from media_quotes.cli.run import _collect
+    from media_quotes.export import local_store_path, write_jsonl
+
+    settings = Settings(_env_file=None, export_dir=tmp_path / "export")
+    records = _collect(settings, run_id="r", report_date=date(2026, 11, 19))[0]
+    current = local_store_path(settings.export_dir, date(2026, 11, 20))
+    reference = local_store_path(settings.export_dir, date(2026, 11, 19))
+    assert write_jsonl(records, current) == len(records)
+    assert write_jsonl(records, reference) == len(records)
+
+    assert _do_restore_drill(settings, report_date=date(2026, 11, 20), reference=reference) == 0
+    assert "fixtures" in capsys.readouterr().out
+
+
 def test_retention_readiness() -> None:
     report = retention_readiness(
         RetentionPolicy(),

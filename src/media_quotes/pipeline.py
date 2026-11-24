@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol, cast
 
 from .config import DEFAULT_TOPIC_ID, Settings
 from .db.resources import SessionContextFactory
+from .enums import AcquisitionProvenance
 from .models import ExportQuoteRecord
 from .risk_controls.models import ObsolescenceFlag
 
@@ -384,6 +385,7 @@ class DailyPipelineResult:
     rejected_total: int
     status: str
     topic_id: str = DEFAULT_TOPIC_ID
+    provenance: AcquisitionProvenance = "fixture"
     review_flags: tuple[ObsolescenceFlag, ...] = ()
     offsets: dict[str, dict[str, Any]] = field(default_factory=dict)
     store_path: Path | None = None
@@ -457,6 +459,7 @@ def _persist_result(
                 md_path=str(result.digest_path or ""),
                 records=publishable,
                 topic_id=result.topic_id,
+                provenance=result.provenance,
                 commit=False,
             )
             flags_n = persist_obsolescence_flags(session, list(result.review_flags), commit=False)
@@ -506,6 +509,7 @@ def run_daily_pipeline(
     session_context: SessionContextFactory | None = None,
     source_mode: str = "fixtures",
     tier: int | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> DailyPipelineResult:
     """Run one report date through the shared T0-gated offline pipeline."""
     from .cli.audit import _audit_report, _write_audit
@@ -555,12 +559,15 @@ def run_daily_pipeline(
             rejected_total=rejected,
             status="dry-run",
             topic_id=active_topic_id,
+            provenance=provenance,
             offsets=offsets,
         )
 
     rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
     kept = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
-    store_path = local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
+    store_path = local_store_path(
+        settings.export_dir, report_date, topic_id=active_topic_id, provenance=provenance
+    )
     write_jsonl(kept, store_path)
 
     now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
@@ -611,7 +618,9 @@ def run_daily_pipeline(
         report_date=report_date,
         window_start=_window(report_date, settings)[0],
         window_end=report_date,
-        out_path=_digest_path(settings, report_date, topic_id=active_topic_id),
+        out_path=_digest_path(
+            settings, report_date, topic_id=active_topic_id, provenance=provenance
+        ),
         sections_csv=settings.sections_csv,
         topic_pack=topic_pack,
         provider=make_provider(settings, topic_pack=topic_pack),
@@ -641,8 +650,9 @@ def run_daily_pipeline(
         rejected=rejected + len(rights.rejected),
         review_queue=[flag.model_dump(mode="json") for flag in review_flags],
         topic_id=active_topic_id,
+        provenance=provenance,
     )
-    audit_json_path, audit_md_path = _write_audit(settings, report)
+    audit_json_path, audit_md_path = _write_audit(settings, report, provenance=provenance)
     _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
 
     status = "partial" if gaps else "succeeded"
@@ -658,6 +668,7 @@ def run_daily_pipeline(
         rejected_total=rejected + len(rights.rejected),
         status=status,
         topic_id=active_topic_id,
+        provenance=provenance,
         review_flags=tuple(review_flags),
         offsets=offsets,
         store_path=store_path,

@@ -47,3 +47,4 @@ def test_write_jsonl_overwrites_existing_file(tmp_path) -> None:
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["quote_id"] == "Q-20261001-0001"
+    assert json.loads(lines[0])["provenance"] == "fixture"

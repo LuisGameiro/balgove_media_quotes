@@ -12,7 +12,7 @@ from typing import Any, cast
 
 from .. import __version__
 from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
-from ..enums import APPROVED_RIGHTS
+from ..enums import APPROVED_RIGHTS, AcquisitionProvenance
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, content_hash
 from ..registry import SourceRegistryRow, load_sources_csv
@@ -245,11 +245,18 @@ def _load_topic_pack(
         return None
 
 
-def _digest_path(settings: Settings, report_date: date, *, topic_id: str | None = None) -> Path:
+def _digest_path(
+    settings: Settings,
+    report_date: date,
+    *,
+    topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
+) -> Path:
+    root = settings.digest_dir / "fixtures" if provenance == "fixture" else settings.digest_dir
+    name = f"{report_date.isoformat()}.md"
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        require_safe_id(topic_id, "topic_id")
-        return settings.digest_dir / topic_id / f"{report_date.isoformat()}.md"
-    return settings.digest_dir / f"{report_date.isoformat()}.md"
+        return root / require_safe_id(topic_id, "topic_id") / name
+    return root / name
 
 
 def _gap_for(row: SourceRegistryRow) -> tuple[str, str]:  # pragma: no cover

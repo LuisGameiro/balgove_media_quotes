@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..config import DEFAULT_TOPIC_ID, Settings
+from ..enums import AcquisitionProvenance
 from ..export import atomic_write_text, local_store_path, read_jsonl
 from ..models import ExportQuoteRecord
 from ..text_utils import require_safe_id
@@ -38,6 +39,7 @@ def _audit_report(  # pragma: no cover
     rejected: int,
     review_queue: Sequence[dict[str, Any]] = (),
     topic_id: str = DEFAULT_TOPIC_ID,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> dict[str, Any]:
     window_start, window_end = _window(report_date, settings)
     checks = {
@@ -90,8 +92,14 @@ def _audit_report(  # pragma: no cover
         "checks": checks,
         "version_manifest": _version_manifest(settings, topic_id=topic_id),
         "artifacts": {
-            "digest": str(_digest_path(settings, report_date, topic_id=topic_id)),
-            "quotes": str(local_store_path(settings.export_dir, report_date, topic_id=topic_id)),
+            "digest": str(
+                _digest_path(settings, report_date, topic_id=topic_id, provenance=provenance)
+            ),
+            "quotes": str(
+                local_store_path(
+                    settings.export_dir, report_date, topic_id=topic_id, provenance=provenance
+                )
+            ),
             "logs": str(settings.logs_dir / f"{run_id}.jsonl"),
         },
         "events": list(events),
@@ -128,11 +136,16 @@ def _audit_markdown(report: dict[str, Any]) -> str:  # pragma: no cover
     return "\n".join(lines) + "\n"
 
 
-def _audit_target_dir(settings: Settings, topic_id: str | None = None) -> Path:
+def _audit_target_dir(
+    settings: Settings,
+    topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
+) -> Path:
+    root = settings.audit_dir / "fixtures" if provenance == "fixture" else settings.audit_dir
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        target = settings.audit_dir / require_safe_id(topic_id, "topic_id")
+        target = root / require_safe_id(topic_id, "topic_id")
     else:
-        target = settings.audit_dir
+        target = root
     target.mkdir(parents=True, exist_ok=True)
     return target
 
@@ -141,6 +154,7 @@ def _write_audit(
     settings: Settings,
     report: dict[str, Any],
     out_dir: Path | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> tuple[Path, Path]:
     topic_id = str(report.get("topic_id", DEFAULT_TOPIC_ID))
     day = report["report_date"]
@@ -148,7 +162,7 @@ def _write_audit(
         json_path = out_dir
         md_path = out_dir.with_suffix(".md")
     else:
-        target_dir = out_dir or _audit_target_dir(settings, topic_id)
+        target_dir = out_dir or _audit_target_dir(settings, topic_id, provenance)
         json_path = target_dir / f"audit-{day}.json"
         md_path = target_dir / f"audit-{day}.md"
     json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,13 +179,14 @@ def _do_audit(  # pragma: no cover
     run_id: str | None,
     out: str | None,
     topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
     require_safe_id(active_topic, "topic_id")
     if run_id:
         require_safe_id(run_id, "run_id")
     day = report_date.isoformat()
-    stored = _read_json(_audit_target_dir(settings, active_topic) / f"audit-{day}.json")
+    stored = _read_json(_audit_target_dir(settings, active_topic, provenance) / f"audit-{day}.json")
     if run_id:
         if not stored:
             print(
@@ -205,10 +220,13 @@ def _do_audit(  # pragma: no cover
                     report_date=report_date,
                     window_days=settings.report_window_days,
                     topic_id=active_topic,
+                    provenance=provenance,
                 )
         else:
             records = read_jsonl(
-                local_store_path(settings.export_dir, report_date, topic_id=active_topic)
+                local_store_path(
+                    settings.export_dir, report_date, topic_id=active_topic, provenance=provenance
+                )
             )
         audit_run_id = run_id or _run_id(report_date, settings, topic_id=active_topic)
         from .common import load_review_flags
@@ -224,9 +242,10 @@ def _do_audit(  # pragma: no cover
             rejected=0,
             review_queue=[flag.model_dump(mode="json") for flag in load_review_flags(settings)],
             topic_id=active_topic,
+            provenance=provenance,
         )
     out_dir = Path(out) if out else None
-    json_path, md_path = _write_audit(settings, report, out_dir)
+    json_path, md_path = _write_audit(settings, report, out_dir, provenance)
     checks = cast(dict[str, Any], report["checks"])
     print(
         f"Audit {day}: gates_pass={checks['gates_pass']}, "

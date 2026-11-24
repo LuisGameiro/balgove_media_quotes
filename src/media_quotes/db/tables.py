@@ -17,6 +17,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    UniqueConstraint,
     Uuid,
 )
 
@@ -66,6 +67,7 @@ articles_table = Table(
     Column("extractor_version", String, nullable=True),
     Column("content_hash", String, nullable=False),
     Column("status", String, nullable=False),
+    Column("provenance", String, nullable=False, default="fixture"),
     Column("article_metadata", JSON, nullable=False, default=dict),
     Column("created_at", DateTime(timezone=True), nullable=True),
 )
@@ -88,6 +90,7 @@ quotes_table = Table(
     Column("verification_status", String, nullable=False),
     Column("verification_details", JSON, nullable=False, default=dict),
     Column("quote_metadata", JSON, nullable=False, default=dict),
+    Column("provenance", String, nullable=False, default="fixture"),
     Column("topic_id", String, nullable=False, default="ukraine-war"),
     Column("topic_status", String, nullable=False, default="accepted"),
     Column("topic_rule_version", String, nullable=False, default=""),
@@ -135,7 +138,9 @@ digests_table = Table(
     Column("md_path", String, nullable=False),
     Column("manifest", JSON, nullable=False, default=dict),
     Column("topic_id", String, nullable=False, default="ukraine-war"),
+    Column("provenance", String, nullable=False, default="fixture"),
     Column("created_at", DateTime(timezone=True), nullable=True),
+    UniqueConstraint("topic_id", "digest_date", "provenance", name="digests_topic_date_unique"),
 )
 
 eval_runs_table = Table(

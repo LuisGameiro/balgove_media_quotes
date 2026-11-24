@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..config import DEFAULT_TOPIC_ID
+from ..enums import AcquisitionProvenance
 from ..text_utils import normalise_text
 from .tables import (
     articles_table,
@@ -175,6 +176,10 @@ def persist_articles_and_quotes(
     article_values: dict[UUID, dict[str, Any]] = {}
     quote_values: list[dict[str, Any]] = []
     seen_spans: set[tuple[UUID, str, int, int]] = set()
+    # Deterministic quote ids whose incoming record is a fixture; used to keep fixture
+    # spans out of articles that are already live in Postgres.
+    fixture_quote_ids: set[UUID] = set()
+    existing_provenance: dict[UUID, str] = {}
 
     for record in records:
         detail = offsets.get(record.quote_id)
@@ -199,6 +204,7 @@ def persist_articles_and_quotes(
             "extractor_version": detail.get("extractor_version") or extractor_version,
             "content_hash": detail.get("content_hash", record.content_hash),
             "status": "verified",
+            "provenance": record.provenance,
             "article_metadata": _jsonable(
                 {
                     "byline": record.article_author,
@@ -218,11 +224,15 @@ def persist_articles_and_quotes(
             continue
         seen_spans.add(span_key)
 
+        quote_uuid = _run_uuid(f"quote:{article_id}:{char_start}:{char_end}")
+        if record.provenance == "fixture":
+            fixture_quote_ids.add(quote_uuid)
         quote_values.append(
             {
-                "quote_id": _run_uuid(f"quote:{article_id}:{char_start}:{char_end}"),
+                "quote_id": quote_uuid,
                 "canonical_quote_id": record.quote_id,
                 "article_id": article_id,
+                "provenance": record.provenance,
                 "quote_text_raw": record.quote_text_original,
                 "quote_text_normalised": norm_text,
                 "char_start": char_start,
@@ -262,16 +272,13 @@ def persist_articles_and_quotes(
         )
     inserted_articles = 0
     if article_values:
-        existing_articles = set(
-            session.execute(
-                select(articles_table.c.article_id).where(
-                    articles_table.c.article_id.in_(list(article_values))
-                )
+        existing_rows = session.execute(
+            select(articles_table.c.article_id, articles_table.c.provenance).where(
+                articles_table.c.article_id.in_(list(article_values))
             )
-            .scalars()
-            .all()
-        )
-        inserted_articles = len(set(article_values) - existing_articles)
+        ).all()
+        existing_provenance = {row[0]: row[1] for row in existing_rows}
+        inserted_articles = len(set(article_values) - set(existing_provenance))
         statement = pg_insert(articles_table).values(list(article_values.values()))
         statement = statement.on_conflict_do_update(
             index_elements=["article_id"],
@@ -280,9 +287,31 @@ def persist_articles_and_quotes(
                 "raw_blob_ref": statement.excluded.raw_blob_ref,
                 "extraction_method": statement.excluded.extraction_method,
                 "article_metadata": statement.excluded.article_metadata,
+                "provenance": statement.excluded.provenance,
             },
+            # Upgrade fixture -> live, but never overwrite live with a fixture replay.
+            where=or_(
+                articles_table.c.provenance == statement.excluded.provenance,
+                (articles_table.c.provenance == "fixture")
+                & (statement.excluded.provenance != "fixture"),
+            ),
         )
         session.execute(statement)
+
+    # The article upsert refuses live->fixture overwrites; refuse the matching quote spans
+    # too, so a fixture replay cannot add text to an article that is already live.
+    live_articles = {
+        article_id
+        for article_id, provenance in existing_provenance.items()
+        if provenance != "fixture"
+    }
+    if live_articles and fixture_quote_ids:
+        quote_values = [
+            item
+            for item in quote_values
+            if not (item["quote_id"] in fixture_quote_ids and item["article_id"] in live_articles)
+        ]
+
     inserted_quotes = 0
     if quote_values:
         # Reuse the stored display id when the same quote (business key) already exists:
@@ -413,6 +442,7 @@ def persist_digest_manifest(
     md_path: str,
     records: list[ExportQuoteRecord],
     topic_id: str = DEFAULT_TOPIC_ID,
+    provenance: AcquisitionProvenance = "fixture",
     commit: bool = True,
 ) -> str:
     """Idempotently upsert the daily Markdown digest manifest into the `digests` table."""
@@ -421,12 +451,15 @@ def persist_digest_manifest(
         if topic_id == DEFAULT_TOPIC_ID
         else f"digest:{topic_id}:{digest_date.isoformat()}"
     )
+    if provenance != "fixture":
+        digest_seed = f"{digest_seed}:{provenance}"
     digest_id = _run_uuid(digest_seed)
     sections: dict[str, list[str]] = {}
     for rec in records:
         sections.setdefault(rec.section_id, []).append(rec.quote_id)
     manifest = {
         "topic_id": topic_id,
+        "provenance": provenance,
         "total_quotes": len(records),
         "quote_ids": [rec.quote_id for rec in records],
         "sections": sections,
@@ -439,9 +472,10 @@ def persist_digest_manifest(
         md_path=md_path,
         manifest=_jsonable(manifest),
         topic_id=topic_id,
+        provenance=provenance,
     )
     statement = statement.on_conflict_do_update(
-        index_elements=["topic_id", "digest_date"],
+        index_elements=["topic_id", "digest_date", "provenance"],
         set_={
             "window_start": statement.excluded.window_start,
             "window_end": statement.excluded.window_end,
@@ -677,6 +711,7 @@ def read_export_records(
     report_date: date,
     window_days: int,
     topic_id: str | None = None,
+    provenance: AcquisitionProvenance | None = None,
 ) -> list[Any]:
     """Rebuild strict export records from persisted quotes for one report window."""
     from datetime import timedelta
@@ -705,12 +740,14 @@ def read_export_records(
             quotes_table.c.translation_prompt_version.label("q_t_prompt"),
             quotes_table.c.translation_hash.label("q_t_hash"),
             quotes_table.c.translation_status.label("q_t_status"),
+            quotes_table.c.provenance.label("q_provenance"),
             articles_table.c.canonical_url.label("a_url"),
             articles_table.c.title.label("a_title"),
             articles_table.c.language.label("a_language"),
             articles_table.c.publication_date.label("a_date"),
             articles_table.c.article_metadata.label("a_meta"),
             articles_table.c.content_hash.label("a_hash"),
+            articles_table.c.provenance.label("a_provenance"),
             sources_table.c.source_id.label("s_id"),
             sources_table.c.source_name.label("s_name"),
             sources_table.c.tier.label("s_tier"),
@@ -744,6 +781,8 @@ def read_export_records(
         )
         .order_by(articles_table.c.publication_date, quotes_table.c.canonical_quote_id)
     )
+    if provenance is not None:
+        statement = statement.where(quotes_table.c.provenance == provenance)
     # A quote can carry several flags (one per review decision); keep the newest one.
     unique_rows: dict[Any, Any] = {}
     for row in session.execute(statement).mappings():
@@ -773,6 +812,7 @@ def read_export_records(
         records.append(
             ExportQuoteRecord.model_validate(
                 {
+                    "provenance": row.get("q_provenance") or row.get("a_provenance") or "fixture",
                     "quote_id": row["q_id"],
                     "quote_text_original": row["q_text"],
                     "quote_html": str(meta.get("quote_html") or ""),

@@ -48,25 +48,34 @@ def guidance(settings: Settings | None = None) -> str:  # pragma: no cover
     )
 
 
+def _topic_artifact_dirs(root: Path, topic_id: str | None) -> list[Path]:
+    if not root.is_dir():
+        return []
+    if topic_id and topic_id != DEFAULT_TOPIC_ID:
+        target = root / topic_id
+        return [target] if target.is_dir() else []
+    dirs = [root]
+    if topic_id and (root / topic_id).is_dir():
+        dirs.append(root / topic_id)
+    return dirs
+
+
 def latest_digests(
     digest_dir: Path, topic_id: str | None = None, limit: int = 14
 ) -> list[tuple[str, str]]:  # pragma: no cover
-    target_dir = digest_dir
-    if topic_id and (digest_dir / topic_id).is_dir():
-        target_dir = digest_dir / topic_id
-    elif topic_id:
-        return []
-    if not target_dir.is_dir():
-        return []
-    files = sorted(
-        (
-            path
-            for path in target_dir.glob("*.md")
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.md", path.name)
-        ),
-        reverse=True,
-    )[:limit]
-    return [(path.stem, path.read_text(encoding="utf-8")) for path in files]
+    for root in (digest_dir, digest_dir / "fixtures"):
+        for target_dir in _topic_artifact_dirs(root, topic_id):
+            files = sorted(
+                (
+                    path
+                    for path in target_dir.glob("*.md")
+                    if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.md", path.name)
+                ),
+                reverse=True,
+            )[:limit]
+            if files:
+                return [(path.stem, path.read_text(encoding="utf-8")) for path in files]
+    return []
 
 
 def coverage_gaps(
@@ -163,11 +172,6 @@ def browse_quotes(
     """Read governed JSONL exports for one topic, newest files first."""
     if limit <= 0 or not export_dir.is_dir():
         return []
-    target_dir = export_dir
-    if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        target_dir = export_dir / topic_id
-        if not target_dir.is_dir():
-            return []
 
     display_fields = (
         "quote_id",
@@ -191,30 +195,36 @@ def browse_quotes(
     )
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for path in sorted(target_dir.glob("quotes-*.jsonl"), reverse=True):
-        try:
-            with path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    if not line.strip():
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(record, dict):
-                        continue
-                    if topic_id and record.get("topic_id", DEFAULT_TOPIC_ID) != topic_id:
-                        continue
-                    quote_id = str(record.get("quote_id") or "")
-                    if not quote_id or quote_id in seen:
-                        continue
-                    seen.add(quote_id)
-                    rows.append({key: record[key] for key in display_fields if key in record})
-                    # shortcut: cap the browser at 500 newest quotes, add pagination if needed.
-                    if len(rows) >= limit:
-                        return rows
-        except OSError:
-            continue
+    for root in (export_dir, export_dir / "fixtures"):
+        for target_dir in _topic_artifact_dirs(root, topic_id):
+            for path in sorted(target_dir.glob("quotes-*.jsonl"), reverse=True):
+                try:
+                    with path.open(encoding="utf-8") as handle:
+                        for line in handle:
+                            if not line.strip():
+                                continue
+                            try:
+                                record = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if not isinstance(record, dict):
+                                continue
+                            if topic_id and record.get("topic_id", DEFAULT_TOPIC_ID) != topic_id:
+                                continue
+                            quote_id = str(record.get("quote_id") or "")
+                            if not quote_id or quote_id in seen:
+                                continue
+                            seen.add(quote_id)
+                            rows.append(
+                                {key: record[key] for key in display_fields if key in record}
+                            )
+                            # shortcut: cap at 500 newest quotes; add pagination if needed.
+                            if len(rows) >= limit:
+                                return rows
+                except OSError:
+                    continue
+        if rows:
+            return rows
     return rows
 
 

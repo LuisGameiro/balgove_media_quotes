@@ -124,9 +124,9 @@ def test_materialize_one_partition_with_resource_overrides(
     result = job.execute_in_process(partition_key="2026-11-19")
 
     assert result.success
-    assert (tmp_path / "export" / "quotes-2026-11-19.jsonl").is_file()
-    assert (tmp_path / "digests" / "2026-11-19.md").is_file()
-    assert (tmp_path / "audit" / "audit-2026-11-19.json").is_file()
+    assert (tmp_path / "export" / "fixtures" / "quotes-2026-11-19.jsonl").is_file()
+    assert (tmp_path / "digests" / "fixtures" / "2026-11-19.md").is_file()
+    assert (tmp_path / "audit" / "fixtures" / "audit-2026-11-19.json").is_file()
 
     mat_events = result.get_asset_materialization_events()
     assert len(mat_events) == 1
@@ -182,8 +182,8 @@ def test_checks_read_their_own_topic_when_both_exist(
         "t0_rights_boundary_enforced": False,
         "quote_rights_limits_respected": False,
     }
-    assert (tmp_path / "audit" / "ai-policy" / "audit-2026-11-19.json").is_file()
-    assert (tmp_path / "export" / "ai-policy" / "quotes-2026-11-19.jsonl").is_file()
+    assert (tmp_path / "audit" / "fixtures" / "ai-policy" / "audit-2026-11-19.json").is_file()
+    assert (tmp_path / "export" / "fixtures" / "ai-policy" / "quotes-2026-11-19.jsonl").is_file()
 
 
 def test_materialize_governance_job_in_process(

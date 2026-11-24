@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS articles (
     content_hash     TEXT NOT NULL,
     status           TEXT NOT NULL DEFAULT 'discovered'
                      CHECK (status IN ('discovered','fetched','extracted','verified','failed','skipped')),
+    -- Acquisition provenance; fixture rows may be upgraded to live, never downgraded.
+    provenance       TEXT NOT NULL DEFAULT 'fixture'
+                     CHECK (provenance IN ('live_feed','live_bing','manual_sample','fixture')),
     article_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     discovered_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     fetched_at       TIMESTAMPTZ,
@@ -109,6 +112,10 @@ CREATE TABLE IF NOT EXISTS quotes (
                         CHECK (verification_status IN ('unverified','verified','rejected')),
     verification_details JSONB NOT NULL DEFAULT '{}'::jsonb,
     quote_metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Acquisition provenance is stored per quote so an article upgrade cannot
+    -- retroactively turn pre-existing fixture quote rows into live ones.
+    provenance          TEXT NOT NULL DEFAULT 'fixture'
+                        CHECK (provenance IN ('live_feed','live_bing','manual_sample','fixture')),
     -- Topic/language/translation provenance (docs/16). Lists are stored as JSONB.
     topic_id            TEXT NOT NULL DEFAULT 'ukraine-war',
     topic_status        TEXT NOT NULL DEFAULT 'accepted'
@@ -167,7 +174,9 @@ CREATE TABLE IF NOT EXISTS digests (
     manifest    JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     topic_id    TEXT NOT NULL DEFAULT 'ukraine-war',
-    CONSTRAINT digests_topic_date_unique UNIQUE (topic_id, digest_date)
+    provenance  TEXT NOT NULL DEFAULT 'fixture'
+                CHECK (provenance IN ('live_feed','live_bing','manual_sample','fixture')),
+    CONSTRAINT digests_topic_date_unique UNIQUE (topic_id, digest_date, provenance)
 );
 
 -- Append-only audit log; surrogate key, no updates.

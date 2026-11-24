@@ -67,7 +67,17 @@ def test_content_hash_and_local_store_path(tmp_path: Path):
     assert h == content_hash(["a", "b", "c"])
 
     store = local_store_path(tmp_path, date(2026, 11, 20))
-    assert store == tmp_path / "quotes-2026-11-20.jsonl"
+    assert store == tmp_path / "fixtures" / "quotes-2026-11-20.jsonl"
+    live = local_store_path(tmp_path, date(2026, 11, 20), provenance="live_feed")
+    assert live == tmp_path / "quotes-2026-11-20.jsonl"
+    fixture_topic = local_store_path(
+        tmp_path, date(2026, 11, 20), topic_id="ai-policy", provenance="fixture"
+    )
+    assert fixture_topic == tmp_path / "fixtures" / "ai-policy" / "quotes-2026-11-20.jsonl"
+    live_topic = local_store_path(
+        tmp_path, date(2026, 11, 20), topic_id="ai-policy", provenance="live_bing"
+    )
+    assert live_topic == tmp_path / "ai-policy" / "quotes-2026-11-20.jsonl"
 
 
 def test_read_jsonl_nonexistent_and_roundtrip(tmp_path: Path):
@@ -109,3 +119,56 @@ def test_jsonl_has_one_schema_valid_json_object_per_line(tmp_path: Path):
 def test_invalid_id_is_rejected():
     with pytest.raises(ValidationError):
         _record("invalid-id")
+
+
+def test_legacy_record_without_provenance_is_valid() -> None:
+    payload = _record().model_dump(mode="json")
+    payload.pop("provenance")
+    assert ExportQuoteRecord.model_validate(payload).provenance == "fixture"
+
+
+def test_quote_record_stamps_provenance() -> None:
+    assert _record().provenance == "fixture"
+    live = quote_record(
+        quote_id="Q-20261001-0002",
+        quote_text_original="sample quote",
+        source_id="scmp",
+        source_name="South China Morning Post",
+        source_tier=3,
+        source_country_region="Hong Kong",
+        source_type="independent",
+        rights_status="license_held",
+        access_mode="official_api",
+        claim_only=False,
+        original_reporting_flag="first-hand",
+        source_language="en",
+        publication_date="2026-10-01",
+        article_name="Story",
+        article_url="https://example.invalid/live",
+        extraction_date="2026-10-02T00:00:00Z",
+        section_id="war_intensity",
+        is_obsolete=False,
+        content_hash="0" * 64,
+        verification={
+            "verbatim_match": True,
+            "metadata_verified": True,
+            "method": "sha256_substring_match_v1",
+            "verified_at": "2026-10-02T00:00:00Z",
+        },
+        provenance="live_feed",
+    )
+    assert live.provenance == "live_feed"
+
+
+def test_example_jsonl_validates_against_schema() -> None:
+    import json
+
+    import jsonschema
+
+    root = Path(__file__).resolve().parents[2]
+    schema = json.loads((root / "data" / "quotes.schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    lines = (root / "data" / "quotes.example.jsonl").read_text(encoding="utf-8").splitlines()
+    assert lines
+    for line in lines:
+        validator.validate(json.loads(line))

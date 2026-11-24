@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import DEFAULT_TOPIC_ID, Settings
+from ..enums import AcquisitionProvenance
 from ..exceptions import ConfigError
 from ..export import local_store_path, read_jsonl
 from ..pipeline import (
@@ -313,13 +314,18 @@ def _do_restore_drill(
     report_date: date | None = None,
     reference: Path | None = None,
     topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:
     """Compare the latest derived export with a reference export (identity + hash)."""
     today = report_date or settings.report_date
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
     require_safe_id(active_topic, "topic_id")
-    root = local_store_path(settings.export_dir, today, topic_id=active_topic).parent
-    current_path = local_store_path(settings.export_dir, today, topic_id=active_topic)
+    root = local_store_path(
+        settings.export_dir, today, topic_id=active_topic, provenance=provenance
+    ).parent
+    current_path = local_store_path(
+        settings.export_dir, today, topic_id=active_topic, provenance=provenance
+    )
     files = sorted(root.glob("quotes-*.jsonl"), reverse=True)
     if reference is None:
         if len(files) < 2:

@@ -143,9 +143,10 @@ def test_restore_drill_with_two_files_and_reference(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     settings = settings_for(tmp_path)
-    settings.export_dir.mkdir(parents=True, exist_ok=True)
-    file1 = settings.export_dir / "quotes-2026-11-19.jsonl"
-    file2 = settings.export_dir / "quotes-2026-11-18.jsonl"
+    fixtures_dir = settings.export_dir / "fixtures"
+    fixtures_dir.mkdir(parents=True, exist_ok=True)
+    file1 = fixtures_dir / "quotes-2026-11-19.jsonl"
+    file2 = fixtures_dir / "quotes-2026-11-18.jsonl"
     row = {
         "quote_id": "Q-20261118-0001",
         "quote_text_original": "Valid quote text here.",
@@ -196,7 +197,7 @@ def test_restore_drill_uses_topic_export_dir(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     settings = settings_for(tmp_path)
-    topic_dir = settings.export_dir / "ai-policy"
+    topic_dir = settings.export_dir / "fixtures" / "ai-policy"
     topic_dir.mkdir(parents=True, exist_ok=True)
     current = topic_dir / "quotes-2026-11-19.jsonl"
     reference = topic_dir / "quotes-2026-11-18.jsonl"

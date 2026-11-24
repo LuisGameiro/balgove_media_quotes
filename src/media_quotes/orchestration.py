@@ -26,6 +26,7 @@ import dagster as dg
 
 from .config import DEFAULT_TOPIC_ID, Settings, get_settings
 from .db.resources import DatabaseResourceHandle
+from .enums import AcquisitionProvenance
 from .observability import configure_observability, redact_sensitive
 from .pipeline import DailyPipelineResult, run_daily_pipeline
 
@@ -94,37 +95,57 @@ def database_resource(_: dg.InitResourceContext) -> DatabaseResourceHandle:
 
 
 def _load_audit_report(
-    settings: Settings, report_date: date, topic_id: str | None = None
+    settings: Settings,
+    report_date: date,
+    topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> dict[str, Any]:
     safe_topic = _clean_slug(topic_id, settings.active_topic)
     name = f"audit-{report_date.isoformat()}.json"
     from .cli.audit import _audit_target_dir
 
-    target = _audit_target_dir(settings, safe_topic) / name
+    target = _audit_target_dir(settings, safe_topic, provenance) / name
     if target.is_file():
         return cast(dict[str, Any], json.loads(target.read_text(encoding="utf-8")))
     return {}
 
 
-def _store_path(settings: Settings, report_date: date, topic_id: str | None = None) -> Path:
+def _store_path(
+    settings: Settings,
+    report_date: date,
+    topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
+) -> Path:
     """Resolve the export path for the topic the partition actually ran with."""
     from .export import local_store_path
 
     safe_topic = _clean_slug(topic_id, settings.active_topic)
-    return local_store_path(settings.export_dir, report_date, topic_id=safe_topic)
+    return local_store_path(
+        settings.export_dir, report_date, topic_id=safe_topic, provenance=provenance
+    )
 
 
-def _check_topic(settings: Settings, report_date: date, requested: str | None) -> str:
+def _check_topic(
+    settings: Settings,
+    report_date: date,
+    requested: str | None,
+    provenance: AcquisitionProvenance = "fixture",
+) -> str:
     """Pick the topic of the newest audit report when a check has no explicit topic."""
     if requested:
         return _clean_slug(requested, settings.active_topic)
     from .cli.audit import _audit_target_dir
 
     name = f"audit-{report_date.isoformat()}.json"
-    candidates = [(_audit_target_dir(settings, DEFAULT_TOPIC_ID) / name, DEFAULT_TOPIC_ID)]
-    if settings.audit_dir.is_dir():
+    candidates = [
+        (_audit_target_dir(settings, DEFAULT_TOPIC_ID, provenance) / name, DEFAULT_TOPIC_ID)
+    ]
+    root = settings.audit_dir / "fixtures" if provenance == "fixture" else settings.audit_dir
+    if root.is_dir():
         candidates.extend(
-            (sub / name, sub.name) for sub in sorted(settings.audit_dir.iterdir()) if sub.is_dir()
+            (sub / name, sub.name)
+            for sub in sorted(root.iterdir())
+            if sub.is_dir() and sub.name != "fixtures"
         )
     found = [(path.stat().st_mtime, topic) for path, topic in candidates if path.is_file()]
     return max(found)[1] if found else settings.active_topic

@@ -28,6 +28,8 @@ AvailabilityStatus = Literal[
     "discovery_only",
     "fixture_only",
 ]
+# How an article's text was acquired; fixture artifacts are isolated from live ones.
+AcquisitionProvenance = Literal["live_feed", "live_bing", "manual_sample", "fixture"]
 SectionId = Literal[
     "war_intensity",
     "international_support",
@@ -69,4 +71,5 @@ ACCESS_MODES: Final[tuple[str, ...]] = (
 )
 DISCOVERY_METHODS: Final[tuple[str, ...]] = tuple(DiscoveryMethod.__args__)  # type: ignore[attr-defined]
 AVAILABILITY_STATUSES: Final[tuple[str, ...]] = tuple(AvailabilityStatus.__args__)  # type: ignore[attr-defined]
+ACQUISITION_PROVENANCES: Final[tuple[str, ...]] = tuple(AcquisitionProvenance.__args__)  # type: ignore[attr-defined]
 SECTION_IDS: Final[tuple[str, ...]] = tuple(SectionId.__args__)  # type: ignore[attr-defined]

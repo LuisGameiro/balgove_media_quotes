@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from ..config import DEFAULT_TOPIC_ID, Settings
 from ..digest import write_digest
+from ..enums import AcquisitionProvenance
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, local_store_path, read_jsonl, write_jsonl
 from ..llm import make_provider
@@ -46,6 +47,7 @@ def _do_backfill(  # pragma: no cover
     execute: bool = False,
     topic_id: str | None = None,
     source_mode: str = "fixtures",
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:
     if end < start:
         raise ConfigError("--to must not precede --from")
@@ -62,7 +64,9 @@ def _do_backfill(  # pragma: no cover
     cached_hashes = 0
     for day in range(span):
         current = start + timedelta(days=day)
-        path = local_store_path(settings.export_dir, current, topic_id=topic_id)
+        path = local_store_path(
+            settings.export_dir, current, topic_id=topic_id, provenance=provenance
+        )
         if not path.is_file():
             continue
         # Only hashes are needed: never parse hundreds of full records into memory.
@@ -116,6 +120,7 @@ def _do_backfill(  # pragma: no cover
                 pipeline="mq-backfill",
                 topic_id=topic_id,
                 source_mode=source_mode,
+                provenance=provenance,
             )
             total_quotes += len(result.records)
             total_gaps += len(result.gaps)
@@ -238,6 +243,13 @@ def _do_sources(
     rows = _load_registry(settings)
     report_date = settings.report_date
     report = _read_json(settings.audit_dir / f"audit-{report_date.isoformat()}.json")
+    if not report:
+        from .audit import _audit_target_dir
+
+        report = _read_json(
+            _audit_target_dir(settings, settings.active_topic, provenance="fixture")
+            / f"audit-{report_date.isoformat()}.json"
+        )
     coverage = {
         str(item.get("source_id")): item
         for item in cast(list[dict[str, Any]], report.get("coverage", []))
@@ -310,13 +322,16 @@ def _do_digest(
     report_date: date,
     out: str | None,
     topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:  # pragma: no cover
     active_topic_id = str(
         topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
     )
     topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
     records = read_jsonl(
-        local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
+        local_store_path(
+            settings.export_dir, report_date, topic_id=active_topic_id, provenance=provenance
+        )
     )
     if not records:
         print(
@@ -345,7 +360,7 @@ def _do_digest(
         window_end=report_date,
         out_path=Path(out)
         if out
-        else _digest_path(settings, report_date, topic_id=active_topic_id),
+        else _digest_path(settings, report_date, topic_id=active_topic_id, provenance=provenance),
         sections_csv=settings.sections_csv,
         topic_pack=topic_pack,
         provider=make_provider(settings, topic_pack=topic_pack),
@@ -367,6 +382,7 @@ def _do_export(
     from_db: bool = False,
     context: str | None = None,
     max_tokens: int = 4000,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:  # pragma: no cover
     active_topic_id = str(
         topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
@@ -381,10 +397,13 @@ def _do_export(
                 report_date=report_date,
                 window_days=settings.report_window_days,
                 topic_id=active_topic_id,
+                provenance=provenance,
             )
     else:
         records = read_jsonl(
-            local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
+            local_store_path(
+                settings.export_dir, report_date, topic_id=active_topic_id, provenance=provenance
+            )
         )
     if not records:
         print(
@@ -392,10 +411,13 @@ def _do_export(
             file=sys.stderr,
         )
         return EXIT_FAILURE
+    export_root = (
+        settings.export_dir / "fixtures" if provenance == "fixture" else settings.export_dir
+    )
     default_export = (
-        settings.export_dir / active_topic_id / "quotes.jsonl"
+        export_root / active_topic_id / "quotes.jsonl"
         if active_topic_id != DEFAULT_TOPIC_ID
-        else settings.export_dir / "quotes.jsonl"
+        else export_root / "quotes.jsonl"
     )
     path = Path(out) if out else default_export
     count = write_jsonl(records, path)

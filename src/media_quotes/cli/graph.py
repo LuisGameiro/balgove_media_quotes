@@ -14,6 +14,7 @@ from typing import Any
 from ..config import Settings
 from ..context_pack import build_graph_context_pack
 from ..db.engine import create_db_engine
+from ..enums import AcquisitionProvenance
 from ..export import local_store_path, read_jsonl
 from ..graph import (
     check_graph_connectivity,
@@ -94,6 +95,7 @@ def _do_graph_sync(
     from_db: bool = False,
     report_date: date | None = None,
     topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:
     """Sync quotes from Postgres or JSONL exports into Neo4j."""
     topic = topic_id or settings.active_topic
@@ -110,7 +112,10 @@ def _do_graph_sync(
                 )
             else:
                 export_file = local_store_path(
-                    settings.export_dir, report_date or settings.report_date, topic_id=topic
+                    settings.export_dir,
+                    report_date or settings.report_date,
+                    topic_id=topic,
+                    provenance=provenance,
                 )
                 if not export_file.is_file():
                     print(

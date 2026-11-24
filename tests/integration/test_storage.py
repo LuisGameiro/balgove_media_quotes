@@ -364,12 +364,14 @@ def test_read_export_records_keeps_one_row_per_quote() -> None:
         q_t_prompt="",
         q_t_hash="",
         q_t_status="",
+        q_provenance="live_feed",
         a_url="https://example.invalid/a",
         a_title="Article",
         a_language="en",
         a_date=date(2026, 11, 19),
         a_meta={},
         a_hash="a" * 64,
+        a_provenance="fixture",
         s_id="guardian",
         s_name="Guardian",
         s_tier=1,
@@ -399,6 +401,154 @@ def test_read_export_records_keeps_one_row_per_quote() -> None:
     assert len(records) == 1
     assert records[0].is_obsolete is True
     assert records[0].obsolete_reason == "confirmed"
+    assert records[0].provenance == "live_feed"
+
+
+def test_read_export_records_defaults_legacy_provenance() -> None:
+    from datetime import date as _date
+
+    rows = [
+        {
+            "q_id": "Q-20261119-0001",
+            "q_text": "A long enough synthetic quote for this export dedupe test.",
+            "q_text_en": "",
+            "q_char_start": 0,
+            "q_meta": {},
+            "q_details": {},
+            "q_method": "m",
+            "q_topic": "ukraine-war",
+            "q_topic_status": "accepted",
+            "q_rule_version": "",
+            "q_score": 0.0,
+            "q_terms": [],
+            "q_language": "en",
+            "q_lang_conf": 0.0,
+            "q_t_model": "",
+            "q_t_prompt": "",
+            "q_t_hash": "",
+            "q_t_status": "",
+            "a_url": "https://example.invalid/a",
+            "a_title": "Article",
+            "a_language": "en",
+            "a_date": _date(2026, 11, 19),
+            "a_meta": {},
+            "a_hash": "a" * 64,
+            "s_id": "guardian",
+            "s_name": "Guardian",
+            "s_tier": 1,
+            "s_region": "UK",
+            "s_type": "publicly funded",
+            "s_rights": "license_held",
+            "s_access": "licensed_database",
+            "s_license": "LIC-1",
+            "s_discovery": "licensed_database",
+            "s_claim": False,
+            "s_language": "en",
+            "o_obsolete": False,
+            "o_reason": "",
+            "o_created_at": None,
+        }
+    ]
+    session = MagicMock()
+    session.execute.return_value.mappings.return_value = rows
+    records = read_export_records(session, report_date=_date(2026, 11, 19), window_days=14)
+    assert records[0].provenance == "fixture"
+
+
+def test_read_export_records_round_trips_and_filters_quote_provenance() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    base = dict(
+        q_text="A long enough synthetic quote for this export dedupe test.",
+        q_text_en="",
+        q_char_start=0,
+        q_meta={},
+        q_details={},
+        q_method="m",
+        q_topic="ukraine-war",
+        q_topic_status="accepted",
+        q_rule_version="",
+        q_score=0.0,
+        q_terms=[],
+        q_language="en",
+        q_lang_conf=0.0,
+        q_t_model="",
+        q_t_prompt="",
+        q_t_hash="",
+        q_t_status="",
+        a_url="https://example.invalid/a",
+        a_title="Article",
+        a_language="en",
+        a_date=date(2026, 11, 19),
+        a_meta={},
+        a_hash="a" * 64,
+        s_id="guardian",
+        s_name="Guardian",
+        s_tier=1,
+        s_region="UK",
+        s_type="publicly funded",
+        s_rights="license_held",
+        s_access="licensed_database",
+        s_license="LIC-1",
+        s_discovery="licensed_database",
+        s_claim=False,
+        s_language="en",
+        o_obsolete=False,
+        o_reason="",
+        o_created_at=None,
+    )
+    # Quote provenance wins over article provenance; the fallback path is also covered.
+    rows = [
+        {**base, "q_id": "Q-20261119-0001", "q_provenance": "fixture", "a_provenance": "live_feed"},
+        {**base, "q_id": "Q-20261119-0002", "a_provenance": "live_bing"},
+    ]
+    session = MagicMock()
+    session.execute.return_value.mappings.return_value = rows
+    records = read_export_records(session, report_date=date(2026, 11, 19), window_days=14)
+    assert [record.provenance for record in records] == ["fixture", "live_bing"]
+
+    # A live-filtered read must add a quotes.provenance predicate and return only those rows.
+    filtered_session = MagicMock()
+    filtered_session.execute.return_value.mappings.return_value = [rows[1]]
+    live_records = read_export_records(
+        filtered_session, report_date=date(2026, 11, 19), window_days=14, provenance="live_feed"
+    )
+    assert [record.provenance for record in live_records] == ["live_bing"]
+    statement = filtered_session.execute.call_args.args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    assert "quotes.provenance = %(provenance_1)s" in str(compiled)
+    assert compiled.params["provenance_1"] == "live_feed"
+
+
+def test_digest_manifests_coexist_across_provenance() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    session = MagicMock()
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0][:1]
+    common = dict(
+        digest_date=date(2026, 11, 19),
+        window_start=date(2026, 11, 13),
+        window_end=date(2026, 11, 19),
+        md_path="digests/2026-11-19.md",
+        records=records,
+        topic_id="ukraine-war",
+    )
+    fixture_id = persist_digest_manifest(session, provenance="fixture", **common)
+    live_id = persist_digest_manifest(session, provenance="live_feed", **common)
+    assert fixture_id != live_id
+
+    compiled = [
+        call.args[0].compile(dialect=postgresql.dialect())
+        for call in session.execute.call_args_list
+    ]
+    assert len(compiled) == 2
+    assert [item.params["provenance"] for item in compiled] == ["fixture", "live_feed"]
+    assert [item.params["manifest"]["provenance"] for item in compiled] == [
+        "fixture",
+        "live_feed",
+    ]
+    for item in compiled:
+        assert "ON CONFLICT (topic_id, digest_date, provenance)" in str(item)
 
 
 def test_pipeline_run_lifecycle() -> None:
@@ -482,6 +632,238 @@ def test_upsert_decision_cache_is_idempotent() -> None:
     session2 = MagicMock()
     session2.execute.return_value.rowcount = 0
     assert upsert_decision_cache(session2, entry) is False
+
+
+def test_article_upsert_sql_guards_fixture_overwrite() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    session = MagicMock()
+    session.execute.return_value.rowcount = 1
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    first = records[0]
+    offsets = {
+        first.quote_id: {
+            "char_start": 0,
+            "char_end": len(first.quote_text_original),
+            "content_hash": first.content_hash,
+        }
+    }
+    persist_articles_and_quotes(session, [first], offsets)
+    compiled = [
+        str(call.args[0].compile(dialect=postgresql.dialect())).lower()
+        for call in session.execute.call_args_list
+    ]
+    article_sql = next(sql for sql in compiled if "on conflict" in sql)
+    assert "excluded.provenance" in article_sql
+    assert (
+        "articles.provenance = excluded.provenance or articles.provenance = "
+        "%(provenance_1)s::varchar and excluded.provenance != %(provenance_2)s::varchar"
+    ) in article_sql
+
+
+def test_fixture_quote_spans_are_skipped_for_live_articles() -> None:
+    """A fixture replay must not add quote spans to an article that is already live."""
+    from sqlalchemy.sql import Insert, Select
+
+    class ReplayResult:
+        def __init__(self, rows: list[tuple[object, ...]]) -> None:
+            self.rows = rows
+            self.rowcount = 1
+
+        def all(self) -> list[tuple[object, ...]]:
+            return self.rows
+
+        def __iter__(self):
+            return iter(self.rows)
+
+        def scalars(self) -> ReplayResult:
+            return self
+
+    class ReplaySession:
+        def __init__(self, provenance_by_article: dict[UUID, str]) -> None:
+            self.provenance_by_article = provenance_by_article
+            self.executed: list[object] = []
+            self.commits = 0
+
+        def execute(self, statement, *args, **kwargs) -> ReplayResult:
+            self.executed.append(statement)
+            if isinstance(statement, Select):
+                if {column.key for column in statement.selected_columns} & {"provenance"}:
+                    return ReplayResult(list(self.provenance_by_article.items()))
+                return ReplayResult([])
+            return ReplayResult([])
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    fixture = records[0]
+    article_id = _run_uuid(f"article:{fixture.article_url}")
+    offsets: dict[str, dict[str, object]] = {
+        fixture.quote_id: {
+            "char_start": 0,
+            "char_end": len(fixture.quote_text_original),
+            "content_hash": fixture.content_hash,
+        }
+    }
+
+    live_session = ReplaySession({article_id: "live_feed"})
+    _, quotes = persist_articles_and_quotes(live_session, [fixture], offsets)
+    assert [stmt.table.name for stmt in live_session.executed if isinstance(stmt, Insert)] == [
+        "articles"
+    ]
+    assert quotes == 0
+
+    fixture_session = ReplaySession({article_id: "fixture"})
+    _, quotes = persist_articles_and_quotes(fixture_session, [fixture], offsets)
+    assert [stmt.table.name for stmt in fixture_session.executed if isinstance(stmt, Insert)] == [
+        "articles",
+        "quotes",
+    ]
+    assert quotes == 1
+
+
+@pytest.mark.integration
+def test_article_provenance_upgrade_is_one_way() -> None:
+    """Needs a real Postgres: set MQ_TEST_DATABASE_URL to run this test."""
+    import os
+
+    from sqlalchemy import create_engine, func, select, text
+    from sqlalchemy.orm import Session
+
+    from media_quotes.db.repository import persist_digest_manifest
+    from media_quotes.db.tables import (
+        articles_table,
+        digests_table,
+        metadata,
+        quotes_table,
+        sources_table,
+    )
+
+    url = os.environ.get("MQ_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("set MQ_TEST_DATABASE_URL to run the Postgres provenance test")
+    schema = "mq_provenance_test"
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            conn.execute(text(f"CREATE SCHEMA {schema}"))
+            conn.execute(text(f"SET search_path TO {schema}, public"))
+            metadata.create_all(
+                conn, tables=[sources_table, articles_table, quotes_table, digests_table]
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO sources (source_id, source_name, homepage_url, tier, "
+                    "cadence_hours, country_region, source_type, claim_only, language, "
+                    "requires_translation, rights_status, access_mode, discovery_method, "
+                    "archive_start_date) VALUES "
+                    "('guardian','Guardian','https://example.invalid',1,24,'UK',"
+                    "'publicly funded',false,'en',false,'license_held','licensed_database',"
+                    "'licensed_database',DATE '2026-01-01')"
+                )
+            )
+
+        session = Session(engine)
+        try:
+            session.execute(text(f"SET search_path TO {schema}, public"))
+            records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+            fixture = records[0]
+            live = fixture.model_copy(update={"provenance": "live_feed"})
+
+            def _offsets(text_value: str) -> dict[str, dict[str, object]]:
+                return {
+                    fixture.quote_id: {
+                        "char_start": 0,
+                        "char_end": len(fixture.quote_text_original),
+                        "content_hash": fixture.content_hash,
+                        "extracted_text": text_value,
+                    }
+                }
+
+            persist_articles_and_quotes(session, [fixture], _offsets("fixture text"))
+            persist_articles_and_quotes(session, [live], _offsets("LIVE TEXT"))
+            row = session.execute(
+                text("SELECT extracted_text, provenance FROM articles WHERE canonical_url=:url"),
+                {"url": fixture.article_url},
+            ).one()
+            assert row.provenance == "live_feed"
+            assert row.extracted_text == "LIVE TEXT"
+
+            persist_articles_and_quotes(session, [fixture], _offsets("fixture text"))
+            row = session.execute(
+                text("SELECT extracted_text, provenance FROM articles WHERE canonical_url=:url"),
+                {"url": fixture.article_url},
+            ).one()
+            assert row.provenance == "live_feed"
+            assert row.extracted_text == "LIVE TEXT"
+
+            # A fixture span that would otherwise be new must not land on the live article.
+            live_article_id = _run_uuid(f"article:{fixture.article_url}")
+
+            def count_quotes() -> int:
+                return int(
+                    session.execute(
+                        select(func.count())
+                        .select_from(quotes_table)
+                        .where(quotes_table.c.article_id == live_article_id)
+                    ).scalar()
+                    or 0
+                )
+
+            assert count_quotes() == 1
+
+            extra_fixture = fixture.model_copy(update={"quote_id": "Q-20261119-0099"})
+            extra_offsets = {
+                extra_fixture.quote_id: {
+                    "char_start": 3,
+                    "char_end": 3 + len(extra_fixture.quote_text_original),
+                    "content_hash": extra_fixture.content_hash,
+                    "extracted_text": "fixture text",
+                }
+            }
+            persist_articles_and_quotes(session, [extra_fixture], extra_offsets)
+            assert count_quotes() == 1
+
+            # The pre-existing quote keeps its fixture tag after the article upgrade;
+            # quote-level provenance is what lets live-filtered reads exclude it.
+            assert [
+                row[0]
+                for row in session.execute(
+                    select(quotes_table.c.provenance).where(
+                        quotes_table.c.article_id == live_article_id
+                    )
+                ).all()
+            ] == ["fixture"]
+
+            # Fixture and live digests for the same topic/date coexist.
+            digest_common = dict(
+                digest_date=date(2026, 11, 19),
+                window_start=date(2026, 11, 13),
+                window_end=date(2026, 11, 19),
+                md_path="digests/2026-11-19.md",
+                records=[fixture],
+                topic_id="ukraine-war",
+            )
+            fixture_digest = persist_digest_manifest(session, provenance="fixture", **digest_common)
+            live_digest = persist_digest_manifest(session, provenance="live_feed", **digest_common)
+            assert fixture_digest != live_digest
+            assert (
+                session.execute(
+                    select(func.count())
+                    .select_from(digests_table)
+                    .where(digests_table.c.digest_date == date(2026, 11, 19))
+                ).scalar()
+                == 2
+            )
+            session.commit()
+        finally:
+            session.close()
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        engine.dispose()
 
 
 def test_sync_sources_with_empty_rows() -> None:

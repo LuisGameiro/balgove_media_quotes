@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .adapters import FixtureSource, build_adapter
 from .config import DEFAULT_TOPIC_ID, Settings
+from .enums import AcquisitionProvenance
 from .exceptions import ConfigError
 from .export import local_store_path, read_jsonl
 from .llm_live import (
@@ -136,8 +137,15 @@ def _load_articles(
     return articles, skipped
 
 
-def _published_texts(settings: Settings, report_date: date, topic_id: str) -> set[str]:
-    records = read_jsonl(local_store_path(settings.export_dir, report_date, topic_id=topic_id))
+def _published_texts(
+    settings: Settings,
+    report_date: date,
+    topic_id: str,
+    provenance: AcquisitionProvenance = "fixture",
+) -> set[str]:
+    records = read_jsonl(
+        local_store_path(settings.export_dir, report_date, topic_id=topic_id, provenance=provenance)
+    )
     return {normalise_text(str(record.quote_text_original)) for record in records}
 
 
@@ -249,13 +257,14 @@ def audit_missed_quotes(
     max_cost: float | None = None,
     execute: bool = False,
     client: PinnedOpenAIClient | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> tuple[dict[str, Any], Path]:
     """Run the shadow audit and write its report; never touch the digest."""
     if limit <= 0:
         raise ConfigError("--limit must be positive")
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
     articles, skipped = _load_articles(settings, report_date, active_topic, limit)
-    published = _published_texts(settings, report_date, active_topic)
+    published = _published_texts(settings, report_date, active_topic, provenance)
     out_path = _audit_path(settings, report_date, active_topic)
     estimate = round(len(articles) * 0.01, 4)
     plan: dict[str, Any] = {

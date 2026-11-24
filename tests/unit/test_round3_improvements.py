@@ -120,11 +120,11 @@ def test_digest_path_slug_validation(tmp_path: Path) -> None:
     settings = Settings(digest_dir=tmp_path)
     # Valid topic
     p = _digest_path(settings, date(2026, 11, 20), topic_id="ai-policy")
-    assert p == tmp_path / "ai-policy" / "2026-11-20.md"
+    assert p == tmp_path / "fixtures" / "ai-policy" / "2026-11-20.md"
 
     # Default topic
     p_default = _digest_path(settings, date(2026, 11, 20), topic_id="ukraine-war")
-    assert p_default == tmp_path / "2026-11-20.md"
+    assert p_default == tmp_path / "fixtures" / "2026-11-20.md"
 
     # Path traversal rejected
     with pytest.raises(ValueError, match="invalid topic_id"):

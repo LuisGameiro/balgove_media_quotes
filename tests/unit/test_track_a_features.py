@@ -196,8 +196,9 @@ def test_backfill_execute_runs_date_range_and_respects_budget(
     out = capsys.readouterr().out
     assert rc_ok in (0, 2)
     assert "Backfill executed: 2 day(s)" in out
-    assert (settings.digest_dir / "2026-11-18.md").is_file()
-    assert (settings.digest_dir / "2026-11-19.md").is_file()
+    fixtures_dir = settings.digest_dir / "fixtures"
+    assert (fixtures_dir / "2026-11-18.md").is_file()
+    assert (fixtures_dir / "2026-11-19.md").is_file()
 
 
 def test_dashboard_daily_source_coverage_matrix(tmp_path: Path) -> None:

@@ -113,7 +113,9 @@ def test_audit_artifact_path_uses_topic(tmp_path: Path) -> None:
         rejected=0,
         topic_id="ai-policy",
     )
+    assert "fixtures" in report["artifacts"]["quotes"]
     assert "ai-policy" in report["artifacts"]["quotes"]
+    assert "fixtures" in report["artifacts"]["digest"]
     assert report["topic_id"] == "ai-policy"
 
 
@@ -176,8 +178,9 @@ def test_digest_migration_replaces_global_unique() -> None:
     assert module.revision == "0006_digest_topic_unique"
     assert module.down_revision == "0005_topic_packs"
     # schema.sql is the single DDL source; 0006 is a no-op revision placeholder.
+    # 0010 later scopes that unique key by acquisition provenance.
     sql = (ROOT / "src/media_quotes/db/schema.sql").read_text(encoding="utf-8")
-    assert "UNIQUE (topic_id, digest_date)" in sql
+    assert "UNIQUE (topic_id, digest_date, provenance)" in sql
     assert "digests_digest_date_key" not in sql
 
 

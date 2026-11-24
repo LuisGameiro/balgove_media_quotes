@@ -136,6 +136,10 @@ def test_daily_pipeline_proposes_merges_and_persists_review_flags(
 
     result = run_daily_pipeline(settings, report_date=REPORT_DATE)
 
+    assert result.store_path == settings.export_dir / "fixtures" / "quotes-2026-11-19.jsonl"
+    assert result.store_path.is_file()
+    assert result.digest_path == settings.digest_dir / "fixtures" / "2026-11-19.md"
+    assert result.digest_path.is_file()
     assert len(provider.calls) == 1
     assert provider.calls[0]["task"] == "obsolescence_review"
     assert {flag.evidence.old_quote_id for flag in result.review_flags} == {
