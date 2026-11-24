@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
 
+from media_quotes.cli.common import exit_code_for
 from media_quotes.cli.maintenance import _do_restore_drill, _do_retention, _do_review
 from media_quotes.config import Settings
 from media_quotes.exceptions import ConfigError
@@ -49,6 +52,26 @@ def test_queue_lock_is_released(tmp_path: Path) -> None:
     with _queue_lock(path):
         assert lock.is_file()
     assert not lock.exists()
+
+
+def test_queue_lock_reclaims_stale_lock(tmp_path: Path) -> None:
+    from media_quotes.cli.maintenance import _queue_lock
+
+    path = tmp_path / "review-queue.json"
+    lock = path.with_name(".review-queue.json.lock")
+    lock.write_text("old\n", encoding="utf-8")
+    stale_time = time.time() - 120.0
+    os.utime(lock, (stale_time, stale_time))
+    with _queue_lock(path):
+        assert lock.is_file()
+    assert not lock.exists()
+
+
+def test_exit_code_contract() -> None:
+    assert exit_code_for() == 0
+    assert exit_code_for(ok=False) == 1
+    assert exit_code_for(gaps=["x"]) == 2
+    assert exit_code_for(config_error=True) == 3
 
 
 def test_review_queue_list_and_decide(tmp_path: Path) -> None:

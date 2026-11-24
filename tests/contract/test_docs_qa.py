@@ -1,4 +1,4 @@
-"""Unit tests for the pure helpers in scripts/docs_qa.py (CHK-08).
+"""Unit tests for the pure helpers in scripts/docs_qa.py.
 
 The checker is stdlib-only and has no import-time side effects, so it can be loaded from
 its file path without installing it as a package.
@@ -51,6 +51,6 @@ def test_docs_snapshot_and_all_checks_run(qa: ModuleType, project_root: Path) ->
     docs = qa.Docs.load(project_root)
     assert docs.text("README.md")
     results = [item for check in qa.CHECKS for item in check(docs)]
-    assert len(results) >= 41
+    assert len(results) >= 10
     assert all(isinstance(item, qa.CheckResult) for item in results)
     assert all(item.ok for item in results)

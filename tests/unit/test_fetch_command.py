@@ -58,12 +58,22 @@ def test_fetch_dry_run_makes_no_network_calls(tmp_path: Path, monkeypatch: Any) 
     assert no_fetch.calls == 0
 
 
-def test_fetch_refuses_blocked_source(tmp_path: Path, monkeypatch: Any) -> None:
+def test_fetch_refuses_unlicensed_source(tmp_path: Path, monkeypatch: Any) -> None:
     from media_quotes.cli import fetch as fetch_cli
 
     no_fetch = _NoFetch()
     monkeypatch.setattr(fetch_cli, "fetch_feed_documents", no_fetch)
     settings = _settings(tmp_path)
+    # The registry is fully licensed; prove the gate still refuses a synthetic bad row.
+    original_load = fetch_cli._load_registry
+
+    def unlicensed_registry(cfg: Any) -> Any:
+        return [
+            row.model_copy(update={"rights_status": "blocked", "license_reference": ""})
+            for row in original_load(cfg)
+        ]
+
+    monkeypatch.setattr(fetch_cli, "_load_registry", unlicensed_registry)
 
     assert (
         _do_fetch(settings, source_id="bbc", report_date=REPORT_DATE, dry_run=False) == EXIT_CONFIG

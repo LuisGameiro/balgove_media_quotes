@@ -264,8 +264,8 @@ def test_cli_live_routes_probes_only_approved_sources(
 
     async def recording_fetch(url: str, **kwargs: Any) -> tuple[bytes, str]:
         if url == "https://example.invalid/probe":
-            assert kwargs.get("track_a_approved") is False
             raise SourceNotPermitted("offline test: unapproved probe refused")
+        assert kwargs.get("track_a_approved") is True
         calls.append(url)
         return b"<rss><channel></channel></rss>", "sha256"
 

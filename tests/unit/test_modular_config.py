@@ -361,8 +361,9 @@ def test_migration_0005_topic_packs_metadata() -> None:
     spec.loader.exec_module(module)
     assert module.revision == "0005_topic_packs"
     assert module.down_revision == "0004_topic_language_judge"
-    assert any("topic_id" in sql for sql in module.UPGRADE)
-    assert any("topic_id" in sql for sql in module.DOWNGRADE)
+    # schema.sql is the single DDL source; 0005 is a no-op revision placeholder.
+    sql = (REPO_ROOT / "src/media_quotes/db/schema.sql").read_text(encoding="utf-8")
+    assert "topic_id" in sql
 
 
 def test_cli_topics_and_sources_scaffolding(

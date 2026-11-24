@@ -45,6 +45,14 @@ def test_batch_model_snapshot_rejects_placeholders():
             Settings(_env_file=None, batch_model_snapshot=value)
 
 
+def test_extraction_fallback_accepts_rendered_but_rejects_typos():
+    assert (
+        Settings(_env_file=None, extraction_fallback="rendered").extraction_fallback == "rendered"
+    )
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, extraction_fallback="browser")
+
+
 def test_unknown_setting_env_vars_flags_typos():
     env = {
         "EXTRACTION_FALLBACKS": "static",

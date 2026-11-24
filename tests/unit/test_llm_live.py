@@ -17,6 +17,7 @@ from media_quotes.llm_live import (
     PinnedOpenAIClient,
     build_section_prompt,
     contains_instruction_override,
+    parse_structured_decision,
     schema_hash,
 )
 
@@ -61,6 +62,15 @@ def client(
         cache_lookup=cache_lookup,
         cache_write=cache_write,
     )
+
+
+def test_structured_decision_preserves_native_quote() -> None:
+    raw = '{"quote_text":"café talks","quote_text_en":"cafe talks","inference":"ok"}'
+    parsed = parse_structured_decision(raw, "café talks")
+    assert parsed.quote_text_en == "cafe talks"
+    assert parsed.quote_text == "café talks"
+    with pytest.raises(ConfigError, match="changed the native quote"):
+        parse_structured_decision(raw, "different")
 
 
 def test_unpinned_snapshot_refused() -> None:
@@ -119,6 +129,14 @@ def test_refusal_and_incomplete_are_not_cached() -> None:
     c2 = client(responses2, cache_write=lambda key, value: written.append(key))
     incomplete = c2.respond(request())
     assert incomplete.incomplete and written == []
+
+    soft = client(
+        FakeChat(text="I must refuse to answer this request."),
+        cache_write=lambda key, value: written.append(key),
+    )
+    refused_softly = soft.respond(request())
+    assert refused_softly.refusal and refused_softly.output == {}
+    assert written == []
 
 
 def test_schema_hash_reads_file(tmp_path: Path) -> None:

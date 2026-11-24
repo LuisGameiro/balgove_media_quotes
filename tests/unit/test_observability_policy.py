@@ -26,6 +26,6 @@ def test_tracing_honours_endpoint_setting() -> None:
     settings = Settings(
         _env_file=None,
         otel_enabled=True,
-        otel_exporter_otlp_endpoint="http://localhost:4317",
+        otel_exporter_otlp_endpoint="http://127.0.0.1:4318/v1/traces",
     )
     assert configure_tracing(settings) is not None

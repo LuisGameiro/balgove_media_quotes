@@ -71,7 +71,8 @@ def test_dashboard_script_starts_main_when_run_directly(monkeypatch) -> None:
             return FakeSt()
         if name == "media_quotes.config":
             return SimpleNamespace(
-                get_settings=lambda: Settings(_env_file=None, dashboard_password=None)
+                get_settings=lambda: Settings(_env_file=None, dashboard_password=None),
+                DEFAULT_TOPIC_ID="ukraine-war",
             )
         return real_import_module(name, package)
 

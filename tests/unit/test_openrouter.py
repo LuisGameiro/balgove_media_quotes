@@ -66,6 +66,11 @@ def test_openrouter_requires_key_and_pinned_model() -> None:
         )
 
 
+def test_live_client_requires_persistence() -> None:
+    with pytest.raises(ConfigError, match="PERSIST_TO_POSTGRES"):
+        make_openrouter_client(_settings())
+
+
 def test_make_provider_selects_openrouter_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = _settings()
     fake = _client(FakeCompletions())
@@ -192,7 +197,7 @@ def test_cache_key_changes_with_model_and_prompt(monkeypatch: pytest.MonkeyPatch
 
 
 def test_make_client_builder(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = _settings()
+    settings = _settings(persist_to_postgres=True)
     recorded: dict[str, Any] = {}
 
     class DummyOpenAI:

@@ -61,7 +61,7 @@ def _record() -> dict[str, object]:
         "source_country_region": "Global",
         "source_type": "independent",
         "rights_status": "license_held",
-        "access_mode": "scraped_prohibited",
+        "access_mode": "licensed_database",
         "license_reference": "LIC-1",
         "discovery_method": "sitemap",
         "claim_only": False,
@@ -115,7 +115,7 @@ def test_check_sources_accepts_valid_rows() -> None:
         ("rights_status", "bogus", "unknown rights_status"),
         ("access_mode", "bogus", "unknown access_mode"),
         ("discovery_method", "bogus", "unknown discovery_method"),
-        ("rights_status", "license_held", "license_reference"),
+        ("license_reference", "", "license_reference"),
         ("source_type", "state-controlled", "state-controlled sources must be claim_only"),
         ("claim_only", "maybe", "claim_only must be true or false"),
         ("requires_translation", "maybe", "requires_translation must be true or false"),
@@ -125,7 +125,7 @@ def test_check_sources_accepts_valid_rows() -> None:
         ("homepage_url", "http://example.invalid", "homepage_url must be an https URL"),
         ("feed_url", "http://example.invalid", "feed_url must be an https URL"),
         ("archive_start_date", "not-a-date", "archive_start_date is not ISO 8601"),
-        ("enabled", "true", "T0 gate"),
+        ("rights_status", "blocked", "T0 gate"),
     ],
 )
 def test_check_sources_rejects_invalid_fields(field: str, value: str, expected: str) -> None:
@@ -257,13 +257,17 @@ def test_check_quotes_rejects_bad_records(tmp_path, mutator, expected: str) -> N
 
 def test_check_quotes_flags_blocked_sources(tmp_path: Path) -> None:
     row = _source_row()
-    assert row["rights_status"] == "blocked"
+    row["rights_status"] = "blocked"
+    row["license_reference"] = ""
+    row["enabled"] = "false"
     errors: list[str] = []
     check_sources([row], errors)
     assert errors == []
 
     record = _record()
-    record.update(rights_status="blocked", access_mode="scraped_prohibited", license_reference="")
+    record.update(
+        rights_status="license_held", access_mode="licensed_database", license_reference=""
+    )
     store = tmp_path / "quotes.jsonl"
     store.write_text(json.dumps(record) + "\n", encoding="utf-8")
     errors = []

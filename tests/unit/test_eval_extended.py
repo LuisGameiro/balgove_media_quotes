@@ -160,6 +160,22 @@ def test_eval_direct_rule_decisions_are_not_duplicated(tmp_path: Path, monkeypat
     assert len(set(refs)) == 2
 
 
+def test_split_eval_keeps_the_canonical_report_untouched(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    eval_cli.evaluate_gold_set_report(settings, gold_set="synthetic-v1", split="train")
+    assert (settings.audit_dir / "eval-synthetic-v1-train.json").is_file()
+    assert not (settings.audit_dir / "eval-synthetic-v1.json").exists()
+
+
+def test_full_eval_requires_obsolete_labels(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    metrics = eval_cli.evaluate_gold_set_report(settings, gold_set="synthetic-v1", full=True)
+    assert metrics["obsolete_precision"] == 0.0
+    assert "obsolete_precision" in metrics["failed_checks"]
+    assert metrics["consecutive_failures"] == 0
+    assert metrics["obsoletion_allowed"] is True
+
+
 def test_eval_counts_false_positive_when_gate_accepts_off_topic(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

@@ -24,6 +24,12 @@ from media_quotes.orchestration import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_jobs_carry_concurrency_tag() -> None:
+    defs = build_definitions()
+    for name in ("daily_quotes_digest_job", "governance_audit_job"):
+        assert defs.resolve_job_def(name).run_tags.get("domain") == "media_quotes"
+
+
 def _check_names(defs: Any) -> list[str]:
     groups = defs.asset_checks
     return sorted(str(key.name) for group in groups for key in getattr(group, "check_keys", set()))
@@ -57,7 +63,10 @@ def test_definitions_expose_asset_job_checks_and_schedule() -> None:
         "daily_quotes_digest_job",
         "governance_audit_job",
     ]
-    assert [schedule.name for schedule in defs.schedules] == ["daily_digest_schedule"]
+    assert [schedule.name for schedule in defs.schedules] == [
+        "daily_digest_schedule",
+        "tier1_six_hourly_schedule",
+    ]
     assert [sensor.name for sensor in defs.sensors] == ["review_queue_sla_sensor"]
     assert _check_names(defs) == [
         "audit_gates_pass",
@@ -163,12 +172,14 @@ def test_checks_read_their_own_topic_when_both_exist(
     )
     assert result.success
     check_results = {ev.check_name: ev.passed for ev in result.get_asset_check_evaluations()}
+    # ai-policy has no approved route for these fixtures, so its artifacts are empty.
+    # The checks must still read those files, not the populated default-topic files.
     assert check_results == {
-        "export_schema_valid": True,
-        "audit_gates_pass": True,
+        "export_schema_valid": False,
+        "audit_gates_pass": False,
         "coverage_gaps_disclosed": True,
-        "t0_rights_boundary_enforced": True,
-        "quote_rights_limits_respected": True,
+        "t0_rights_boundary_enforced": False,
+        "quote_rights_limits_respected": False,
     }
     assert (tmp_path / "audit" / "ai-policy" / "audit-2026-11-19.json").is_file()
     assert (tmp_path / "export" / "ai-policy" / "quotes-2026-11-19.jsonl").is_file()

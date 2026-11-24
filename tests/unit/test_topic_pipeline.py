@@ -129,6 +129,34 @@ def _patch_adapter(monkeypatch: Any, row: SourceRegistryRow) -> None:
     monkeypatch.setattr(run, "build_adapter", lambda *args, **kwargs: FakeAdapter(row))
 
 
+def test_preferred_rule_never_falls_back_to_another_topic() -> None:
+    from types import SimpleNamespace
+
+    gate = SimpleNamespace(
+        preferred_rule_id="ai-rule",
+        routes_by_source={
+            "reuters": [
+                {"approved": True, "topic_rule_id": "ukraine-rule"},
+            ]
+        },
+    )
+    assert run._select_topic_route(gate, "reuters") is None
+
+
+def test_low_quality_article_is_not_published(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch_adapter(monkeypatch, _row())
+    original = FakeAdapter.parse_metadata
+
+    def low_quality(self: FakeAdapter, raw: bytes) -> dict[str, Any]:
+        metadata = original(self, raw)
+        metadata["quality_ok"] = False
+        return metadata
+
+    monkeypatch.setattr(FakeAdapter, "parse_metadata", low_quality)
+    records, _gaps, _events = _process(_settings(tmp_path))
+    assert records == []
+
+
 def _patch_gate(monkeypatch: Any, status: str = "rejected") -> None:
     monkeypatch.setattr(run, "load_source_topic_routes", lambda path: {"reuters": [FakeRoute()]})
     monkeypatch.setattr(run, "load_topic_rules", lambda path: {"rule-v1": {}})

@@ -76,6 +76,26 @@ def test_digest_renders_status_line_without_changing_quote() -> None:
     assert "Status: [Under Review] (provisional hold)" in markdown
 
 
+def test_digest_quote_newlines_cannot_create_headings() -> None:
+    from media_quotes.cli.common import _parse_report_date
+    from media_quotes.cli.run import _collect
+
+    settings = Settings(_env_file=None)
+    records, *_rest = _collect(settings, run_id="r", report_date=_parse_report_date(None, settings))
+    record = records[0]
+    record.quote_text_original = "Official said talks continued.\n## Fake heading"
+    markdown = render_digest(
+        [record],
+        report_date=settings.report_date,
+        window_start=settings.report_date,
+        window_end=settings.report_date,
+        sections_csv=settings.sections_csv,
+        provider=LocalStandInProvider(),
+    )
+    assert "\n## Fake heading" not in markdown
+    assert "Official said talks continued." in markdown
+
+
 def test_write_digest_and_load_sections(tmp_path: Path) -> None:
     settings = Settings(_env_file=None)
     sections = load_sections(settings.sections_csv)

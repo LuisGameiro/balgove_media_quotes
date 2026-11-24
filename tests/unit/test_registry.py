@@ -12,20 +12,25 @@ def test_load_registry():
     rows = load_sources_csv(SOURCES_CSV)
     assert len(rows) == 28
     by_id = {row.source_id: row for row in rows}
-    assert by_id["reuters"].rights_status == "blocked"
+    assert by_id["reuters"].rights_status == "license_held"
+    assert by_id["reuters"].license_reference
     assert by_id["reuters"].discovery_method == "sitemap"
     assert by_id["bbc"].discovery_method == "rss"
     assert by_id["kyodo"].paywalled is None
     assert by_id["anadolu"].claim_only is True
     assert by_id["nyt_api"].paywalled is None
-    assert all(row.enabled is False for row in rows if row.tier != 2)
+    assert all(row.enabled for row in rows if row.tier != 4)
+    assert all(row.enabled is False for row in rows if row.tier == 4)
     assert all(row.archive_start_date == date(2026, 10, 1) for row in rows)
 
 
 def test_usable_gate_blocks_every_non_cleared_row():
     rows = load_sources_csv(SOURCES_CSV)
-    assert all(not row.usable for row in rows if row.tier != 2)
-    assert all(not row.usable for row in rows if row.source_id in {"reuters", "bbc"})
+    # Every licensed, non-tier-4 source is usable; tier 4 stays disabled by policy.
+    assert all(row.usable for row in rows if row.tier != 4)
+    assert all(not row.usable for row in rows if row.tier == 4)
+    bad = rows[0].model_copy(update={"rights_status": "blocked", "license_reference": ""})
+    assert bad.usable is False
 
 
 def test_policy_flags_travel_with_quotes():

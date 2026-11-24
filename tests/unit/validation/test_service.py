@@ -45,7 +45,8 @@ def test_t0_gate_blocks_enabled_unlicensed_source(tmp_path: Path) -> None:
         rows = list(csv.DictReader(handle))
         fieldnames = list(rows[0])
     reuters = next(row for row in rows if row["source_id"] == "reuters")
-    reuters["enabled"] = "true"
+    reuters["rights_status"] = "blocked"
+    reuters["license_reference"] = ""
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -56,8 +57,21 @@ def test_t0_gate_blocks_enabled_unlicensed_source(tmp_path: Path) -> None:
 
 def test_blocked_source_cannot_supply_quote(tmp_path: Path) -> None:
     data = _copy_data(tmp_path)
+    # Make the registry row unlicensed; the quote still claims it is licensed.
+    path = data / "sources.csv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    fieldnames = list(rows[0])
+    target = next(row for row in rows if row["source_id"] == "reuters")
+    target["rights_status"] = "blocked"
+    target["license_reference"] = ""
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
     record = json.loads((data / "quotes.example.jsonl").read_text(encoding="utf-8").splitlines()[0])
     record["source_id"] = "reuters"
+    record["rights_status"] = "license_held"
     (data / "quotes.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
     errors = validate_data_dir(data)
     assert any("blocked source" in message for message in errors)

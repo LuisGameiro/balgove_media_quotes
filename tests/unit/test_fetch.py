@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from pathlib import Path
 
 import httpx
@@ -10,7 +11,14 @@ import pytest
 from pydantic import ValidationError
 
 from media_quotes.exceptions import SourceNotPermitted
-from media_quotes.fetch import FetchPolicy, TokenBucket, assert_fetch_permitted, fetch_bytes
+from media_quotes.fetch import (
+    FetchPolicy,
+    TokenBucket,
+    allowed_hosts_for,
+    assert_fetch_permitted,
+    assert_url_permitted,
+    fetch_bytes,
+)
 from media_quotes.registry import load_sources_csv
 
 CSV = Path(__file__).resolve().parents[2] / "data/sources.csv"
@@ -33,6 +41,14 @@ APPROVED = ROW.model_copy(
 
 
 def test_policy_is_strict_and_generates_client_kwargs() -> None:
+    policy = FetchPolicy()
+    kwargs = policy.client_kwargs()
+    assert isinstance(kwargs["timeout"], httpx.Timeout)
+    assert kwargs["limits"].max_connections == policy.max_connections
+    assert kwargs["headers"]["User-Agent"].startswith("MediaQuotesBot/")
+    assert kwargs["follow_redirects"] is False
+    with pytest.raises(ValidationError):
+        FetchPolicy.model_validate({"timeout_seconds": "10"})
     policy = FetchPolicy()
     kwargs = policy.client_kwargs()
     assert isinstance(kwargs["timeout"], httpx.Timeout)
@@ -196,3 +212,68 @@ def test_fetch_refuses_oversized_and_relative_urls() -> None:
                 clock=lambda: 10.0,
             )
         )
+
+
+def test_allowed_hosts_for_with_extra_urls() -> None:
+    hosts = allowed_hosts_for(
+        APPROVED,
+        extra_urls=["https://feeds.guardian.co.uk/rss", "https://api.guardian.co.uk"],
+    )
+    assert "feeds.guardian.co.uk" in hosts
+    assert "api.guardian.co.uk" in hosts
+
+
+def test_assert_url_permitted_security_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    extra = frozenset({"example.invalid"})
+    # Non-https
+    with pytest.raises(ValueError, match="absolute https"):
+        assert_url_permitted("http://example.invalid/test", APPROVED, extra_hosts=extra)
+
+    # Non-443 port
+    with pytest.raises(ValueError, match="URL port"):
+        assert_url_permitted("https://example.invalid:8443/test", APPROVED, extra_hosts=extra)
+
+    # Credentials in URL
+    with pytest.raises(ValueError, match="embedded user credentials"):
+        assert_url_permitted("https://user:pass@example.invalid/test", APPROVED, extra_hosts=extra)
+
+    # Direct non-global IP
+    with pytest.raises(ValueError, match="non-global IP address"):
+        assert_url_permitted(
+            "https://127.0.0.1/test", APPROVED, extra_hosts=frozenset({"127.0.0.1"})
+        )
+
+    # Unregistered host
+    with pytest.raises(ValueError, match="not registered"):
+        assert_url_permitted("https://unregistered.domain/test", APPROVED)
+
+    # DNS check returning private IP
+    def fake_getaddrinfo_private(
+        host: str, port: int, **kwargs: object
+    ) -> list[tuple[object, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo_private)
+    with pytest.raises(ValueError, match="resolves to non-global IP"):
+        assert_url_permitted(
+            "https://example.invalid/test", APPROVED, extra_hosts=extra, check_dns=True
+        )
+
+    # DNS check failure (gaierror)
+    def fake_getaddrinfo_error(host: str, port: int, **kwargs: object) -> list[tuple[object, ...]]:
+        raise socket.gaierror("Name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo_error)
+    with pytest.raises(ValueError, match="Failed to resolve host"):
+        assert_url_permitted(
+            "https://example.invalid/test", APPROVED, extra_hosts=extra, check_dns=True
+        )
+
+    # DNS check returning valid global IP
+    def fake_getaddrinfo_global(host: str, port: int, **kwargs: object) -> list[tuple[object, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo_global)
+    assert_url_permitted(
+        "https://example.invalid/test", APPROVED, extra_hosts=extra, check_dns=True
+    )

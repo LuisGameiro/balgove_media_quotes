@@ -1,15 +1,19 @@
 """C2 — trafilatura extraction, quality gate and fallback routing (offline)."""
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import media_quotes.extraction as extraction
 from media_quotes.extraction import (
     ExtractionParams,
     extract_article,
     find_span,
     quality_gate,
+    rendered_html_fallback,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,3 +83,57 @@ def test_find_span_exact() -> None:
     text = "alpha beta gamma"
     assert find_span(text, "beta") == (6, 10)
     assert find_span(text, "missing") is None
+
+
+def test_rendered_fallback_lazily_uses_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(extraction, "static_html_fallback", lambda raw_html, **kw: "rendered-ok")
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.body = ""
+
+        def set_content(self, raw_html: str, *, wait_until: str) -> None:
+            self.body = f"<body>{raw_html}</body>"
+
+        def content(self) -> str:
+            return self.body
+
+    class FakeBrowser:
+        def __init__(self) -> None:
+            self.page = FakePage()
+            self.closed = False
+
+        def new_page(self) -> FakePage:
+            return self.page
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeChromium:
+        def __init__(self) -> None:
+            self.browser = FakeBrowser()
+
+        def launch(self, *, headless: bool) -> FakeBrowser:
+            return self.browser
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+        def __enter__(self) -> "FakePlaywright":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.sync_playwright = FakePlaywright  # type: ignore[attr-defined]
+    playwright = types.ModuleType("playwright")
+    monkeypatch.setitem(sys.modules, "playwright", playwright)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+
+    assert (
+        rendered_html_fallback("<p>js body</p>", source_url="https://example.invalid/a")
+        == "rendered-ok"
+    )
+    assert sync_api.sync_playwright is not None  # type: ignore[attr-defined]

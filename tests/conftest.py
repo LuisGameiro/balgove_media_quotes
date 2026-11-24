@@ -37,6 +37,14 @@ def pytest_configure(config: Config) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def isolate_unit_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate unit tests from host .env and ensure fail-closed offline defaults."""
+    monkeypatch.setenv("PERSIST_TO_POSTGRES", "false")
+    monkeypatch.setenv("LLM_PROVIDER", "local")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+
 @pytest.fixture
 def project_root() -> Path:
     return ROOT

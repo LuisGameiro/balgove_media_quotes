@@ -1,8 +1,9 @@
 """Audit gates are mode-aware: DB writes are only a violation in file-only mode."""
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
-from media_quotes.cli.audit import _audit_report
+from media_quotes.cli.audit import _audit_report, _write_audit
 from media_quotes.config import Settings
 from media_quotes.models import ExportQuoteRecord, VerificationRecord
 
@@ -38,14 +39,21 @@ def _record() -> ExportQuoteRecord:
 
 
 def _report(persist: bool) -> dict[str, object]:
-    settings = Settings(_env_file=None, persist_to_postgres=persist)
+    settings = Settings(persist_to_postgres=persist)
     return _audit_report(
         settings,
         report_date=date(2026, 11, 19),
         run_id="run-test",
         records=[_record()],
         coverage=[],
-        gaps=[{"source_id": "reuters", "mandatory": True}],
+        gaps=[
+            {
+                "source_id": "reuters",
+                "mandatory": True,
+                "status": "blocked",
+                "gap_reason": "rights_blocked",
+            }
+        ],
         events=[],
         rejected=0,
     )
@@ -63,3 +71,11 @@ def test_persistent_mode_allows_database_writes() -> None:
     assert isinstance(checks, dict)
     assert checks["no_database_writes"] is False  # informational, not a failure
     assert checks["gates_pass"] is True
+
+
+def test_write_audit_accepts_json_file_path(tmp_path: Path) -> None:
+    target = tmp_path / "custom.json"
+    json_path, md_path = _write_audit(Settings(_env_file=None), _report(False), out_dir=target)
+    assert json_path == target
+    assert md_path == target.with_suffix(".md")
+    assert json_path.is_file()

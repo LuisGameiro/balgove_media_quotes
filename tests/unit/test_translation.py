@@ -172,6 +172,35 @@ def test_same_language_and_unknown_language_are_not_translated() -> None:
     assert unknown.text == ""
 
 
+def test_openrouter_provider_preserves_native_quote_and_rejects_rewrite() -> None:
+    class FakeCompletions:
+        def __init__(self, payload: str) -> None:
+            self.payload = payload
+
+        def create(self, **kwargs: object) -> object:
+            message = type("Message", (), {"content": self.payload, "refusal": None})()
+            choice = type("Choice", (), {"message": message, "finish_reason": "stop"})()
+            return type("Response", (), {"choices": [choice], "id": "resp-1"})()
+
+    def client(payload: str) -> object:
+        completions = FakeCompletions(payload)
+        return type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+
+    settings = _settings(persist_to_postgres=False)
+    good = OpenRouterTranslationProvider(
+        settings,
+        client=client('{"quote_text":"' + _SOURCE + '","quote_text_en":"' + _TRANSLATION + '"}'),
+    )
+    result = good.translate(quote_text=_SOURCE, source_language="uk")
+    assert result.text == _TRANSLATION
+
+    bad = OpenRouterTranslationProvider(
+        settings, client=client('{"quote_text":"rewritten","quote_text_en":"wrong"}')
+    )
+    with pytest.raises(ConfigError, match="changed the native quote"):
+        bad.translate(quote_text=_SOURCE, source_language="uk")
+
+
 def test_local_provider_cannot_translate() -> None:
     settings = Settings.model_construct(translation_mode="translate")
     with pytest.raises(ConfigError, match="LocalTranslationProvider"):

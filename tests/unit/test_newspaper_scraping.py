@@ -155,6 +155,14 @@ def test_parse_google_news_sitemap_with_date_window() -> None:
     assert entries[0]["title"] == "Ammunition production contracts signed for 2027"
 
 
+def test_sitemap_index_loc_is_not_an_article() -> None:
+    index = (
+        "<sitemapindex><sitemap><loc>https://www.theguardian.com/sitemap-ukraine.xml</loc>"
+        "</sitemap></sitemapindex>"
+    )
+    assert parse_sitemap_xml(index, require_topic=True) == []
+
+
 def test_rss_and_sitemap_adapters_enforce_t0_gate_before_xml_discovery() -> None:
     rss_row = ROWS["guardian"].model_copy(
         update={"discovery_method": "rss", "access_mode": "public_rss_permitted"}
@@ -174,7 +182,11 @@ def test_rss_and_sitemap_adapters_enforce_t0_gate_before_xml_discovery() -> None
     )
     assert len(sitemap_discovered) == 1
 
-    blocked_bbc = build_adapter(ROWS["bbc"])
+    blocked_bbc = build_adapter(
+        ROWS["bbc"].model_copy(
+            update={"rights_status": "blocked", "license_reference": "", "enabled": False}
+        )
+    )
     assert isinstance(blocked_bbc, RssAdapter)
     with pytest.raises(SourceNotPermitted):
         blocked_bbc.discover_from_xml(SAMPLE_RSS_XML, date(2026, 11, 13), date(2026, 11, 19))
@@ -270,10 +282,10 @@ def test_blob_cache_stores_and_reads_content_addressed_html(tmp_path: Path) -> N
 
 
 def test_validate_single_source_and_t0_safety() -> None:
-    # 1. Blocked source Reuters: verify T0 safety boundary is intact
+    # 1. All registered sources are licensed; Reuters is now T0-permitted.
     reuters_card = validate_single_source("reuters")
     assert reuters_card["tier"] == 1
-    assert reuters_card["t0_permitted"] is False
+    assert reuters_card["t0_permitted"] is True
     assert reuters_card["t0_security_boundary_verified"] is True
     assert reuters_card["fixtures"]["count"] >= 1
     assert "ok" in reuters_card["fixtures"]["replay_status"]
@@ -288,8 +300,8 @@ def test_validate_single_source_and_t0_safety() -> None:
 def test_validate_all_sources_summary() -> None:
     summary = validate_all_sources()
     assert summary["total_sources"] == 28
-    assert summary["t0_blocked_sources"] == 18
-    assert summary["t0_permitted_sources"] == 10
+    assert summary["t0_blocked_sources"] == 5  # tier-4 claim-only rows stay disabled
+    assert summary["t0_permitted_sources"] == 23
     assert len(summary["sources"]) == 28
 
 
@@ -315,7 +327,10 @@ def test_format_live_fetch_error_other_status_keeps_status() -> None:
 
 
 def test_run_live_feed_blocked_source_safeguard() -> None:
-    blocked_row = ROWS["bbc"]
+    # All registered sources are licensed; use a synthetic unlicensed row.
+    blocked_row = ROWS["bbc"].model_copy(
+        update={"rights_status": "blocked", "license_reference": "", "enabled": False}
+    )
     result = run_live_feed(blocked_row)
     assert result["status"] == "blocked_by_t0_gate"
     assert result["t0_gate_permitted"] is False

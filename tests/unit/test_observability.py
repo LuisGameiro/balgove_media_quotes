@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,6 +38,13 @@ def test_configure_logging_falls_back_for_unknown_level(monkeypatch) -> None:
     observability.configure_logging(Settings(_env_file=None, log_level="NOT_A_LEVEL"))
 
     configure.assert_called_once()
+
+
+def test_secret_scrub_covers_project_keys() -> None:
+    event = observability.redact_sensitive(
+        None, "event", {"detail": "key=sk-proj-abcdefghijklmnopqrstuvwxyz012345"}
+    )
+    assert "sk-proj-" not in str(event)
 
 
 def test_configure_tracing_disabled() -> None:
@@ -75,3 +83,36 @@ def test_configure_tracing_enabled_with_fake_sdk(monkeypatch) -> None:
     provider.add_span_processor.assert_called_once_with(export.BatchSpanProcessor.return_value)
     trace.set_tracer_provider.assert_called_once_with(provider)
     trace.get_tracer.assert_called_once_with("media_quotes")
+
+
+def test_configure_tracing_uses_http_exporter(monkeypatch: Any) -> None:
+    import opentelemetry.sdk.trace.export as export
+    import opentelemetry.trace as trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    monkeypatch.setattr(export, "BatchSpanProcessor", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(trace, "set_tracer_provider", MagicMock())
+    settings = Settings(
+        _env_file=None,
+        otel_enabled=True,
+        otel_exporter_otlp_endpoint="http://127.0.0.1:4318/v1/traces",
+    )
+
+    assert observability.configure_tracing(settings) is not None
+    exporter = export.BatchSpanProcessor.call_args.args[0]
+    assert isinstance(exporter, OTLPSpanExporter)
+
+
+def test_cli_entry_configures_observability_once(monkeypatch: Any) -> None:
+    from media_quotes import pipeline
+    from media_quotes.cli import app
+
+    settings = Settings(_env_file=None)
+    calls: list[Settings] = []
+    monkeypatch.setattr(app, "get_settings", lambda: settings)
+    monkeypatch.setattr(app, "configure_observability", calls.append)
+    monkeypatch.setattr(app, "main", lambda argv: 0)
+
+    assert app.cli_entry([]) == 0
+    assert calls == [settings]
+    assert not hasattr(pipeline, "configure_observability")  # not per pipeline run

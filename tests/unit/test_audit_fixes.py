@@ -175,8 +175,10 @@ def test_digest_migration_replaces_global_unique() -> None:
     spec.loader.exec_module(module)
     assert module.revision == "0006_digest_topic_unique"
     assert module.down_revision == "0005_topic_packs"
-    assert any("DROP CONSTRAINT IF EXISTS digests_digest_date_key" in sql for sql in module.UPGRADE)
-    assert any("UNIQUE (topic_id, digest_date)" in sql for sql in module.UPGRADE)
+    # schema.sql is the single DDL source; 0006 is a no-op revision placeholder.
+    sql = (ROOT / "src/media_quotes/db/schema.sql").read_text(encoding="utf-8")
+    assert "UNIQUE (topic_id, digest_date)" in sql
+    assert "digests_digest_date_key" not in sql
 
 
 def test_write_jsonl_leaves_no_temp_file(tmp_path: Path) -> None:
