@@ -174,6 +174,7 @@ def _run_id(
     *,
     topic_id: str | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    source_mode: str = "fixtures",
 ) -> str:  # pragma: no cover
     parts = [
         "run-v1",
@@ -185,6 +186,8 @@ def _run_id(
         parts.append(topic_id)
     if provenance != "fixture":
         parts.append(provenance)
+    if source_mode != "fixtures":
+        parts.append(source_mode)
     digest = content_hash(parts)
     return f"run-{digest[:12]}"
 

@@ -854,6 +854,7 @@ def _collect(  # pragma: no cover
     source_mode: str = "fixtures",
     tier: int | None = None,
     prefetched_refs: Mapping[str, list[str]] | None = None,
+    source_ids: set[str] | None = None,
 ) -> tuple[
     list[ExportQuoteRecord],
     list[dict[str, Any]],
@@ -882,6 +883,8 @@ def _collect(  # pragma: no cover
     rows = _load_registry(settings)
     if tier is not None:
         rows = [row for row in rows if row.tier == tier]
+    if source_ids is not None:
+        rows = [row for row in rows if row.source_id in source_ids]
     for row in rows:
         refs: list[str] | None = None
         row_provenance: AcquisitionProvenance = (

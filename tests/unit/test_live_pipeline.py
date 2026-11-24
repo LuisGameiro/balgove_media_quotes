@@ -393,6 +393,47 @@ def test_non_fixture_default_run_id_differs_from_fixture(tmp_path: Path) -> None
     assert live_id != fixture_id
 
 
+def test_live_and_archive_run_ids_differ_and_fixture_id_is_stable(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    fixture_id = _run_id(REPORT_DATE, settings)
+    assert fixture_id == _run_id(
+        REPORT_DATE, settings, provenance="fixture", source_mode="fixtures"
+    )
+    live_id = _run_id(REPORT_DATE, settings, provenance="live_feed", source_mode="live")
+    archive_id = _run_id(REPORT_DATE, settings, provenance="live_feed", source_mode="archive")
+    assert live_id != archive_id
+    assert live_id != _run_id(REPORT_DATE, settings, provenance="live_feed")
+
+
+def test_archive_run_with_source_ids_covers_only_requested_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    selected = {"guardian", "reuters"}
+    _forbid_discovery(monkeypatch)
+
+    result = run_daily_pipeline(
+        settings,
+        report_date=REPORT_DATE,
+        source_mode="archive",
+        prefetched_refs={source_id: _archive_refs(cache, source_id) for source_id in selected},
+        source_ids=selected,
+    )
+
+    assert {item["source_id"] for item in result.coverage} == selected
+    assert {record.source_id for record in result.records} == selected
+    assert all(gap["source_id"] in selected for gap in result.gaps)
+    assert result.run_id == _run_id(
+        REPORT_DATE,
+        settings,
+        topic_id=result.topic_id,
+        provenance="live_feed",
+        source_mode="archive",
+    )
+
+
 def test_live_run_without_refs_is_degraded_with_gap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

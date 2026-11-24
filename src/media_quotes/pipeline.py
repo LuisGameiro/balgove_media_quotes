@@ -519,6 +519,7 @@ def run_daily_pipeline(
     tier: int | None = None,
     provenance: AcquisitionProvenance = "fixture",
     prefetched_refs: Mapping[str, list[str]] | None = None,
+    source_ids: set[str] | None = None,
 ) -> DailyPipelineResult:
     """Run one report date through the shared T0-gated offline pipeline."""
     if source_mode in {"live", "blobs", "archive"} and provenance == "fixture":
@@ -547,7 +548,11 @@ def run_daily_pipeline(
     )
     topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
     actual_run_id = run_id or _run_id(
-        report_date, settings, topic_id=active_topic_id, provenance=provenance
+        report_date,
+        settings,
+        topic_id=active_topic_id,
+        provenance=provenance,
+        source_mode=source_mode,
     )
     records, coverage, gaps, events, rejected, offsets = _collect(
         settings,
@@ -557,6 +562,7 @@ def run_daily_pipeline(
         source_mode=source_mode,
         tier=tier,
         prefetched_refs=prefetched_refs,
+        source_ids=source_ids,
     )
     if (source_mode in {"live", "blobs", "archive"} or provenance != "fixture") and any(
         record.provenance == "fixture" for record in records

@@ -147,6 +147,7 @@ def run_historical_backfill(
     configs = _load_source_configs(settings)
     cache = BlobCache(settings.blob_dir)
     refs_by_date: dict[str, dict[str, list[str]]] = {}
+    processed_source_ids: set[str] = set()
     discovered = 0
     fetched = 0
 
@@ -160,6 +161,7 @@ def run_historical_backfill(
             if config is None:
                 issues.append(f"{row.source_id}: no source config for archive discovery")
                 continue
+            processed_source_ids.add(row.source_id)
             result = discover_historical_articles(
                 row,
                 config,
@@ -235,6 +237,7 @@ def run_historical_backfill(
             source_mode="archive",
             provenance="live_feed",
             prefetched_refs=refs_by_date.get(key, {}),
+            source_ids=processed_source_ids,
         )
         completed[key] = {
             "status": outcome.status,

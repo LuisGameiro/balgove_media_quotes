@@ -202,6 +202,7 @@ def test_groups_refs_by_parsed_publication_date(
         assert call["provenance"] == "live_feed"
         assert call["pipeline"] == "mq-backfill-archive"
         assert call["topic_id"] == TOPIC
+        assert call["source_ids"] == {SOURCE_ID}
     first_refs = calls["pipeline"][0]["prefetched_refs"][SOURCE_ID]
     second_refs = calls["pipeline"][1]["prefetched_refs"][SOURCE_ID]
     assert all(ref.startswith(f"fixture://{SOURCE_ID}/") for ref in first_refs + second_refs)
