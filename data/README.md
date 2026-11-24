@@ -3,7 +3,7 @@
 This folder holds the auditable inputs and derived outputs of the Media Quotes Collection
 System described in [`../docs/Test_News.md`](../docs/Test_News.md).
 
-**Last verified:** 2026-11-22 against the JSON source configs, topic packs, `sources.csv`, `sections.csv` and `quotes.schema.json`
+**Last verified:** 2026-11-23 against the JSON source configs, topic packs, `sources.csv`, `sections.csv` and `quotes.schema.json`
 (owner: Balgove Innovations). `quotes.schema.json` has a placeholder `$id`
 (`https://example.com/schemas/quotes.schema.json`); it is a stable identifier, not a live URL.
 
@@ -24,15 +24,15 @@ System described in [`../docs/Test_News.md`](../docs/Test_News.md).
 | `report_template.md` | Historical Markdown template. The active renderer is the Python builder in `src/media_quotes/digest.py`; keep this as a reference for section ordering. |
 | `sources/`, `topics/` | Authoritative per-source JSON configs and per-topic packs, plus `source_topic_routes.csv` and `topic_rules.json` for the topic gate. |
 | Validation logic | Lives in the `src/media_quotes/validation/` package, exposed via `mq doctor` and `scripts/validate_data.py`. |
-| `jsonschema` | Declared in `pyproject.toml` dev/test extras; required by validation. |
-| `reports/` | Legacy compatibility directory — no active output is written here. Daily MD files go to `../digests/YYYY-MM-DD.md`. |
+| `jsonschema` | Declared in `pyproject.toml` core dependencies; used by validation and export models. |
+| `reports/` | Legacy compatibility directory — no active output is written here. Daily MD files go to `../var/output/digests/YYYY-MM-DD.md`. |
 
 ## Source registry (`sources.csv`)
 
 Text fields containing commas are quoted CSV strings; numeric fields (`tier`,
 `cadence_hours`) are unquoted. The per-source description — role, current rights status,
 what enabling each outlet requires — is in
-[`docs/07-sources.md`](../docs/07-sources.md). Canonical enumerations (shared with the JSON
+[`docs/03-sources.md`](../docs/03-sources.md). Canonical enumerations (shared with the JSON
 Schema and the Postgres `sources` table):
 
 | Column | Meaning / allowed values |
@@ -53,11 +53,12 @@ Schema and the Postgres `sources` table):
 | `enabled` | Whether the daily checker processes the source; requires T0 approval. |
 | `notes` | Human-readable onboarding and handling notes. |
 
-Ten licensed outlets are currently `enabled=true` in `sources/*.json`; the rest are pending
-T0 review. `rt`, `tass`, `ria`, `xinhua` and `globaltimes` stay `enabled=false` and
-`claim_only=true`; flip `enabled` only if you explicitly want to study those narratives.
-Reuters and BBC are Tier 1 mandatory but `blocked` until written rights are recorded
-(decision DEC-01) — they are never substituted, only reported as coverage gaps.
+All 28 outlets are licensed (`license_held`, attested 2026-11-23); 23 are `enabled=true`
+in `sources/*.json`. The 5 tier-4 state-controlled outlets (`rt`, `tass`, `ria`, `xinhua` and
+`globaltimes`) stay `enabled=false` and `claim_only=true`; flip `enabled` only if you
+explicitly want to study those narratives. Reuters and BBC are Tier 1 mandatory and
+licensed — they are never substituted, only reported as coverage gaps when no articles are
+found.
 
 ## Derived quote export (`quotes.jsonl`)
 
@@ -84,8 +85,8 @@ One object per line, validated against `quotes.schema.json`. Key design choices:
 
 Run `python -m media_quotes doctor` (or `python scripts/validate_data.py`) after any edit to
 the registry or schema. Exit code 0 means clean, 1 means errors were found. Validation imports
-the shared enums from `media_quotes.enums` and requires `jsonschema` (installed via
-`uv sync --frozen --group dev`). There is no fallback validator: one schema, one code path.
+the shared enums from `media_quotes.enums` and uses `jsonschema`. There is no fallback
+validator: one schema, one code path.
 
 ## Adding a new source
 
@@ -101,10 +102,10 @@ the shared enums from `media_quotes.enums` and requires `jsonschema` (installed 
 
 ## Daily output structure
 
-Daily MD files are written to `../digests/YYYY-MM-DD.md` (canonical path). The pipeline
-selects quotes where `is_obsolete=false` and `publication_date` falls in the rolling
-`REPORT_WINDOW_DAYS` (default 14) ending on `REPORT_DATE`, groups them by `section_id`, and
-renders for each quote: verbatim text (original plus English translation when present),
-source name, publication name, article name and canonical link. Quotes with `claim_only=true`
-are labelled as claims. Under each section heading the LLM writes one or two sentences of
-inference; this is the only non-deterministic part of the report.
+Daily MD files are written to `../var/output/digests/YYYY-MM-DD.md` (canonical path under
+`OUTPUT_DIR`). The pipeline selects quotes where `is_obsolete=false` and `publication_date`
+falls in the rolling `REPORT_WINDOW_DAYS` (default 14) ending on `REPORT_DATE`, groups them
+by `section_id`, and renders for each quote: verbatim text (original plus English translation
+when present), source name, publication name, article name and canonical link. Quotes with
+`claim_only=true` are labelled as claims. Under each section heading the LLM writes one or two
+sentences of inference; this is the only non-deterministic part of the report.

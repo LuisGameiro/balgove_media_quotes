@@ -1,0 +1,114 @@
+# 05 — Command reference
+
+The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help` for exact flags.
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `doctor`, `validate` | Check config, registry, schema, versions and derived data |
+| `bootstrap` | Apply Alembic migrations and sync the source registry |
+| `run` | Daily pipeline plus audit and logs (`--from-blobs` for live cached HTML, `--tier 1` for Tier-1 cadence) |
+| `fetch` | Rights-gated live feed fetch into `BLOB_DIR`; dry-run by default (`--live` to download) |
+| `audit` | Generate or read the T0 and coverage audit report |
+| `logs` | Inspect structured logs by run id and trace id |
+| `eval` | Gold-set metrics with optional split filter |
+| `sources` | List registry rows and rights state; scaffold or sync configs |
+| `topics` | List, show or scaffold topic packs |
+| `version` | Print the version manifest |
+| `backfill` | Cost estimate and budget gate for a date range; pass `--execute` to run partitions |
+| `digest` | Regenerate the Markdown digest from local records |
+| `export` | Write JSONL from local or Postgres records (`--from-db`), or bounded `--context` packs |
+| `dashboard` | Print dashboard launch guidance |
+| `dagster` | Print Dagster asset, partition and schedule guidance |
+| `review` | List or decide obsolescence review flags |
+| `blob-prune` | Plan or execute (`--execute`) tombstone-gated pruning of aged raw blobs |
+| `retention` | Print retention and lock readiness plan; with persistence on and no `--dry-run`, register observed partitions |
+| `restore-drill` | Compare two exports by quote id and content hash |
+| `batch` | OpenRouter batch dry-run, submit, status and apply |
+| `graph` | Manage derived Neo4j projection (`init`, `status`, `sync`, `lineage`, `speaker`, `divergence`, `context`) |
+
+## Shared flags
+
+`--date YYYY-MM-DD`, `--topic ID`, `--run-id ID`, `--out PATH`, `--verbose` and `--dry-run` are
+accepted where relevant. `--offline` is a deprecated compatibility flag; every command is
+offline unless it is an explicit live command.
+
+Exit codes: `0` pass, `1` validation or threshold failure, `2` partial success with disclosed
+coverage gaps, `3` configuration or T0-gate error. Re-runs are idempotent.
+
+## Common sequences
+
+```powershell
+# Offline sanity, no secrets or network
+python -m media_quotes doctor
+python -m media_quotes run --date 2026-11-19
+python -m media_quotes audit --date 2026-11-19
+python -m media_quotes eval --gold-set synthetic-v1
+python -m media_quotes review --action list
+python -m media_quotes retention --dry-run
+python -m media_quotes restore-drill
+
+# Live fetch -> ingest live blobs into pipeline
+python -m media_quotes fetch --source-id guardian
+python -m media_quotes fetch --source-id guardian --live
+python -m media_quotes run --date 2026-11-23 --from-blobs
+
+# Bounded historical backfill (estimate, then execute)
+python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50
+python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50 --execute
+
+# Local Postgres
+docker compose up -d --wait
+python -m media_quotes bootstrap
+$env:PERSIST_TO_POSTGRES = "true"
+python -m media_quotes run --date 2026-11-19
+
+# Derived Neo4j projection (opt-in)
+docker compose --profile graph up -d --wait
+python -m media_quotes graph init
+python -m media_quotes graph sync --from-db
+python -m media_quotes graph speaker --name "Andrii Kovalenko"
+python -m media_quotes graph lineage --quote-id Q-20261123-0001
+python -m media_quotes graph divergence
+python -m media_quotes graph context --max-tokens 4000
+```
+
+## Configuration
+
+The operator config lives in `.env`, copied from `.env.example`. Key settings:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+psycopg://news:news@127.0.0.1:5432/news` | Database connection URL |
+| `PERSIST_TO_POSTGRES` | `false` | Enable database writes |
+| `SYNC_TO_NEO4J` | `false` | Enable derived Neo4j graph projections |
+| `NEO4J_URI` | `bolt://127.0.0.1:7687` | Neo4j Bolt connection URI |
+| `NEO4J_USER` | `neo4j` | Neo4j authentication user |
+| `NEO4J_PASSWORD` | `neo4jpassword` | Neo4j authentication password |
+| `NEO4J_DATABASE` | `neo4j` | Neo4j target database name |
+| `OUTPUT_DIR` | `var/output` | Shared root for digests, quotes, audit, logs, and raw HTML |
+| `ACTIVE_TOPIC` | `ukraine-war` | Active topic pack ID |
+| `LLM_PROVIDER` | `local` | `local` or `openrouter` |
+| `LLM_MODEL_SNAPSHOT` | `unset` | Pinned model id; required for `openrouter` |
+| `OPENROUTER_API_KEY` | empty | Required for live inference and batch work |
+| `BATCH_MODEL_SNAPSHOT` | empty | Pinned batch-enabled model |
+| `TRANSLATION_MODE` | `off` | `off`, `detect_only`, or `translate` |
+| `AI_JUDGE_MODE` | `off` | `off`, `shadow`, `advisory`, or `decision` |
+| `AI_JUDGE_MODEL_SNAPSHOT` | `unset` | Pinned judge model id when judge is enabled |
+| `DASHBOARD_PASSWORD` | empty | Required to view the Streamlit dashboard |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `EXTRACTION_FALLBACK` | `off` | `off`, `static`, or `rendered` (optional Playwright, opt-in per source) |
+| `FETCH_*` | see `.env.example` | HTTP timeout, rate, byte and connection limits |
+
+`REPORT_DATE` defaults to today; `BACKFILL_START` is 2026-10-01 and the report window is 14 days.
+Never put a real key in source control.
+
+## Scripts
+
+`scripts/check.ps1` runs the full quality gate, `scripts/run_dagster.ps1` starts Dagster,
+`scripts/run_dashboard.ps1` starts Streamlit, `scripts/manual_validate.ps1` runs the full
+collection/audit verification for a given date without Dagster, `scripts/test_scraper.py`
+audits scraper and feed connectivity, and `scripts/docs_qa.py` checks documentation consistency.
+
+Remaining operational work is in [06-whats-left.md](06-whats-left.md).

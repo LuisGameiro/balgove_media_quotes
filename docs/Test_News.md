@@ -1,6 +1,11 @@
 **Test**  
 Media Quotes Collection System
 
+> Status note (2026-11-23): a written blanket licence has been accepted for Reuters and BBC.
+> `data/sources.csv`, `data/sources/reuters.json`, `data/sources/bbc.json` and
+> `data/source_topic_routes.csv` now reflect the approved live routes. The risk discussion below
+> is the original pre-licence assessment.
+
 ***1\. Task***
 
 Develop an automated system for detecting, collecting and presenting media quotes from the sources specified below, where such media quotes are relevant to developing substantial understanding of the *current trends and expectations about Russia's war on Ukraine*.  
@@ -13,8 +18,8 @@ RSS is **not** an exemption. Automated retrieval of a feed is still automated co
 Sources — tiered by role, all subject to T0.
 
 **Tier 1 — mandatory only once T0 is satisfied (monitor continuously):**
-• Reuters — https://www.reuters.com — `rights_status=blocked`; enable only after a written licence (Factiva, Nexis, LSEG or Reuters Connect are the realistic routes).
-• BBC News — https://www.bbc.co.uk/ — `rights_status=blocked`; enable only after written permission.
+• Reuters — https://www.reuters.com — `rights_status=license_held`; written licence accepted 2026-11-23. Live sitemap discovery is an approved route.
+• BBC News — https://www.bbc.co.uk/ — `rights_status=license_held`; written licence accepted 2026-11-23. Live RSS discovery is an approved route.
 
 If T0 cannot be met for those two outlets, replace them with compliant discovery/fallback sources (still subject to their own terms review):
 • GDELT — https://www.gdeltproject.org/ — discovery metadata and links only; rights to the underlying publisher's text are still required.
