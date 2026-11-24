@@ -34,17 +34,26 @@ from ..risk_controls.obsolescence import (
 )
 from ..risk_controls.retention import RetentionPolicy
 from ..text_utils import require_safe_id
-from .common import EXIT_FAILURE, EXIT_OK, _read_json, _write_json, load_review_flags
+from .common import (
+    EXIT_FAILURE,
+    EXIT_OK,
+    _read_json,
+    _write_json,
+    load_review_flags,
+    review_queue_path,
+)
 
 QUEUE_FILE = "review-queue.json"
 
 
-def _queue_path(settings: Settings) -> Path:
-    return settings.audit_dir / QUEUE_FILE
+def _queue_path(settings: Settings, provenance: AcquisitionProvenance = "fixture") -> Path:
+    return review_queue_path(settings, provenance)
 
 
-def _load_queue(settings: Settings) -> dict[str, Any]:
-    payload = _read_json(_queue_path(settings))
+def _load_queue(
+    settings: Settings, provenance: AcquisitionProvenance = "fixture"
+) -> dict[str, Any]:
+    payload = _read_json(_queue_path(settings, provenance))
     return payload if isinstance(payload, dict) else {"flags": []}
 
 
@@ -150,10 +159,11 @@ def _do_review(
     verdict: str | None = None,
     reviewer: str = "Balgove Innovations",
     reason_code: str = "human-review",
+    provenance: AcquisitionProvenance = "fixture",
 ) -> int:
     """List, seed, or decide pending obsolete flags using ReviewQueue (fail-closed)."""
-    payload = _load_queue(settings)
-    flags = load_review_flags(settings)
+    payload = _load_queue(settings, provenance)
+    flags = load_review_flags(settings, provenance)
     mode = _judge_mode(settings)
     judge = _review_judge(settings) if action in {"list", "decide"} else None
     if judge is None:
@@ -177,9 +187,9 @@ def _do_review(
         return EXIT_OK
 
     if action == "seed":
-        with _queue_lock(_queue_path(settings)):
-            payload = _load_queue(settings)
-            flags = load_review_flags(settings)
+        with _queue_lock(_queue_path(settings, provenance)):
+            payload = _load_queue(settings, provenance)
+            flags = load_review_flags(settings, provenance)
             target_id = quote_id or "Q-20261119-0001"
             if any(flag.evidence.old_quote_id == target_id for flag in flags):
                 print(f"review flag already exists: {target_id}")
@@ -202,7 +212,7 @@ def _do_review(
             )
             flags.append(sample_flag)
             payload["flags"] = [flag.model_dump(mode="json") for flag in flags]
-            _write_json(_queue_path(settings), payload)
+            _write_json(_queue_path(settings, provenance), payload)
             print(f"review flag seeded: {target_id} -> pending")
             return EXIT_OK
 
@@ -222,10 +232,10 @@ def _do_review(
             + json.dumps(suggestions[quote_id].as_json(), ensure_ascii=False, sort_keys=True)
         )
 
-    with _queue_lock(_queue_path(settings)):
+    with _queue_lock(_queue_path(settings, provenance)):
         # Re-read under the lock so a second operator's verdict is not overwritten.
-        payload = _load_queue(settings)
-        flags = load_review_flags(settings)
+        payload = _load_queue(settings, provenance)
+        flags = load_review_flags(settings, provenance)
         if mode == "decision" and quote_id in suggestions:
             suggestion = suggestions[quote_id]
             chosen_verdict = suggestion.verdict
@@ -262,7 +272,7 @@ def _do_review(
             else:
                 updated_list.append(flag.model_dump(mode="json"))
         payload["flags"] = updated_list
-        _write_json(_queue_path(settings), payload)
+        _write_json(_queue_path(settings, provenance), payload)
         if settings.persist_to_postgres:
             from ..db.repository import persist_obsolescence_flags
             from ..pipeline import _default_session_context

@@ -97,7 +97,7 @@ def test_provenance_migration_adds_columns_and_scopes_digest_unique() -> None:
     assert "UNIQUE (topic_id, digest_date)" in source  # symmetric downgrade
     schema = SCHEMA.read_text(encoding="utf-8")
     assert "provenance       TEXT NOT NULL DEFAULT 'fixture'" in schema
-    assert 'provenance          TEXT NOT NULL DEFAULT \'fixture\'' in schema
+    assert "provenance          TEXT NOT NULL DEFAULT 'fixture'" in schema
     assert "UNIQUE (topic_id, digest_date, provenance)" in schema
 
 

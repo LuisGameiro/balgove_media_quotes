@@ -17,12 +17,15 @@ from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import ParseError
 
 from .adapters import BlobCache, parse_rss_feed, parse_sitemap_xml
+from .bing_news import discover_bing_news
+from .enums import AcquisitionProvenance
 from .exceptions import SourceNotPermitted
 from .fetch import TokenBucket, allowed_hosts_for, fetch_bytes
 
 if TYPE_CHECKING:
     from .fetch import FetchPolicy
     from .registry import SourceRegistryRow
+    from .source_configs import SourceConfig
     from .topics import TopicPack
 
 
@@ -36,6 +39,19 @@ class FetchedArticle:
     sha256: str
     blob_path: str
     error: str = ""
+    provenance: AcquisitionProvenance = "live_feed"
+    discovered_via: str = "official_feed"
+
+
+@dataclass(frozen=True, slots=True)
+class LiveSourceResult:
+    """Outcome of one source's live collection, including its discovery route and errors."""
+
+    articles: list[FetchedArticle]
+    discovered: list[dict[str, str]]
+    provenance: AcquisitionProvenance
+    route: str
+    errors: list[str]
 
 
 def fetch_feed_documents(
@@ -48,6 +64,7 @@ def fetch_feed_documents(
     limit: int,
     extra_hosts: frozenset[str] = frozenset(),
     cache: BlobCache | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[list[dict[str, str]], list[FetchedArticle]]:
     """Fetch a feed and the first N articles; return discovered entries and downloaded bytes."""
     if not row.usable:
@@ -72,7 +89,10 @@ def fetch_feed_documents(
         # Share one bucket across the feed and every article so the rate limit applies.
         bucket = TokenBucket(policy.requests_per_second)
         # One client for the feed and every article, so the policy's connection limit applies.
-        async with httpx.AsyncClient(**policy.client_kwargs()) as client:
+        client_kwargs = policy.client_kwargs()
+        if transport is not None:
+            client_kwargs["transport"] = transport
+        async with httpx.AsyncClient(**client_kwargs) as client:
             feed_bytes, _ = await fetch_bytes(
                 feed_url,
                 row=row,
@@ -121,6 +141,8 @@ def fetch_feed_documents(
                             "published": item.get("publication_date") or item.get("published", ""),
                             "feed_url": feed_url,
                             "source_id": row.source_id,
+                            "provenance": "live_feed",
+                            "discovered_via": "official_feed",
                         },
                     )
                     results.append(
@@ -146,3 +168,186 @@ def fetch_feed_documents(
             return items, results
 
     return asyncio.run(run())
+
+
+def fetch_url_documents(
+    row: SourceRegistryRow,
+    items: list[dict[str, str]],
+    *,
+    policy: FetchPolicy,
+    cache: BlobCache | None = None,
+    extra_hosts: frozenset[str] = frozenset(),
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[FetchedArticle]:
+    """Fetch original publisher URLs through the rights gate, one error per article."""
+    if not row.usable:
+        raise SourceNotPermitted(f"source '{row.source_id}' is not permitted for live fetch")
+    cache = cache or BlobCache()
+
+    async def run() -> list[FetchedArticle]:
+        permitted_hosts = allowed_hosts_for(row) | extra_hosts
+        track_a_approved = bool(row.usable and row.license_reference)
+        bucket = TokenBucket(policy.requests_per_second)
+        client_kwargs = policy.client_kwargs()
+        if transport is not None:
+            client_kwargs["transport"] = transport
+        results: list[FetchedArticle] = []
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            for item in items:
+                url = item.get("url", "")
+                try:
+                    raw, digest = await fetch_bytes(
+                        url,
+                        row=row,
+                        policy=policy,
+                        track_a_approved=track_a_approved,
+                        check_dns=True,
+                        bucket=bucket,
+                        allowed_hosts=permitted_hosts,
+                        client=client,
+                    )
+                    stored_digest, blob_path = cache.store(row.source_id, raw)
+                    cache.store_meta(
+                        row.source_id,
+                        stored_digest,
+                        {
+                            "url": url,
+                            "title": item.get("title", ""),
+                            "published": item.get("published", ""),
+                            "source_id": row.source_id,
+                            "provenance": "live_bing",
+                            "discovered_via": "bing_news",
+                        },
+                    )
+                    results.append(
+                        FetchedArticle(
+                            url=url,
+                            title=item.get("title", ""),
+                            raw=raw,
+                            sha256=digest,
+                            blob_path=str(blob_path),
+                            provenance="live_bing",
+                            discovered_via="bing_news",
+                        )
+                    )
+                except Exception as exc:  # one bad article must not abort the rest
+                    results.append(
+                        FetchedArticle(
+                            url=url,
+                            title=item.get("title", ""),
+                            raw=b"",
+                            sha256="",
+                            blob_path="",
+                            error=str(exc),
+                            provenance="live_bing",
+                            discovered_via="bing_news",
+                        )
+                    )
+        return results
+
+    return asyncio.run(run())
+
+
+def collect_live_source(
+    row: SourceRegistryRow,
+    *,
+    feed_url: str,
+    policy: FetchPolicy,
+    limit: int,
+    topic_pack: TopicPack | None = None,
+    cache: BlobCache | None = None,
+    source_config: SourceConfig | None = None,
+    extra_hosts: frozenset[str] = frozenset(),
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> LiveSourceResult:
+    """Collect from the official feed, falling back to opt-in Bing discovery only on failure."""
+    if not row.usable:
+        raise SourceNotPermitted(f"source '{row.source_id}' is not permitted for live fetch")
+    if row.access_mode not in {"public_rss_permitted", "official_api", "licensed_database"}:
+        raise SourceNotPermitted(
+            f"source '{row.source_id}' access_mode {row.access_mode!r} "
+            "does not permit feed discovery"
+        )
+    hosts = extra_hosts
+    if not hosts and source_config is not None:
+        hosts = frozenset([*source_config.content_hosts, *source_config.redirect_hosts])
+
+    errors: list[str] = []
+    try:
+        discovered, articles = fetch_feed_documents(
+            row,
+            feed_url,
+            policy=policy,
+            topic_pack=topic_pack,
+            require_topic=True,
+            limit=limit,
+            extra_hosts=hosts,
+            cache=cache,
+            transport=transport,
+        )
+        errors.extend(article.error for article in articles if article.error)
+    except Exception as exc:  # a failed feed still qualifies for the configured fallback
+        discovered, articles, errors = [], [], [str(exc)]
+
+    official_feed = LiveSourceResult(
+        articles=articles,
+        discovered=discovered,
+        provenance="live_feed",
+        route="official_feed",
+        errors=errors,
+    )
+    if any(not article.error for article in articles):
+        return official_feed
+    if source_config is None or not source_config.bing_discovery_enabled:
+        return official_feed
+
+    domain = (urlparse(row.homepage_url).hostname or "").lower()
+    bing_errors: list[str] = []
+    if not domain:
+        bing_errors.append(f"source '{row.source_id}' has no homepage domain for Bing discovery")
+        candidates: list[dict[str, str]] = []
+    else:
+        try:
+            candidates = asyncio.run(discover_bing_news(domain, limit=limit, transport=transport))
+        except Exception as exc:
+            bing_errors.append(f"Bing discovery failed: {exc}")
+            candidates = []
+
+    # Never auto-add a host learned from Bing: only explicitly configured hosts are eligible.
+    allowed = hosts | allowed_hosts_for(row)
+    kept: list[dict[str, str]] = []
+    for candidate in candidates:
+        host = (urlparse(candidate.get("url", "")).hostname or "").lower()
+        if host not in allowed:
+            bing_errors.append(
+                f"bing candidate host {host!r} is not configured for source '{row.source_id}'"
+            )
+            continue
+        kept.append(candidate)
+
+    if not kept:
+        return LiveSourceResult(
+            articles=articles,
+            discovered=discovered,
+            provenance="live_feed",
+            route="official_feed",
+            errors=errors + bing_errors,
+        )
+
+    bing_articles = fetch_url_documents(
+        row,
+        kept,
+        policy=policy,
+        cache=cache,
+        extra_hosts=hosts,
+        transport=transport,
+    )
+    errors.extend(bing_errors)
+    errors.extend(article.error for article in bing_articles if article.error)
+    return LiveSourceResult(
+        articles=bing_articles,
+        discovered=kept,
+        provenance="live_bing",
+        route="bing_news",
+        errors=errors,
+    )

@@ -221,6 +221,8 @@ class SourceConfig(BaseModel):
     blocker_reason: str = ""
     availability_status: AvailabilityStatus = "live"
     redirect_hosts: list[str] = Field(default_factory=list)
+    bing_discovery_enabled: bool = False
+    content_hosts: list[str] = Field(default_factory=list)
     notes: str = ""
     routes: list[SourceRouteConfig] = Field(default_factory=list)
     extractor_hints: ExtractorHints = Field(default_factory=ExtractorHints)
@@ -230,12 +232,12 @@ class SourceConfig(BaseModel):
     def _parse_archive_date(cls, value: Any) -> Any:
         return date.fromisoformat(value) if isinstance(value, str) else value
 
-    @field_validator("redirect_hosts")
+    @field_validator("redirect_hosts", "content_hosts")
     @classmethod
-    def _validate_redirect_hosts(cls, values: list[str]) -> list[str]:
+    def _validate_hostnames(cls, values: list[str]) -> list[str]:
         cleaned = [value.strip().lower() for value in values]
         if any(not re.fullmatch(r"[a-z0-9.-]+", value) for value in cleaned):
-            raise ValueError("redirect_hosts must contain hostnames only")
+            raise ValueError("host lists must contain hostnames only")
         return cleaned
 
     def to_registry_row(self) -> SourceRegistryRow:

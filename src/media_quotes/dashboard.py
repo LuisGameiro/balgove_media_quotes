@@ -86,19 +86,37 @@ def coverage_gaps(
     return [gap for gap in gaps if isinstance(gap, dict)]
 
 
-def _latest_audit(audit_dir: Path, topic_id: str | None = None) -> dict[str, Any]:
-    if not audit_dir.is_dir():
-        return {}
-    reports = sorted(audit_dir.rglob("audit-*.json"), reverse=True)
-    for path in reports:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict) and (
-                topic_id is None or payload.get("topic_id", "ukraine-war") == topic_id
-            ):
-                return payload
-        except (OSError, json.JSONDecodeError):
+def _audit_report_trees(audit_dir: Path) -> list[list[Path]]:
+    """Group audit reports by provenance tree: canonical live first, then fixtures.
+
+    A tree never includes another tree, so live and fixture counts are never mixed.
+    """
+    fixture_root = audit_dir / "fixtures"
+    trees: list[list[Path]] = []
+    for root, exclude in ((audit_dir, fixture_root), (fixture_root, None)):
+        if not root.is_dir():
             continue
+        trees.append(
+            sorted(
+                path
+                for path in root.rglob("audit-*.json")
+                if exclude is None or not path.is_relative_to(exclude)
+            )
+        )
+    return trees
+
+
+def _latest_audit(audit_dir: Path, topic_id: str | None = None) -> dict[str, Any]:
+    for reports in _audit_report_trees(audit_dir):
+        for path in reversed(reports):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict) and (
+                    topic_id is None or payload.get("topic_id", DEFAULT_TOPIC_ID) == topic_id
+                ):
+                    return payload
+            except (OSError, json.JSONDecodeError):
+                continue
     return {}
 
 
@@ -121,30 +139,36 @@ def coverage_summary(audit_dir: Path, topic_id: str | None = None) -> list[dict[
 
 
 def daily_source_coverage(audit_dir: Path, topic_id: str | None = None) -> list[dict[str, Any]]:
-    """Collect source coverage records across all audit reports for multi-day analysis."""
-    if not audit_dir.is_dir():
-        return []
-    records: list[dict[str, Any]] = []
-    for path in sorted(audit_dir.rglob("audit-*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        if topic_id and payload.get("topic_id") != topic_id:
-            continue
-        report_date = str(payload.get("report_date", ""))
-        for cov in payload.get("coverage", []):
-            if isinstance(cov, dict) and "source_id" in cov:
-                records.append(
-                    {
-                        "date": report_date,
-                        "source_id": cov["source_id"],
-                        "quotes": cov.get("quotes", cov.get("quotes_found", 0)),
-                    }
-                )
-    return records
+    """Collect per-source coverage from the first provenance tree with matching reports.
+
+    Live and fixture trees are never combined, so a source/day is not double counted.
+    """
+    for reports in _audit_report_trees(audit_dir):
+        records: list[dict[str, Any]] = []
+        matched = False
+        for path in reports:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if topic_id and payload.get("topic_id") != topic_id:
+                continue
+            matched = True
+            report_date = str(payload.get("report_date", ""))
+            for cov in payload.get("coverage", []):
+                if isinstance(cov, dict) and "source_id" in cov:
+                    records.append(
+                        {
+                            "date": report_date,
+                            "source_id": cov["source_id"],
+                            "quotes": cov.get("quotes", cov.get("quotes_found", 0)),
+                        }
+                    )
+        if matched:
+            return records
+    return []
 
 
 def coverage_by_day_matrix(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -21,8 +21,14 @@ from typing import Any, Literal, Protocol, cast
 from .config import DEFAULT_TOPIC_ID, Settings
 from .db.resources import SessionContextFactory
 from .enums import AcquisitionProvenance
+from .exceptions import ConfigError
 from .models import ExportQuoteRecord
 from .risk_controls.models import ObsolescenceFlag
+
+_LIVE_NOTICE = (
+    "LIVE COLLECTION: quotes below were acquired from rights-cleared publisher feeds. "
+    "Each quote records its acquisition provenance and discovery route."
+)
 
 
 class SourceTopicRoute(Protocol):
@@ -451,17 +457,19 @@ def _persist_result(
             classifications_n = persist_quote_classifications(
                 session, publishable, result.offsets, assigned_by=assigned_by, commit=False
             )
-            digest_id = persist_digest_manifest(
-                session,
-                digest_date=result.report_date,
-                window_start=window_start,
-                window_end=result.report_date,
-                md_path=str(result.digest_path or ""),
-                records=publishable,
-                topic_id=result.topic_id,
-                provenance=result.provenance,
-                commit=False,
-            )
+            digest_id = ""
+            if result.digest_path is not None:
+                digest_id = persist_digest_manifest(
+                    session,
+                    digest_date=result.report_date,
+                    window_start=window_start,
+                    window_end=result.report_date,
+                    md_path=str(result.digest_path),
+                    records=publishable,
+                    topic_id=result.topic_id,
+                    provenance=result.provenance,
+                    commit=False,
+                )
             flags_n = persist_obsolescence_flags(session, list(result.review_flags), commit=False)
             append_audit_events(session, list(result.events) + list(result.coverage), commit=False)
             finish_pipeline_run(
@@ -512,8 +520,11 @@ def run_daily_pipeline(
     provenance: AcquisitionProvenance = "fixture",
 ) -> DailyPipelineResult:
     """Run one report date through the shared T0-gated offline pipeline."""
+    if source_mode in {"live", "blobs"} and provenance == "fixture":
+        provenance = "live_feed"
     from .cli.audit import _audit_report, _write_audit
     from .cli.common import (
+        _MANDATORY,
         _NOTICE,
         _digest_path,
         _event,
@@ -521,6 +532,7 @@ def run_daily_pipeline(
         _run_id,
         _window,
         _write_json,
+        review_queue_path,
     )
     from .cli.run import _collect, _load_review_flags
     from .curation import dedupe_quotes, review_badge
@@ -533,7 +545,9 @@ def run_daily_pipeline(
         topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
     )
     topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
-    actual_run_id = run_id or _run_id(report_date, settings, topic_id=active_topic_id)
+    actual_run_id = run_id or _run_id(
+        report_date, settings, topic_id=active_topic_id, provenance=provenance
+    )
     records, coverage, gaps, events, rejected, offsets = _collect(
         settings,
         run_id=actual_run_id,
@@ -542,6 +556,18 @@ def run_daily_pipeline(
         source_mode=source_mode,
         tier=tier,
     )
+    if (source_mode in {"live", "blobs"} or provenance != "fixture") and any(
+        record.provenance == "fixture" for record in records
+    ):
+        raise ConfigError(
+            "live/blob run collected a fixture-stamped record; refusing to publish it as live"
+        )
+    collected_provenances = {record.provenance for record in records}
+    if len(collected_provenances) == 1:
+        only_provenance = next(iter(collected_provenances))
+        if only_provenance != "fixture":
+            provenance = only_provenance
+
     publishable_records = [record for record in records if record.topic_status == "accepted"]
     rejected += len(records) - len(publishable_records)
     records = publishable_records
@@ -563,6 +589,13 @@ def run_daily_pipeline(
             offsets=offsets,
         )
 
+    mandatory_coverage = [cov for cov in coverage if cov.get("source_id") in _MANDATORY]
+    failed_live = (
+        source_mode == "live"
+        and bool(mandatory_coverage)
+        and all(not cov.get("quotes") for cov in mandatory_coverage)
+    )
+
     rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
     kept = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
     store_path = local_store_path(
@@ -571,7 +604,7 @@ def run_daily_pipeline(
     write_jsonl(kept, store_path)
 
     now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
-    review_flags = _load_review_flags(settings)
+    review_flags = _load_review_flags(settings, provenance)
 
     # DEC-17 / FR-2.4: only compare quotes attributed to the same speaker.
     # Offline runs escalate and produce no new flags; failures are recorded, never hidden.
@@ -592,7 +625,7 @@ def run_daily_pipeline(
                 _merged.append(flag)
                 _existing_ids.add(flag.evidence.old_quote_id)
         if _merged != list(review_flags):
-            _queue_path = settings.audit_dir / "review-queue.json"
+            _queue_path = review_queue_path(settings, provenance)
             _write_json(_queue_path, {"flags": [f.model_dump(mode="json") for f in _merged]})
             review_flags = _merged
     except Exception as exc:
@@ -613,22 +646,25 @@ def run_daily_pipeline(
         if badge:
             review_badges[flag.evidence.old_quote_id] = badge
 
-    digest_path = write_digest(
-        kept,
-        report_date=report_date,
-        window_start=_window(report_date, settings)[0],
-        window_end=report_date,
-        out_path=_digest_path(
-            settings, report_date, topic_id=active_topic_id, provenance=provenance
-        ),
-        sections_csv=settings.sections_csv,
-        topic_pack=topic_pack,
-        provider=make_provider(settings, topic_pack=topic_pack),
-        obsolescence_flags=review_flags,
-        review_badges=review_badges,
-        notice=_NOTICE,
-        now=now,
-    )
+    digest_path = None
+    if not failed_live:
+        # A failed live run must not publish a digest that looks like normal output.
+        digest_path = write_digest(
+            kept,
+            report_date=report_date,
+            window_start=_window(report_date, settings)[0],
+            window_end=report_date,
+            out_path=_digest_path(
+                settings, report_date, topic_id=active_topic_id, provenance=provenance
+            ),
+            sections_csv=settings.sections_csv,
+            topic_pack=topic_pack,
+            provider=make_provider(settings, topic_pack=topic_pack),
+            obsolescence_flags=review_flags,
+            review_badges=review_badges,
+            notice=_LIVE_NOTICE if provenance != "fixture" else _NOTICE,
+            now=now,
+        )
 
     logs_path = settings.logs_dir / f"{actual_run_id}.jsonl"
     atomic_write_text(
@@ -651,11 +687,14 @@ def run_daily_pipeline(
         review_queue=[flag.model_dump(mode="json") for flag in review_flags],
         topic_id=active_topic_id,
         provenance=provenance,
+        source_mode=source_mode,
     )
+    if failed_live:
+        report["artifacts"]["digest"] = ""
     audit_json_path, audit_md_path = _write_audit(settings, report, provenance=provenance)
     _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
 
-    status = "partial" if gaps else "succeeded"
+    status = "failed" if failed_live else ("partial" if gaps else "succeeded")
     result = DailyPipelineResult(
         run_id=actual_run_id,
         report_date=report_date,

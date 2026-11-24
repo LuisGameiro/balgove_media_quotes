@@ -23,10 +23,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import dagster as dg
+from pydantic import field_validator
 
 from .config import DEFAULT_TOPIC_ID, Settings, get_settings
 from .db.resources import DatabaseResourceHandle
-from .enums import AcquisitionProvenance
+from .enums import ACQUISITION_PROVENANCES, AcquisitionProvenance
 from .observability import configure_observability, redact_sensitive
 from .pipeline import DailyPipelineResult, run_daily_pipeline
 
@@ -35,6 +36,9 @@ CODE_VERSION = "c4-daily-pipeline-v2"
 SCHEDULE_CRON = "0 6 * * *"
 TIER1_SCHEDULE_CRON = "0 */6 * * *"
 SCHEDULE_TIMEZONE = "UTC"
+
+_SOURCE_MODES = frozenset({"fixtures", "blobs", "live"})
+_LIVE_PROVENANCES = frozenset({"live_feed", "live_bing", "manual_sample"})
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -54,6 +58,15 @@ class DailyPipelineConfig(dg.Config):
     topic_id: str | None = None
     source_mode: str = "fixtures"
     tier: int | None = None
+
+    @field_validator("source_mode")
+    @classmethod
+    def _validate_source_mode(cls, value: str) -> str:
+        if value not in _SOURCE_MODES:
+            raise ValueError(
+                f"unsupported source_mode {value!r}; expected one of {sorted(_SOURCE_MODES)}"
+            )
+        return value
 
 
 class CheckConfig(dg.Config):
@@ -94,20 +107,52 @@ def database_resource(_: dg.InitResourceContext) -> DatabaseResourceHandle:
     return DatabaseResourceHandle(_default_session_context)
 
 
+def _audit_roots(
+    settings: Settings, provenance: AcquisitionProvenance | None = None
+) -> tuple[Path, ...]:
+    """Audit roots in precedence order: canonical live first, then fixture replay."""
+    live_root = settings.audit_dir
+    fixture_root = settings.audit_dir / "fixtures"
+    if provenance == "fixture":
+        return (fixture_root,)
+    return (live_root, fixture_root)
+
+
+def _audit_report_path(
+    settings: Settings, report_date: date, topic_id: str | None, root: Path
+) -> Path:
+    name = f"audit-{report_date.isoformat()}.json"
+    safe_topic = _clean_slug(topic_id, settings.active_topic)
+    target = root if safe_topic == DEFAULT_TOPIC_ID else root / safe_topic
+    return target / name
+
+
 def _load_audit_report(
     settings: Settings,
     report_date: date,
     topic_id: str | None = None,
-    provenance: AcquisitionProvenance = "fixture",
+    provenance: AcquisitionProvenance | None = None,
 ) -> dict[str, Any]:
-    safe_topic = _clean_slug(topic_id, settings.active_topic)
-    name = f"audit-{report_date.isoformat()}.json"
-    from .cli.audit import _audit_target_dir
-
-    target = _audit_target_dir(settings, safe_topic, provenance) / name
-    if target.is_file():
-        return cast(dict[str, Any], json.loads(target.read_text(encoding="utf-8")))
+    """Load the selected audit: canonical live artifact first, then fixture replay."""
+    for root in _audit_roots(settings, provenance):
+        path = _audit_report_path(settings, report_date, topic_id, root)
+        if path.is_file():
+            return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
     return {}
+
+
+def _provenance_from_report(report: dict[str, Any]) -> AcquisitionProvenance:
+    """Derive acquisition provenance from the selected audit report."""
+    value = report.get("provenance")
+    return value if value in _LIVE_PROVENANCES else "fixture"
+
+
+def _selected_audit(
+    settings: Settings, report_date: date, topic_id: str | None
+) -> tuple[dict[str, Any], AcquisitionProvenance]:
+    """Return the selected audit report and its provenance (live wins over fixtures)."""
+    report = _load_audit_report(settings, report_date, topic_id)
+    return report, _provenance_from_report(report)
 
 
 def _store_path(
@@ -129,26 +174,25 @@ def _check_topic(
     settings: Settings,
     report_date: date,
     requested: str | None,
-    provenance: AcquisitionProvenance = "fixture",
+    provenance: AcquisitionProvenance | None = None,
 ) -> str:
     """Pick the topic of the newest audit report when a check has no explicit topic."""
     if requested:
         return _clean_slug(requested, settings.active_topic)
-    from .cli.audit import _audit_target_dir
-
     name = f"audit-{report_date.isoformat()}.json"
-    candidates = [
-        (_audit_target_dir(settings, DEFAULT_TOPIC_ID, provenance) / name, DEFAULT_TOPIC_ID)
-    ]
-    root = settings.audit_dir / "fixtures" if provenance == "fixture" else settings.audit_dir
-    if root.is_dir():
+    for root in _audit_roots(settings, provenance):
+        if not root.is_dir():
+            continue
+        candidates = [(root / name, DEFAULT_TOPIC_ID)]
         candidates.extend(
             (sub / name, sub.name)
             for sub in sorted(root.iterdir())
             if sub.is_dir() and sub.name != "fixtures"
         )
-    found = [(path.stat().st_mtime, topic) for path, topic in candidates if path.is_file()]
-    return max(found)[1] if found else settings.active_topic
+        found = [(path.stat().st_mtime, topic) for path, topic in candidates if path.is_file()]
+        if found:
+            return max(found)[1]
+    return settings.active_topic
 
 
 def _context_partition_key(context: dg.AssetCheckExecutionContext) -> str | None:
@@ -253,10 +297,11 @@ def build_definitions() -> dg.Definitions:
         name="daily_quotes_digest",
         group_name="media_quotes",
         owners=["team:Balgove Innovations"],
-        tags={"domain": "media_quotes", "mode": "blocked-degraded"},
+        tags={"domain": "media_quotes", "mode": "rights-gated"},
         description=(
             "Daily T0-gated quote collection, verification, digest and audit output. "
-            "Reuters/BBC remain blocked until written rights are recorded."
+            "Supports fixture replay and rights-cleared live/blob collection; the source_mode "
+            "is chosen per run and the schedules request live collection."
         ),
         retry_policy=dg.RetryPolicy(max_retries=1, delay=2),  # transient live fetch failures only
     )
@@ -277,7 +322,10 @@ def build_definitions() -> dg.Definitions:
         result: DailyPipelineResult = run_daily_pipeline(
             app_settings,
             report_date=report_date,
-            run_id=f"dagster-{report_date.isoformat()}-{active_topic}{tier_suffix}",
+            run_id=(
+                f"dagster-{report_date.isoformat()}-{active_topic}-{config.source_mode}"
+                f"{tier_suffix}"
+            ),
             dry_run=config.dry_run,
             pipeline="dagster-tier1" if config.tier == 1 else "dagster-daily",
             topic_id=config.topic_id,
@@ -523,7 +571,8 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        records = read_jsonl(_store_path(app_settings, report_date, topic))
+        _, provenance = _selected_audit(app_settings, report_date, topic)
+        records = read_jsonl(_store_path(app_settings, report_date, topic, provenance))
         return dg.AssetCheckResult(
             passed=bool(records),
             severity=dg.AssetCheckSeverity.ERROR,
@@ -546,7 +595,7 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        report = _load_audit_report(app_settings, report_date, topic)
+        report, _ = _selected_audit(app_settings, report_date, topic)
         gates_pass = bool(report.get("checks", {}).get("gates_pass", False))
         return dg.AssetCheckResult(
             passed=gates_pass,
@@ -568,7 +617,7 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        report = _load_audit_report(app_settings, report_date, topic)
+        report, _ = _selected_audit(app_settings, report_date, topic)
         if not report:
             return dg.AssetCheckResult(
                 passed=False,
@@ -604,7 +653,8 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        path = _store_path(app_settings, report_date, topic)
+        _, provenance = _selected_audit(app_settings, report_date, topic)
+        path = _store_path(app_settings, report_date, topic, provenance)
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,
@@ -659,7 +709,8 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        path = _store_path(app_settings, report_date, topic)
+        _, provenance = _selected_audit(app_settings, report_date, topic)
+        path = _store_path(app_settings, report_date, topic, provenance)
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,
@@ -685,6 +736,60 @@ def build_definitions() -> dg.Definitions:
             },
             description="One or more exported quotes breached word limit or attribution rules"
             if not passed
+            else None,
+        )
+
+    @dg.asset_check(
+        asset=daily_quotes_digest,
+        name="live_export_has_no_fixture_records",
+        description=(
+            "Live/blob runs never publish fixture-stamped records in the canonical export; "
+            "fixture-replay runs report an informational skip."
+        ),
+    )
+    def live_export_has_no_fixture_records(
+        context: dg.AssetCheckExecutionContext,
+        config: CheckConfig,
+        settings: dg.ResourceParam[Settings],
+    ) -> dg.AssetCheckResult:
+        from .export import read_jsonl
+
+        app_settings = settings
+        report_date = _check_date(context, app_settings, config.topic_id)
+        topic = _check_topic(app_settings, report_date, config.topic_id)
+        report, provenance = _selected_audit(app_settings, report_date, topic)
+        source_mode = str(report.get("source_mode", "fixtures"))
+        is_live = source_mode in {"live", "blobs"} or provenance != "fixture"
+        if not is_live:
+            return dg.AssetCheckResult(
+                passed=True,
+                severity=dg.AssetCheckSeverity.WARN,
+                metadata={"source_mode": source_mode, "provenance": provenance},
+                description="Fixture replay run; live-export provenance check not applicable.",
+            )
+        path = _store_path(app_settings, report_date, topic, provenance)
+        if not path.is_file():
+            return dg.AssetCheckResult(
+                passed=False,
+                severity=dg.AssetCheckSeverity.ERROR,
+                metadata={"source_mode": source_mode, "provenance": provenance},
+                description=f"Canonical live export missing: {path}",
+            )
+        offenders = [
+            str(record.quote_id)
+            for record in read_jsonl(path)
+            if getattr(record, "provenance", None) == "fixture"
+        ]
+        return dg.AssetCheckResult(
+            passed=not offenders,
+            severity=dg.AssetCheckSeverity.ERROR,
+            metadata={
+                "source_mode": source_mode,
+                "provenance": provenance,
+                "fixture_records": len(offenders),
+            },
+            description=f"Fixture-stamped records in live export: {', '.join(offenders[:5])}"
+            if offenders
             else None,
         )
 
@@ -750,7 +855,13 @@ def build_definitions() -> dg.Definitions:
             if scheduled is not None
             else datetime.now(UTC).date().isoformat()
         )
-        return dg.RunRequest(run_key=partition, partition_key=partition)
+        return dg.RunRequest(
+            run_key=partition,
+            partition_key=partition,
+            run_config=dg.RunConfig(
+                ops={"daily_quotes_digest": DailyPipelineConfig(source_mode="live")}
+            ),
+        )
 
     @dg.schedule(
         name="tier1_six_hourly_schedule",
@@ -767,7 +878,9 @@ def build_definitions() -> dg.Definitions:
         return dg.RunRequest(
             run_key=run_key,
             partition_key=partition,
-            run_config=dg.RunConfig(ops={"daily_quotes_digest": DailyPipelineConfig(tier=1)}),
+            run_config=dg.RunConfig(
+                ops={"daily_quotes_digest": DailyPipelineConfig(tier=1, source_mode="live")}
+            ),
         )
 
     @dg.sensor(
@@ -775,8 +888,9 @@ def build_definitions() -> dg.Definitions:
         minimum_interval_seconds=300,
         default_status=dg.DefaultSensorStatus.STOPPED,
         description=(
-            "RSK-07 / CHK-15: Monitors the human-in-the-loop obsolescence review queue for "
-            "pending flags and 1-working-day SLA breaches without leaking license_reference."
+            "RSK-07 / CHK-15: Monitors each acquisition-provenance obsolescence review queue "
+            "for pending flags and 1-working-day SLA breaches without leaking "
+            "license_reference."
         ),
     )
     def review_queue_sla_sensor(context: dg.SensorEvaluationContext) -> dg.SensorResult:
@@ -784,43 +898,64 @@ def build_definitions() -> dg.Definitions:
         from .risk_controls.obsolescence import ReviewQueue
 
         app_settings = get_settings()
-        flags = load_review_flags(app_settings)
-        queue = ReviewQueue(flags)
         now = datetime.now(UTC)
-        overdue_ids = queue.overdue(now=now, sla_days=1)
-        previous_overdue: set[str] = set()
+        previous_queues: dict[str, Any] = {}
         if context.cursor:
             try:
-                previous_overdue = set(json.loads(context.cursor).get("overdue_quote_ids", []))
+                previous_queues = json.loads(context.cursor).get("queues", {})
             except (json.JSONDecodeError, AttributeError, TypeError):
-                previous_overdue = set()
-        pending_ids = sorted(
-            flag.evidence.old_quote_id
-            for flag in flags
-            if flag.state in {"pending", "needs_evidence", "escalated"}
-        )
+                previous_queues = {}
+        queues: dict[str, Any] = {}
+        all_pending: set[str] = set()
+        all_overdue: set[str] = set()
+        alerts: list[str] = []
+        for raw_provenance in ACQUISITION_PROVENANCES:
+            provenance = cast(AcquisitionProvenance, raw_provenance)
+            flags = load_review_flags(app_settings, provenance)
+            # One ReviewQueue per provenance: duplicate IDs across queues must not collide.
+            overdue = ReviewQueue(flags).overdue(now=now, sla_days=1)
+            pending = sorted(
+                flag.evidence.old_quote_id
+                for flag in flags
+                if flag.state in {"pending", "needs_evidence", "escalated"}
+            )
+            queues[provenance] = {
+                "pending_count": len(pending),
+                "overdue_count": len(overdue),
+                "overdue_quote_ids": overdue,
+            }
+            all_pending.update(pending)
+            all_overdue.update(overdue)
+            previously_overdue = set(
+                (previous_queues.get(provenance) or {}).get("overdue_quote_ids", [])
+            )
+            if overdue and set(overdue) != previously_overdue:
+                alerts.append(f"{provenance}: {', '.join(overdue)}")
         cursor_payload = {
             "checked_at": now.isoformat(),
-            "pending_count": len(pending_ids),
-            "overdue_count": len(overdue_ids),
-            "overdue_quote_ids": overdue_ids,
+            "queues": queues,
+            "pending_count": len(all_pending),
+            "overdue_count": len(all_overdue),
+            "overdue_quote_ids": sorted(all_overdue),
         }
         context.update_cursor(json.dumps(cursor_payload, sort_keys=True))
-        if overdue_ids and set(overdue_ids) != previous_overdue:
+        if alerts:
+            details = "; ".join(alerts)
             context.log.warning(
-                f"RSK-07 SLA breach: {len(overdue_ids)} obsolescence review flag(s) overdue >24h: "
-                f"{', '.join(overdue_ids)}"
+                f"RSK-07 SLA breach: {len(all_overdue)} obsolescence review flag(s) overdue "
+                f">24h by provenance: {details}"
             )
             return dg.SensorResult(
                 skip_reason=dg.SkipReason(
-                    f"ALERT: {len(overdue_ids)} overdue review item(s): {', '.join(overdue_ids)}"
+                    f"ALERT: {len(all_overdue)} overdue review item(s): "
+                    f"{', '.join(sorted(all_overdue))} (by provenance: {details})"
                 )
             )
-        if overdue_ids:
+        if all_overdue:
             return dg.SensorResult(skip_reason=dg.SkipReason("Review SLA alert already sent."))
         return dg.SensorResult(
             skip_reason=dg.SkipReason(
-                f"Review queue healthy ({len(pending_ids)} pending, 0 overdue)."
+                f"Review queue healthy ({len(all_pending)} pending, 0 overdue)."
             )
         )
 
@@ -832,6 +967,7 @@ def build_definitions() -> dg.Definitions:
             coverage_gaps_disclosed,
             t0_rights_boundary_enforced,
             quote_rights_limits_respected,
+            live_export_has_no_fixture_records,
             gold_set_thresholds_met,
             retention_index_bloat_within_limit,
         ],

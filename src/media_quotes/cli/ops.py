@@ -343,6 +343,7 @@ def _do_digest(
     from datetime import UTC, datetime, time
 
     from ..curation import review_badge
+    from ..pipeline import _LIVE_NOTICE
     from .common import load_review_flags
 
     review_flags = load_review_flags(settings)
@@ -366,7 +367,7 @@ def _do_digest(
         provider=make_provider(settings, topic_pack=topic_pack),
         obsolescence_flags=review_flags,
         review_badges=review_badges,
-        notice=_NOTICE,
+        notice=_LIVE_NOTICE if provenance != "fixture" else _NOTICE,
         now=now,
     )
     print(f"Digest {len(records)} quote(s): {path}")

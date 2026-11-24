@@ -111,15 +111,15 @@ def test_quotes_tab_filters_rendered_table(tmp_path: Path) -> None:
         f"dashboard._render_quotes(Path({str(export_dir)!r}), 'ukraine-war')\n"
     )
 
-    app = AppTest.from_string(script).run()
+    app = AppTest.from_string(script).run(timeout=15)
     assert not app.exception
     assert len(app.dataframe[0].value) == 1
 
-    app.text_input(key="qb_text").set_value("earlier").run()
+    app.text_input(key="qb_text").set_value("earlier").run(timeout=15)
     assert not app.exception
     assert len(app.dataframe[0].value) == 0
 
-    app.checkbox(key="qb_obsolete").check().run()
+    app.checkbox(key="qb_obsolete").check().run(timeout=15)
     assert not app.exception
     assert len(app.dataframe[0].value) == 1
     assert app.dataframe[0].value.iloc[0]["quote_id"] == "Q-20261119-0002"

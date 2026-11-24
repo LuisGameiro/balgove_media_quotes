@@ -73,9 +73,20 @@ def _sha256_file(path: Path) -> str:  # pragma: no cover
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def load_review_flags(settings: Settings) -> list[ObsolescenceFlag]:  # pragma: no cover
-    """Read and validate the obsolescence queue. One loader for CLI, sensor and maintenance."""
-    queue_path = settings.audit_dir / "review-queue.json"
+_QUEUE_FILE = "review-queue.json"
+
+
+def review_queue_path(settings: Settings, provenance: AcquisitionProvenance = "fixture") -> Path:
+    """Resolve the obsolescence queue for one provenance; fixture keeps the legacy name."""
+    name = _QUEUE_FILE if provenance == "fixture" else f"review-queue-{provenance}.json"
+    return settings.audit_dir / name
+
+
+def load_review_flags(
+    settings: Settings, provenance: AcquisitionProvenance = "fixture"
+) -> list[ObsolescenceFlag]:  # pragma: no cover
+    """Read and validate one provenance's obsolescence queue for CLI, sensor and pipeline."""
+    queue_path = review_queue_path(settings, provenance)
     if not queue_path.is_file():
         return []
     payload = _read_json(queue_path)
@@ -121,7 +132,7 @@ def _registry_sha256(settings: Settings) -> str:  # pragma: no cover
 
 
 def _version_manifest(
-    settings: Settings, topic_id: str | None = None
+    settings: Settings, topic_id: str | None = None, *, source_mode: str = "fixtures"
 ) -> dict[str, Any]:  # pragma: no cover
     return {
         "app_version": __version__,
@@ -139,7 +150,8 @@ def _version_manifest(
         "registry_sha256": _registry_sha256(settings),
         "sections_sha256": _sha256_file(settings.sections_csv),
         "active_topic": topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID),
-        "fixture_replay": True,
+        "source_mode": source_mode,
+        "fixture_replay": source_mode == "fixtures",
     }
 
 
@@ -157,7 +169,11 @@ def _window(report_date: date, settings: Settings) -> tuple[date, date]:  # prag
 
 
 def _run_id(
-    report_date: date, settings: Settings, *, topic_id: str | None = None
+    report_date: date,
+    settings: Settings,
+    *,
+    topic_id: str | None = None,
+    provenance: AcquisitionProvenance = "fixture",
 ) -> str:  # pragma: no cover
     parts = [
         "run-v1",
@@ -167,6 +183,8 @@ def _run_id(
     ]
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
         parts.append(topic_id)
+    if provenance != "fixture":
+        parts.append(provenance)
     digest = content_hash(parts)
     return f"run-{digest[:12]}"
 

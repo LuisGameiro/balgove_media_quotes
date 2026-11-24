@@ -111,6 +111,81 @@ def test_review_unknown_action(tmp_path: Path) -> None:
         _do_review(settings_for(tmp_path), action="unknown")
 
 
+def _flag_payload(quote_id: str, state: str = "pending") -> dict[str, object]:
+    return {
+        "evidence": {
+            "old_quote_id": quote_id,
+            "old_content_hash": "a" * 64,
+            "newer_article_id": "art-2",
+            "newer_content_hash": "b" * 64,
+            "newer_is_first_hand": True,
+            "newer_rights_cleared": True,
+            "superseding_span": "Updated ceasefire statement.",
+            "decision_id": "dec-1",
+            "rationale": "Superseded by newer official statement.",
+        },
+        "confidence": 0.92,
+        "state": state,
+        "raised_at": "2026-11-19T09:00:00Z",
+    }
+
+
+def test_fixture_and_live_review_queues_coexist(tmp_path: Path) -> None:
+    from media_quotes.cli.common import load_review_flags
+
+    settings = settings_for(tmp_path)
+    settings.audit_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = settings.audit_dir / "review-queue.json"
+    live_path = settings.audit_dir / "review-queue-live_feed.json"
+    bing_path = settings.audit_dir / "review-queue-live_bing.json"
+    shared_fixture = {"flags": [_flag_payload("Q-SHARED")]}
+    shared_live = {"flags": [_flag_payload("Q-SHARED")]}
+    fixture_path.write_text(json.dumps(shared_fixture), encoding="utf-8")
+    live_path.write_text(json.dumps(shared_live), encoding="utf-8")
+
+    # The same quote ID in two provenance queues must not be merged into one loader.
+    assert [f.evidence.old_quote_id for f in load_review_flags(settings)] == ["Q-SHARED"]
+    assert [f.evidence.old_quote_id for f in load_review_flags(settings, "live_feed")] == [
+        "Q-SHARED"
+    ]
+
+    assert _do_review(settings, action="decide", quote_id="Q-SHARED", provenance="live_feed") == 0
+    assert json.loads(live_path.read_text(encoding="utf-8"))["flags"][0]["state"] == "confirmed"
+    assert json.loads(fixture_path.read_text(encoding="utf-8")) == shared_fixture
+
+    assert _do_review(settings, action="seed", quote_id="Q-BING-SEED", provenance="live_bing") == 0
+    assert bing_path.is_file()
+    seeded = json.loads(bing_path.read_text(encoding="utf-8"))["flags"]
+    assert seeded[0]["evidence"]["old_quote_id"] == "Q-BING-SEED"
+    assert json.loads(fixture_path.read_text(encoding="utf-8")) == shared_fixture
+    assert json.loads(live_path.read_text(encoding="utf-8"))["flags"][0]["state"] == "confirmed"
+
+
+def test_review_cli_provenance_option_reaches_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import media_quotes.cli as cli
+    from media_quotes.cli.app import main
+
+    settings = settings_for(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def spy(_settings: Settings, **kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli, "_do_review", spy)
+    monkeypatch.setattr("media_quotes.cli.app.get_settings", lambda: settings)
+
+    assert main(["review", "--action", "list", "--provenance", "live_feed"]) == 0
+    assert main(["review", "--action", "list"]) == 0
+    assert calls[0]["provenance"] == "live_feed"
+    assert calls[1]["provenance"] == "fixture"
+
+    with pytest.raises(SystemExit):
+        main(["review", "--provenance", "not-a-provenance"])
+
+
 def test_retention_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert _do_retention(settings_for(tmp_path), dry_run=True) == 0
     out = capsys.readouterr().out

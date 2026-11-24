@@ -40,6 +40,7 @@ def _audit_report(  # pragma: no cover
     review_queue: Sequence[dict[str, Any]] = (),
     topic_id: str = DEFAULT_TOPIC_ID,
     provenance: AcquisitionProvenance = "fixture",
+    source_mode: str = "fixtures",
 ) -> dict[str, Any]:
     window_start, window_end = _window(report_date, settings)
     checks = {
@@ -73,12 +74,16 @@ def _audit_report(  # pragma: no cover
     checks["gates_pass"] = all(value for key, value in checks.items() if key not in informational)
     return {
         "topic_id": topic_id,
+        "source_mode": source_mode,
+        "provenance": provenance,
         "report_date": report_date.isoformat(),
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "run_id": run_id,
         "mode": (
-            "live Postgres + OpenRouter"
+            "live collection"
+            if provenance != "fixture"
+            else "live Postgres + OpenRouter"
             if settings.persist_to_postgres and settings.llm_provider == "openrouter"
             else "Postgres persistent"
             if settings.persist_to_postgres
@@ -90,7 +95,7 @@ def _audit_report(  # pragma: no cover
         "coverage_gaps": list(gaps),
         "review_queue": list(review_queue),
         "checks": checks,
-        "version_manifest": _version_manifest(settings, topic_id=topic_id),
+        "version_manifest": _version_manifest(settings, topic_id=topic_id, source_mode=source_mode),
         "artifacts": {
             "digest": str(
                 _digest_path(settings, report_date, topic_id=topic_id, provenance=provenance)
@@ -228,7 +233,9 @@ def _do_audit(  # pragma: no cover
                     settings.export_dir, report_date, topic_id=active_topic, provenance=provenance
                 )
             )
-        audit_run_id = run_id or _run_id(report_date, settings, topic_id=active_topic)
+        audit_run_id = run_id or _run_id(
+            report_date, settings, topic_id=active_topic, provenance=provenance
+        )
         from .common import load_review_flags
 
         report = _audit_report(

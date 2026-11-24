@@ -5,7 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from media_quotes.dashboard import coverage_summary, review_queue_view
+from media_quotes.dashboard import (
+    _latest_audit,
+    coverage_by_day_matrix,
+    coverage_summary,
+    daily_source_coverage,
+    review_queue_view,
+)
 
 
 def write_audit(
@@ -58,3 +64,65 @@ def test_audit_report_includes_review_queue_key(tmp_path: Path) -> None:
         rejected=0,
     )
     assert report["review_queue"] == []
+
+
+def test_live_audit_wins_over_fixture_audit(tmp_path: Path) -> None:
+    # A fixture report and a canonical live report for the same topic/day coexist.
+    write_audit(
+        tmp_path / "fixtures",
+        {
+            "topic_id": "ukraine-war",
+            "provenance": "fixture",
+            "coverage": [{"source_id": "reuters", "quotes": 1}],
+        },
+    )
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "provenance": "live_feed",
+            "coverage": [{"source_id": "bbc", "quotes": 9}],
+        },
+    )
+    assert _latest_audit(tmp_path)["provenance"] == "live_feed"
+    assert coverage_summary(tmp_path) == [{"source_id": "bbc", "quotes": 9}]
+
+    # Topic isolation still holds on the live tree.
+    assert _latest_audit(tmp_path, topic_id="ai-policy") == {}
+
+
+def test_daily_source_coverage_does_not_double_count(tmp_path: Path) -> None:
+    for day, quotes in (("2026-11-18", 2), ("2026-11-19", 3)):
+        write_audit(
+            tmp_path,
+            {
+                "topic_id": "ukraine-war",
+                "report_date": day,
+                "coverage": [{"source_id": "guardian", "quotes": quotes}],
+            },
+            day=f"audit-{day}.json",
+        )
+        write_audit(
+            tmp_path / "fixtures",
+            {
+                "topic_id": "ukraine-war",
+                "report_date": day,
+                "coverage": [{"source_id": "guardian", "quotes": 100}],
+            },
+            day=f"audit-{day}.json",
+        )
+
+    records = daily_source_coverage(tmp_path)
+    assert records == [
+        {"date": "2026-11-18", "source_id": "guardian", "quotes": 2},
+        {"date": "2026-11-19", "source_id": "guardian", "quotes": 3},
+    ]
+    matrix = coverage_by_day_matrix(records)
+    assert matrix == [
+        {
+            "source_id": "guardian",
+            "2026-11-19": 3,
+            "2026-11-18": 2,
+            "total_quotes": 5,
+        }
+    ]

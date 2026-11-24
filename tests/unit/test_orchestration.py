@@ -73,6 +73,7 @@ def test_definitions_expose_asset_job_checks_and_schedule() -> None:
         "coverage_gaps_disclosed",
         "export_schema_valid",
         "gold_set_thresholds_met",
+        "live_export_has_no_fixture_records",
         "quote_rights_limits_respected",
         "retention_index_bloat_within_limit",
         "t0_rights_boundary_enforced",
@@ -111,6 +112,34 @@ def test_schedule_emits_todays_partition_at_0600() -> None:
     assert request.run_key == "2026-11-20"
 
 
+def test_schedules_request_live_collection_but_stay_stopped() -> None:
+    import dagster as dg
+
+    defs = build_definitions()
+    for schedule, expected_tier in zip(defs.schedules, (None, 1), strict=True):
+        # Schedules ship STOPPED; enabling one later performs live collection.
+        assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+        context = dg.build_schedule_context(
+            repository_def=defs.get_repository_def(),
+            scheduled_execution_time=datetime(2026, 11, 20, 6, tzinfo=UTC),
+        )
+        request = schedule._execution_fn.decorated_fn(context)
+        assert request is not None
+        run_config = request.run_config["ops"]["daily_quotes_digest"]["config"]
+        assert run_config["source_mode"] == "live"
+        assert run_config.get("tier") == expected_tier
+
+
+def test_daily_pipeline_config_rejects_unknown_source_mode() -> None:
+    from pydantic import ValidationError
+
+    from media_quotes.orchestration import DailyPipelineConfig
+
+    assert DailyPipelineConfig(source_mode="live").source_mode == "live"
+    with pytest.raises(ValidationError, match="unsupported source_mode"):
+        DailyPipelineConfig(source_mode="direct-network")
+
+
 def test_materialize_one_partition_with_resource_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -144,6 +173,7 @@ def test_materialize_one_partition_with_resource_overrides(
         "coverage_gaps_disclosed": True,
         "t0_rights_boundary_enforced": True,
         "quote_rights_limits_respected": True,
+        "live_export_has_no_fixture_records": True,
     }
 
 
@@ -181,6 +211,7 @@ def test_checks_read_their_own_topic_when_both_exist(
         "coverage_gaps_disclosed": True,
         "t0_rights_boundary_enforced": False,
         "quote_rights_limits_respected": False,
+        "live_export_has_no_fixture_records": True,
     }
     assert (tmp_path / "audit" / "fixtures" / "ai-policy" / "audit-2026-11-19.json").is_file()
     assert (tmp_path / "export" / "fixtures" / "ai-policy" / "quotes-2026-11-19.jsonl").is_file()
@@ -272,3 +303,235 @@ def test_review_queue_sla_sensor_healthy_and_overdue(
     assert "ALERT: 1 overdue review item(s): Q-20261115-0001" in res_overdue.skip_message
     assert ctx_overdue.cursor is not None
     assert json.loads(ctx_overdue.cursor)["overdue_quote_ids"] == ["Q-20261115-0001"]
+
+
+def _queue_flag(quote_id: str, *, overdue: bool) -> dict[str, Any]:
+    raised_at = (
+        datetime.now(UTC) - timedelta(days=3) if overdue else datetime.now(UTC)
+    ).isoformat()
+    return {
+        "evidence": {
+            "old_quote_id": quote_id,
+            "old_content_hash": "a" * 64,
+            "newer_article_id": "art-2",
+            "newer_content_hash": "b" * 64,
+            "newer_is_first_hand": True,
+            "newer_rights_cleared": True,
+            "superseding_span": "Updated ceasefire statement.",
+            "decision_id": "dec-1",
+            "rationale": "Superseded by newer official statement.",
+        },
+        "confidence": 0.92,
+        "state": "pending",
+        "raised_at": raised_at,
+    }
+
+
+def test_review_queue_sensor_handles_multiple_provenances(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import dagster as dg
+
+    settings = _make_settings(tmp_path)
+    settings.audit_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(orchestration, "get_settings", lambda: settings)
+    # The same overdue quote ID appears in two queues; each queue must be built separately.
+    queues = {
+        "review-queue.json": [
+            _queue_flag("Q-SHARED", overdue=True),
+            _queue_flag("Q-FIX", overdue=False),
+        ],
+        "review-queue-live_feed.json": [
+            _queue_flag("Q-SHARED", overdue=True),
+            _queue_flag("Q-LIVE", overdue=False),
+        ],
+        "review-queue-manual_sample.json": [_queue_flag("Q-MANUAL", overdue=False)],
+        "review-queue-live_bing.json": [],
+    }
+    for name, flags in queues.items():
+        (settings.audit_dir / name).write_text(json.dumps({"flags": flags}), encoding="utf-8")
+
+    defs = build_definitions()
+    sensor = defs.sensors[0]
+    context = dg.build_sensor_context(repository_def=defs.get_repository_def())
+    result = sensor.evaluate_tick(context)
+
+    assert result.skip_message is not None
+    assert "ALERT: 1 overdue review item(s): Q-SHARED" in result.skip_message
+    assert "fixture:" in result.skip_message
+    assert "live_feed:" in result.skip_message
+    assert context.cursor is not None
+    cursor = json.loads(context.cursor)
+    assert cursor["queues"]["fixture"]["pending_count"] == 2
+    assert cursor["queues"]["live_feed"]["pending_count"] == 2
+    assert cursor["queues"]["manual_sample"]["pending_count"] == 1
+    assert cursor["queues"]["live_bing"]["pending_count"] == 0
+    assert cursor["queues"]["fixture"]["overdue_count"] == 1
+    assert cursor["queues"]["live_feed"]["overdue_count"] == 1
+    assert cursor["overdue_quote_ids"] == ["Q-SHARED"]
+
+    # A second tick with the same state does not re-alert.
+    context2 = dg.build_sensor_context(
+        repository_def=defs.get_repository_def(), cursor=context.cursor
+    )
+    result2 = sensor.evaluate_tick(context2)
+    assert result2.skip_message == "Review SLA alert already sent."
+
+
+def _write_audit(
+    tmp_path: Path,
+    day: str,
+    payload: dict[str, Any],
+    *,
+    fixture: bool = False,
+    topic: str | None = None,
+) -> Path:
+    root = tmp_path / "audit" / "fixtures" if fixture else tmp_path / "audit"
+    if topic and topic != "ukraine-war":
+        root = root / topic
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"audit-{day}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _audit_payload(
+    day: str,
+    *,
+    provenance: str = "fixture",
+    source_mode: str = "fixtures",
+    topic_id: str = "ukraine-war",
+) -> dict[str, Any]:
+    return {
+        "topic_id": topic_id,
+        "report_date": day,
+        "source_mode": source_mode,
+        "provenance": provenance,
+        "coverage": [],
+        "coverage_gaps": [],
+        "checks": {"gates_pass": True},
+    }
+
+
+class _PartitionedCheckContext:
+    """Minimal context: checks only read the partition key from it."""
+
+    asset_partition_key = "2026-11-19"
+
+
+def _check_result(defs: Any, name: str, settings: Settings) -> Any:
+    from media_quotes.orchestration import CheckConfig
+
+    group = next(
+        group for group in defs.asset_checks if any(key.name == name for key in group.check_keys)
+    )
+    check_fn = group.computation.node_def.compute_fn.decorated_fn
+    return check_fn(_PartitionedCheckContext(), CheckConfig(), settings)
+
+
+def test_provenance_helpers_prefer_live_audit(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    _write_audit(tmp_path, "2026-11-19", _audit_payload("2026-11-19"), fixture=True)
+
+    report, provenance = orchestration._selected_audit(settings, day, "ukraine-war")
+    assert provenance == "fixture"
+    assert report["source_mode"] == "fixtures"
+
+    _write_audit(
+        tmp_path,
+        "2026-11-19",
+        _audit_payload("2026-11-19", provenance="live_feed", source_mode="live"),
+    )
+    report, provenance = orchestration._selected_audit(settings, day, "ukraine-war")
+    assert provenance == "live_feed"
+    assert report["source_mode"] == "live"
+    # An explicit provenance filter still reads the matching tree.
+    assert (
+        orchestration._load_audit_report(settings, day, "ukraine-war", "fixture")["source_mode"]
+        == "fixtures"
+    )
+
+
+def test_check_topic_never_treats_fixtures_as_topic(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    _write_audit(tmp_path, "2026-11-19", _audit_payload("2026-11-19"), fixture=True)
+    assert orchestration._check_topic(settings, day, None) == "ukraine-war"
+
+    # A live audit for a named topic wins over the fixture audit for the default topic.
+    _write_audit(
+        tmp_path,
+        "2026-11-19",
+        _audit_payload("2026-11-19", topic_id="ai-policy"),
+        topic="ai-policy",
+    )
+    assert orchestration._check_topic(settings, day, None) == "ai-policy"
+
+
+def test_schema_check_reads_selected_provenance(tmp_path: Path) -> None:
+    from media_quotes.pipeline import run_daily_pipeline
+
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    settings.report_date = day
+    run_daily_pipeline(settings, report_date=day, topic_id="ukraine-war")
+
+    fixture_export = tmp_path / "export" / "fixtures" / "quotes-2026-11-19.jsonl"
+    live_export = tmp_path / "export" / "quotes-2026-11-19.jsonl"
+    live_export.write_bytes(fixture_export.read_bytes())
+    _write_audit(
+        tmp_path,
+        "2026-11-19",
+        _audit_payload("2026-11-19", provenance="live_feed", source_mode="live"),
+    )
+    fixture_export.write_text("", encoding="utf-8")  # only the live export has records
+
+    defs = build_definitions()
+    assert _check_result(defs, "export_schema_valid", settings).passed is True
+
+    # No live audit: fall back to the empty fixture export and fail.
+    (tmp_path / "audit" / "audit-2026-11-19.json").unlink()
+    assert _check_result(defs, "export_schema_valid", settings).passed is False
+
+
+def test_live_export_check_fails_on_fixture_records(tmp_path: Path) -> None:
+    from media_quotes.pipeline import run_daily_pipeline
+
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    settings.report_date = day
+    run_daily_pipeline(settings, report_date=day, topic_id="ukraine-war")
+
+    fixture_export = tmp_path / "export" / "fixtures" / "quotes-2026-11-19.jsonl"
+    live_export = tmp_path / "export" / "quotes-2026-11-19.jsonl"
+    live_export.write_bytes(fixture_export.read_bytes())  # fixture-stamped records at live path
+    _write_audit(
+        tmp_path,
+        "2026-11-19",
+        _audit_payload("2026-11-19", provenance="live_feed", source_mode="live"),
+    )
+
+    defs = build_definitions()
+    failed = _check_result(defs, "live_export_has_no_fixture_records", settings)
+    assert failed.passed is False
+    assert failed.metadata["fixture_records"].value >= 1
+
+    clean = "\n".join(
+        json.dumps({**json.loads(line), "provenance": "live_feed"})
+        for line in fixture_export.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+    live_export.write_text(clean + "\n", encoding="utf-8")
+    assert _check_result(defs, "live_export_has_no_fixture_records", settings).passed is True
+
+
+def test_live_export_check_skips_fixture_runs(tmp_path: Path) -> None:
+    import dagster as dg
+
+    settings = _make_settings(tmp_path)
+    settings.report_date = date(2026, 11, 19)
+    defs = build_definitions()
+    result = _check_result(defs, "live_export_has_no_fixture_records", settings)
+    assert result.passed is True
+    assert result.severity == dg.AssetCheckSeverity.WARN

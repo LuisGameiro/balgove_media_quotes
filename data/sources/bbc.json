@@ -17,7 +17,12 @@
   "discovery_method": "rss",
   "archive_start_date": "2026-10-01",
   "enabled": true,
-  "notes": "Written licence accepted 2026-11-23 covering retrieval, storage, RAG grounding, verbatim quotes and backfill. Live RSS discovery approved; translation rights not confirmed.",
+  "bing_discovery_enabled": true,
+  "content_hosts": [
+    "www.bbc.co.uk",
+    "feeds.bbci.co.uk"
+  ],
+  "notes": "Written licence accepted 2026-11-23 covering retrieval, storage, RAG grounding, verbatim quotes and backfill. Live RSS discovery approved; Bing discovery is discovery-only (article text still fetched from the original publisher under licence); translation rights not confirmed.",
   "routes": [
     {
       "route_id": "route-bbc-ukraine-default",

@@ -8,11 +8,12 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
 from ..config import Settings, get_settings, unknown_setting_env_vars
+from ..enums import ACQUISITION_PROVENANCES, AcquisitionProvenance
 from ..exceptions import BudgetExceededError, ConfigError, MediaQuotesError, ValidationError
 from ..observability import configure_observability
 from ..validation import validate_data_dir
@@ -110,6 +111,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="ingest T0-cleared live HTML blobs from BLOB_DIR instead of synthetic fixtures",
     )
     run_parser.add_argument(
+        "--live",
+        dest="live",
+        action="store_true",
+        help="collect articles from configured feeds before verification (official feed first)",
+    )
+    run_parser.add_argument(
         "--tier",
         dest="run_tier",
         type=int,
@@ -204,6 +211,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ingest live HTML blobs from BLOB_DIR instead of synthetic fixtures during --execute",
     )
+    backfill.add_argument(
+        "--live",
+        dest="live",
+        action="store_true",
+        help="collect articles from configured feeds during --execute",
+    )
     subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
     export_parser = subparsers.add_parser("export", help="derived JSONL export", **shared)
     export_parser.add_argument(
@@ -224,6 +237,13 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument("--quote-id", dest="quote_id")
     review.add_argument("--verdict", choices=("confirmed", "rejected", "escalated"), dest="verdict")
     review.add_argument("--reason-code", dest="reason_code", default="human-review")
+    review.add_argument(
+        "--provenance",
+        dest="provenance",
+        choices=ACQUISITION_PROVENANCES,
+        default="fixture",
+        help="obsolescence queue provenance (default: fixture)",
+    )
     prune = subparsers.add_parser("blob-prune", help="prune old, tombstoned blobs", **shared)
     prune.add_argument("--tombstones", dest="tombstones", required=True, type=Path)
     prune.add_argument("--execute", action="store_true", help="delete files; without it only plan")
@@ -354,6 +374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 quote_id=getattr(args, "quote_id", None),
                 verdict=getattr(args, "verdict", None),
                 reason_code=str(getattr(args, "reason_code", "human-review")),
+                provenance=cast(AcquisitionProvenance, str(getattr(args, "provenance", "fixture"))),
             )
         if command == "blob-prune":
             return _do_blob_prune(
@@ -415,7 +436,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command in {"run", "audit", "digest"}:
             report_date = _parse_report_date(getattr(args, "date", None), settings)
             if command == "run":
-                source_mode = "blobs" if getattr(args, "from_blobs", False) else "fixtures"
+                source_mode = (
+                    "live"
+                    if getattr(args, "live", False)
+                    else "blobs"
+                    if getattr(args, "from_blobs", False)
+                    else "fixtures"
+                )
                 run_tier = getattr(args, "run_tier", None)
                 run_kwargs: dict[str, Any] = {
                     "report_date": report_date,
@@ -520,7 +547,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 backfill_kwargs["execute"] = True
             if topic_arg is not None:
                 backfill_kwargs["topic_id"] = topic_arg
-            if getattr(args, "from_blobs", False):
+            if getattr(args, "live", False):
+                backfill_kwargs["source_mode"] = "live"
+                backfill_kwargs["provenance"] = "live_feed"
+            elif getattr(args, "from_blobs", False):
                 backfill_kwargs["source_mode"] = "blobs"
             return _do_backfill(settings, **backfill_kwargs)
         if command == "graph":

@@ -11,8 +11,11 @@ from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import BlobCache, FixtureSource, build_adapter
 from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
+from ..enums import AcquisitionProvenance
 from ..exceptions import ConfigError
 from ..export import content_hash, quote_record
+from ..fetch import fetch_policy_from
+from ..live import LiveSourceResult, collect_live_source
 from ..models import ExportQuoteRecord, QuoteCandidate
 from ..pipeline import (
     JudgeProvider,
@@ -40,6 +43,7 @@ from ..topics import DEFAULT_TOPICS_DIR, TopicPack, load_all_topic_rules
 from ..verification_stages import verify_pipeline
 from .common import (
     _MANDATORY,
+    EXIT_FAILURE,
     EXIT_GAPS,
     EXIT_OK,
     _event,
@@ -58,8 +62,10 @@ _DEFAULT_LOAD_SOURCE_TOPIC_ROUTES = load_source_topic_routes
 _DEFAULT_LOAD_TOPIC_RULES = load_topic_rules
 
 
-def _load_review_flags(settings: Settings) -> list[ObsolescenceFlag]:
-    return load_review_flags(settings)
+def _load_review_flags(
+    settings: Settings, provenance: AcquisitionProvenance = "fixture"
+) -> list[ObsolescenceFlag]:
+    return load_review_flags(settings, provenance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,6 +339,9 @@ def _process_source(  # pragma: no cover
     topic_pack: TopicPack | None = None,
     source_config: SourceConfig | None = None,
     source_mode: str = "fixtures",
+    refs: list[str] | None = None,
+    provenance: AcquisitionProvenance = "fixture",
+    discovery_route: str = "",
 ) -> tuple[
     list[ExportQuoteRecord],
     dict[str, Any],
@@ -342,7 +351,7 @@ def _process_source(  # pragma: no cover
     dict[str, dict[str, Any]],
 ]:
     """Process one source through discovery, fixture fetch, two-stage verification and metadata."""
-    use_blobs = source_mode == "blobs"
+    use_blobs = source_mode in {"blobs", "live"}
     replay = False if use_blobs else _fixture_mode(row, settings)
     active_topic_id = (
         topic_pack.topic_id
@@ -392,6 +401,8 @@ def _process_source(  # pragma: no cover
                 "processed": 0,
                 "quotes": 0,
                 "last_check_at": datetime.combine(report_date, time(12, 0), tzinfo=UTC).isoformat(),
+                "provenance": provenance,
+                "discovery_route": discovery_route,
                 "status": "blocked",
                 "gap_reason": _gap_for(row)[1],
                 "mandatory": row.source_id in _MANDATORY,
@@ -420,7 +431,7 @@ def _process_source(  # pragma: no cover
         source_config=source_config,
         extraction_fallback=settings.extraction_fallback,
     )
-    refs = adapter.discover(window_start, report_date)
+    article_refs = adapter.discover(window_start, report_date) if refs is None else refs
     if replay:
         events.append(
             _event(
@@ -432,8 +443,24 @@ def _process_source(  # pragma: no cover
                 mode="fixture_replay",
                 rights_status=str(row.rights_status),
                 license_reference=row.license_reference or "(none)",
-                fixture_count=len(refs),
+                fixture_count=len(article_refs),
                 message="blocked mandatory source replayed from synthetic fixtures",
+            )
+        )
+    elif article_refs:
+        events.append(
+            _event(
+                run_id=run_id,
+                trace_id=f"trace-source-{row.source_id}",
+                source_id=row.source_id,
+                step="discover",
+                status="collected",
+                mode=adapter.mode,
+                provenance=provenance,
+                discovery_route=discovery_route,
+                license_reference=row.license_reference or "(none)",
+                fixture_count=len(article_refs),
+                message="articles supplied by the live collector; no fixture discovery used",
             )
         )
 
@@ -447,8 +474,9 @@ def _process_source(  # pragma: no cover
     topic_terms: set[str] = set()
     topic_rule_version = ""
     topic_score = 0.0
+    route = discovery_route
 
-    for ref in refs:
+    for ref in article_refs:
         trace_id = _trace_id(row.source_id, ref)
         raw = adapter.fetch(ref)
         sidecar_meta: dict[str, Any] = {}
@@ -456,6 +484,7 @@ def _process_source(  # pragma: no cover
             ref_stem = Path(ref.rsplit("/", 1)[-1]).stem
             sidecar_meta = blob_cache.read_meta(row.source_id, ref_stem)
         sidecar_url = str(sidecar_meta.get("url") or "") or None
+        route = discovery_route or str(sidecar_meta.get("discovered_via") or "")
         metadata = (
             adapter.parse_metadata(raw, source_url=sidecar_url)
             if sidecar_url is not None
@@ -485,6 +514,8 @@ def _process_source(  # pragma: no cover
                 mode=adapter.mode,
                 content_hash=raw_hash,
                 canonical_url=canonical_url,
+                provenance=provenance,
+                discovery_route=route,
                 license_reference=row.license_reference or "(none)",
             )
         )
@@ -755,6 +786,7 @@ def _process_source(  # pragma: no cover
                         else ("live blob ingest" if use_blobs else "offline replay")
                     ),
                     topic_id=active_topic_id,
+                    provenance=provenance,
                 ).model_copy(update=topic_updates)
             )
             events.append(
@@ -766,19 +798,35 @@ def _process_source(  # pragma: no cover
                     status="verified",
                     quote_id=quote_id,
                     fixture_replay=replay,
+                    provenance=provenance,
+                    discovery_route=route,
                     license_reference=row.license_reference or "(none)",
                 )
             )
-    if not refs and row.usable:
-        gaps.append(_gap_record(row, "no permitted articles found in the replay window"))
+    if not article_refs and row.usable:
+        detail = (
+            f"no articles were supplied by the {provenance} collector"
+            if use_blobs
+            else "no permitted articles found in the replay window"
+        )
+        if use_blobs and discovery_route:
+            detail += f" via {discovery_route}"
+        gap = _gap_record(row, detail)
+        if use_blobs:
+            gap.update({"provenance": provenance, "discovery_route": discovery_route})
+        gaps.append(gap)
     coverage = {
         "source_id": row.source_id,
-        "expected_articles": len(refs),
-        "discovered": len(refs),
-        "processed": len(refs),
+        "expected_articles": len(article_refs),
+        "discovered": len(article_refs),
+        "processed": len(article_refs),
         "quotes": sum(1 for record in records if record.source_id == row.source_id),
         "last_check_at": verified_at.isoformat(),
-        "status": "degraded" if replay or not row.usable else "ok",
+        "provenance": provenance,
+        "discovery_route": route,
+        "status": (
+            "degraded" if replay or not row.usable or (use_blobs and not article_refs) else "ok"
+        ),
         "gap_reason": "rights_blocked" if replay else "",
         "mandatory": row.source_id in _MANDATORY,
         "topic_status": (
@@ -812,6 +860,8 @@ def _collect(  # pragma: no cover
     int,
     dict[str, dict[str, Any]],
 ]:
+    if source_mode not in {"fixtures", "blobs", "live"}:
+        raise ConfigError(f"unsupported source_mode {source_mode!r}")
     window_start, _ = _window(report_date, settings)
     records: list[ExportQuoteRecord] = []
     coverage: list[dict[str, Any]] = []
@@ -822,10 +872,48 @@ def _collect(  # pragma: no cover
     offsets: dict[str, dict[str, Any]] = {}
     source_configs = _load_source_configs(settings)
     active_pack = topic_pack if topic_pack is not None else _load_topic_pack(settings)
+    topic_id = (
+        active_pack.topic_id
+        if active_pack is not None
+        else str(_setting(settings, "active_topic", DEFAULT_TOPIC_ID))
+    )
     rows = _load_registry(settings)
     if tier is not None:
         rows = [row for row in rows if row.tier == tier]
     for row in rows:
+        refs: list[str] | None = None
+        row_provenance: AcquisitionProvenance = (
+            "live_feed" if source_mode in {"blobs", "live"} else "fixture"
+        )
+        discovery_route = ""
+        collector_errors: list[str] = []
+        if source_mode == "live" and row.usable:
+            config = source_configs.get(row.source_id)
+            feed_url = (config.discovery_feed_url(topic_id) if config else "") or row.feed_url
+            extra_hosts = frozenset(
+                [*config.content_hosts, *config.redirect_hosts] if config else []
+            )
+            try:
+                outcome = collect_live_source(
+                    row,
+                    feed_url=feed_url,
+                    topic_pack=active_pack,
+                    policy=fetch_policy_from(settings),
+                    cache=BlobCache(settings.blob_dir),
+                    limit=settings.live_article_limit,
+                    source_config=config,
+                    extra_hosts=extra_hosts,
+                )
+            except Exception as exc:  # a failed collector becomes a disclosed gap, not a crash
+                outcome = LiveSourceResult([], [], "live_feed", "official_feed", [str(exc)])
+            row_provenance = outcome.provenance
+            discovery_route = outcome.route
+            collector_errors = list(outcome.errors)
+            refs = [
+                f"fixture://{row.source_id}/{Path(article.blob_path).name}"
+                for article in outcome.articles
+                if not article.error and article.blob_path
+            ]
         found, cov, row_gaps, row_events, row_rejected, row_offsets = _process_source(
             row,
             settings=settings,
@@ -835,8 +923,15 @@ def _collect(  # pragma: no cover
             used_quote_ids=used_quote_ids,
             topic_pack=active_pack,
             source_config=source_configs.get(row.source_id),
-            source_mode=source_mode,
+            source_mode="blobs" if source_mode == "live" else source_mode,
+            refs=refs,
+            provenance=row_provenance,
+            discovery_route=discovery_route,
         )
+        for error in collector_errors:
+            gap = _gap_record(row, f"live collector error: {error}")
+            gap.update({"provenance": row_provenance, "discovery_route": discovery_route})
+            row_gaps.append(gap)
         records.extend(found)
         coverage.append(cov)
         gaps.extend(row_gaps)
@@ -887,12 +982,17 @@ def _do_run(  # pragma: no cover
             f"Postgres: {result.persistence['articles']} article(s), "
             f"{result.persistence['stored_quotes']} quote(s) persisted"
         )
+    is_fixture = result.provenance == "fixture"
+    quote_label = (
+        "verified fixture quote(s)" if is_fixture else f"verified {result.provenance} quote(s)"
+    )
     print(
         f"Run {result.run_id} (topic={result.topic_id}): "
-        f"{len(result.records)} verified fixture quote(s), "
+        f"{len(result.records)} {quote_label}, "
         f"{result.rejected} rejected, {len(result.gaps)} coverage gap(s)."
     )
-    print(f"Digest: {result.digest_path}")
+    if result.digest_path is not None:
+        print(f"Digest: {result.digest_path}")
     print(f"Store:  {result.store_path}")
     print(f"Logs:   {result.logs_path}")
     if verbose:
@@ -904,8 +1004,16 @@ def _do_run(  # pragma: no cover
             if key in reported:
                 continue
             reported.add(key)
+            note = (
+                "fixture replay logged, no live contact"
+                if is_fixture
+                else "no synthetic replay; live collection only"
+            )
             print(
                 f"COVERAGE GAP: {gap['source_id']} is {gap['rights_status']}; "
-                f"{gap['gap_reason']} (fixture replay logged, no live contact)."
+                f"{gap['gap_reason']} ({note})."
             )
+    if result.status == "failed":
+        print("Run failed: mandatory live sources yielded no quotes; no digest published.")
+        return EXIT_FAILURE
     return EXIT_GAPS if result.gaps else EXIT_OK

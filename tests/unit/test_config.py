@@ -39,6 +39,14 @@ def test_dec10_limits_accept_environment_override(monkeypatch):
     assert settings.batch_model_snapshot == ""
 
 
+def test_live_article_limit_default_and_override(monkeypatch):
+    assert Settings(_env_file=None).live_article_limit == 5
+    monkeypatch.setenv("LIVE_ARTICLE_LIMIT", "12")
+    assert Settings(_env_file=None).live_article_limit == 12
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, live_article_limit=0)
+
+
 def test_batch_model_snapshot_rejects_placeholders():
     for value in ("unset", "latest", "UNSET"):
         with pytest.raises(ValidationError):
