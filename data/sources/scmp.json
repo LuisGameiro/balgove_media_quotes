@@ -11,13 +11,13 @@
   "language": "en",
   "requires_translation": false,
   "paywalled": true,
-  "rights_status": "pending_counsel_review",
-  "access_mode": "pending_review",
-  "license_reference": "",
-  "discovery_method": "web",
+  "rights_status": "license_held",
+  "access_mode": "licensed_database",
+  "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
+  "discovery_method": "sitemap",
   "archive_start_date": "2026-10-01",
-  "enabled": false,
-  "notes": "Paywalled; rights review required.",
+  "enabled": true,
+  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Paywalled; rights review required.",
   "routes": [
     {
       "route_id": "route-scmp-ukraine-default",
@@ -27,10 +27,10 @@
       "topic_id": "ukraine-war",
       "priority": 90,
       "fallback_route_id": "",
-      "approved": false,
-      "license_reference": "",
+      "approved": true,
+      "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Not approved; rights review pending in registry; no live probe."
+      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Not approved; rights review pending in registry; no live probe."
     }
   ],
   "extractor_hints": {

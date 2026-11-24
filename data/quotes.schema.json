@@ -148,7 +148,7 @@
     },
     "translation_hash": {
       "type": "string",
-      "pattern": "^[a-f0-9]{64}$",
+      "pattern": "^([a-f0-9]{64})?$",
       "description": "SHA-256 of inputs and output for the translation decision."
     },
     "translation_status": {

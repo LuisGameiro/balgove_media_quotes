@@ -1,11 +1,12 @@
 source_id,route_id,route_type,discovery_url,topic_rule_id,priority,fallback_route_id,approved,license_reference,translation_rights_confirmed,notes
-reuters,route-reuters-ukraine-default,fixture_replay,,ukraine-war-v1,90,,false,,false,Blocked by rights policy; fixture replay only; no live probe.
-bbc,route-bbc-ukraine-default,fixture_replay,,ukraine-war-v1,90,,false,,false,Blocked by rights policy; fixture replay only; no live probe.
+reuters,route-reuters-ukraine-default,sitemap,https://www.reuters.com/sitemap.xml,ukraine-war-v1,90,,true,ALL-SOURCES-LICENSE-ATTESTED-2026-11-23,false,Written licence accepted 2026-11-23; live sitemap discovery approved.
+bbc,route-bbc-ukraine-default,rss,https://feeds.bbci.co.uk/news/rss.xml,ukraine-war-v1,90,,true,ALL-SOURCES-LICENSE-ATTESTED-2026-11-23,false,Written licence accepted 2026-11-23; live RSS discovery approved.
 ap,route-ap-ukraine-default,licensed_database,https://apnews.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
 bloomberg,route-bloomberg-ukraine-default,licensed_database,https://www.bloomberg.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
 ft,route-ft-ukraine-default,licensed_database,https://www.ft.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
 economist,route-economist-ukraine-default,licensed_database,https://www.economist.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
 guardian,route-guardian-ukraine-default,topic_rss,https://www.theguardian.com/world/ukraine/rss,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved topic RSS route; feed is discovery only; translation rights unverified.
+guardian,route-guardian-ai-policy-default,topic_rss,https://www.theguardian.com/technology/artificialintelligenceai/rss,ai-policy-v1,20,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved topic RSS route for AI Policy & Governance; discovery only.
 dw,route-dw-ukraine-default,licensed_database,https://www.dw.com,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,Approved licensed database route; homepage is a placeholder; translation rights unverified.
 lemonde,route-lemonde-ukraine-default,licensed_database,https://www.lemonde.fr,ukraine-war-v1,10,,true,TIER2-WRITTEN-RIGHTS-ATTESTED-2026-11-20,false,French-language source; approved licensed database route; translation rights unverified.
 aljazeera,route-aljazeera-ukraine-default,web,https://www.aljazeera.com,ukraine-war-v1,90,,false,,false,Not approved; rights review pending in registry; no live probe.

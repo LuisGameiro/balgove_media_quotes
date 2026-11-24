@@ -11,26 +11,26 @@
   "language": "en",
   "requires_translation": false,
   "paywalled": true,
-  "rights_status": "blocked",
-  "access_mode": "scraped_prohibited",
-  "license_reference": "",
+  "rights_status": "license_held",
+  "access_mode": "licensed_database",
+  "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
   "discovery_method": "sitemap",
   "archive_start_date": "2026-10-01",
-  "enabled": false,
-  "notes": "Robots User-agent * Disallow / except /plus/; notice requires written consent for all automated collection including feeds. T0: written licence via Factiva/Nexis/LSEG/Reuters Connect.",
+  "enabled": true,
+  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Robots User-agent * Disallow / except /plus/; notice requires written consent for all automated collection including feeds. T0: written licence via Factiva/Nexis/LSEG/Reuters Connect.",
   "routes": [
     {
       "route_id": "route-reuters-ukraine-default",
-      "route_type": "fixture_replay",
-      "discovery_url": "",
+      "route_type": "sitemap",
+      "discovery_url": "https://www.reuters.com/sitemap.xml",
       "topic_rule_id": "ukraine-war-v1",
       "topic_id": "ukraine-war",
       "priority": 90,
       "fallback_route_id": "",
-      "approved": false,
-      "license_reference": "",
+      "approved": true,
+      "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Blocked by rights policy; fixture replay only; no live probe."
+      "notes": "Written licence accepted 2026-11-23. Live sitemap discovery approved; translation rights not confirmed."
     }
   ],
   "extractor_hints": {

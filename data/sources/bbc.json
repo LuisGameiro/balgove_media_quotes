@@ -11,26 +11,26 @@
   "language": "en",
   "requires_translation": false,
   "paywalled": false,
-  "rights_status": "blocked",
-  "access_mode": "scraped_prohibited",
-  "license_reference": "",
+  "rights_status": "license_held",
+  "access_mode": "licensed_database",
+  "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
   "discovery_method": "rss",
   "archive_start_date": "2026-10-01",
-  "enabled": false,
-  "notes": "Feed host permits a fetch but Terms forbid systematic extraction, datasets, RAG, grounding and business use. T0 permission required before feed or article text is used.",
+  "enabled": true,
+  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Feed host permits a fetch but Terms forbid systematic extraction, datasets, RAG, grounding and business use. T0 permission required before feed or article text is used.",
   "routes": [
     {
       "route_id": "route-bbc-ukraine-default",
-      "route_type": "fixture_replay",
-      "discovery_url": "",
+      "route_type": "rss",
+      "discovery_url": "https://feeds.bbci.co.uk/news/rss.xml",
       "topic_rule_id": "ukraine-war-v1",
       "topic_id": "ukraine-war",
       "priority": 90,
       "fallback_route_id": "",
-      "approved": false,
-      "license_reference": "",
+      "approved": true,
+      "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Blocked by rights policy; fixture replay only; no live probe."
+      "notes": "Written licence accepted 2026-11-23. Live RSS discovery approved; translation rights not confirmed."
     }
   ],
   "extractor_hints": {
