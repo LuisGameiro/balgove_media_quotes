@@ -7,6 +7,7 @@ can build type-safe INSERT/UPDATE/SELECT statements across all PostgreSQL tables
 from sqlalchemy import (
     ARRAY,
     JSON,
+    BigInteger,
     Boolean,
     Column,
     Date,
@@ -103,7 +104,6 @@ quote_classifications_table = Table(
     Column("quote_id", Uuid(as_uuid=True), nullable=False),
     Column("section", String, nullable=False),
     Column("rationale", String, nullable=True),
-    Column("decision_id", Uuid(as_uuid=True), nullable=True),
     Column("assigned_by", String, nullable=False, default="rule"),
 )
 
@@ -115,7 +115,6 @@ obsolescence_flags_table = Table(
     Column("is_obsolete", Boolean, nullable=False),
     Column("reason", String, nullable=True),
     Column("superseded_by", ARRAY(Uuid(as_uuid=True)), nullable=False, default=list),
-    Column("decision_id", Uuid(as_uuid=True), nullable=True),
 )
 
 digests_table = Table(
@@ -158,7 +157,7 @@ pipeline_runs_table = Table(
 audit_events_table = Table(
     "audit_events",
     metadata,
-    Column("event_id", Integer, primary_key=True, autoincrement=True),
+    Column("event_id", BigInteger, primary_key=True, autoincrement=True),
     Column("run_id", Uuid(as_uuid=True), nullable=True),
     Column("trace_id", String, nullable=True),
     Column("step", String, nullable=False),

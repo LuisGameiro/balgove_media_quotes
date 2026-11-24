@@ -12,7 +12,14 @@ from .models import (
     ReviewState,
     utc_now,
 )
-from .obsolescence import ReviewQueue, obsoletion_allowed, review_overdue, triage_obsolescence
+from .obsolescence import (
+    ReviewQueue,
+    assess_obsolescence,
+    obsoletion_allowed,
+    propose_obsolescence,
+    review_overdue,
+    triage_obsolescence,
+)
 from .retention import partition_name, retention_plan
 
 __all__ = [
@@ -25,10 +32,12 @@ __all__ = [
     "RetentionPolicy",
     "ReviewQueue",
     "ReviewState",
+    "assess_obsolescence",
     "budget_gate",
     "estimate_backfill",
     "obsoletion_allowed",
     "partition_name",
+    "propose_obsolescence",
     "retention_plan",
     "review_overdue",
     "triage_obsolescence",

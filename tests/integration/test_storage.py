@@ -24,6 +24,7 @@ from media_quotes.db.repository import (
     persist_digest_manifest,
     persist_obsolescence_flags,
     persist_quote_classifications,
+    read_export_records,
     record_eval_run,
     start_pipeline_run,
     sync_gold_set_labels,
@@ -341,6 +342,57 @@ def test_persist_quote_classifications_and_digest_manifest_and_obsolescence_flag
     flags_n = persist_obsolescence_flags(session, [flag])
     assert flags_n == 1
     assert persist_obsolescence_flags(session, []) == 0
+
+
+def test_read_export_records_keeps_one_row_per_quote() -> None:
+    base = dict(
+        q_id="Q-20261119-0001",
+        q_text="A long enough synthetic quote for this export dedupe test.",
+        q_text_en="",
+        q_char_start=0,
+        q_meta={},
+        q_details={},
+        q_method="m",
+        q_topic="ukraine-war",
+        q_topic_status="accepted",
+        q_rule_version="",
+        q_score=0.0,
+        q_terms=[],
+        q_language="en",
+        q_lang_conf=0.0,
+        q_t_model="",
+        q_t_prompt="",
+        q_t_hash="",
+        q_t_status="",
+        a_url="https://example.invalid/a",
+        a_title="Article",
+        a_language="en",
+        a_date=date(2026, 11, 19),
+        a_meta={},
+        a_hash="a" * 64,
+        s_id="guardian",
+        s_name="Guardian",
+        s_tier=1,
+        s_region="UK",
+        s_type="publicly funded",
+        s_rights="license_held",
+        s_access="licensed_database",
+        s_license="LIC-1",
+        s_discovery="licensed_database",
+        s_claim=False,
+        s_language="en",
+        o_reason="pending",
+    )
+    rows = [
+        {**base, "o_obsolete": False},
+        {**base, "o_obsolete": True, "o_reason": "confirmed"},
+    ]
+    session = MagicMock()
+    session.execute.return_value.mappings.return_value = rows
+    records = read_export_records(session, report_date=date(2026, 11, 19), window_days=14)
+    assert len(records) == 1
+    assert records[0].is_obsolete is True
+    assert records[0].obsolete_reason == "confirmed"
 
 
 def test_pipeline_run_lifecycle() -> None:

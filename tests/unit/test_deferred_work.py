@@ -43,8 +43,10 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
 
 def test_parse_replaces_invalid_utf8() -> None:
     from media_quotes.adapters.base import SourceAdapter
+    from media_quotes.registry import load_sources_csv
 
-    result = SourceAdapter._parse(
+    row = load_sources_csv(ROOT / "data/sources.csv")[0]
+    result = SourceAdapter(row)._parse(
         b"<html><body><article>caf\xe9 summary</article></body></html>",
         use_trafilatura=True,
         source_url="https://example.invalid/a",
@@ -171,7 +173,7 @@ def test_batch_apply_results_writes_cache(tmp_path: Path, monkeypatch: Any) -> N
     written: list[Any] = []
     monkeypatch.setattr(
         "media_quotes.db.repository.upsert_decision_cache",
-        lambda s, entry: written.append(entry),
+        lambda s, entry, **kwargs: written.append(entry),
         raising=False,
     )
     settings = _settings(tmp_path, persist_to_postgres=True)
@@ -199,7 +201,9 @@ def test_batch_apply_results_writes_cache(tmp_path: Path, monkeypatch: Any) -> N
     assert written[0].model_snapshot == request.model_snapshot
     assert written[0].prompt_version == "p1"
     assert written[0].schema_hash == "s1"
-    assert written[0].output == {"text": "summary"}
+    from media_quotes.llm_cache import _ENVELOPE
+
+    assert written[0].output[_ENVELOPE]["output"] == {"text": "summary"}
 
 
 def test_batch_apply_reports_unmatched_results(tmp_path: Path, monkeypatch: Any) -> None:
@@ -358,7 +362,12 @@ def test_batch_submit_without_postgres_never_opens_db(tmp_path: Path, monkeypatc
     }
     path = tmp_path / "requests.json"
     path.write_text(json.dumps([request]), encoding="utf-8")
-    settings = _settings(tmp_path, batch_model_snapshot="openai/gpt-4o-mini-2024-07-18")
+    settings = _settings(
+        tmp_path,
+        batch_model_snapshot="openai/gpt-4o-mini-2024-07-18",
+        persist_to_postgres=False,
+        llm_provider="local",
+    )
     client = MagicMock()
     client.submit.return_value = "batch-1"
     monkeypatch.setattr(batch_cli, "OpenRouterBatchClient", lambda _settings: client)
@@ -379,3 +388,53 @@ def test_batch_submit_without_postgres_never_opens_db(tmp_path: Path, monkeypatc
         == 0
     )
     client.submit.assert_called_once()
+
+
+def test_batch_submit_finishes_its_run_row(tmp_path: Path, monkeypatch: Any) -> None:
+    from contextlib import contextmanager
+
+    from media_quotes.cli import batch as batch_cli
+
+    request = {
+        "decision_type": "section-inference",
+        "cache_key": "k1",
+        "input_hash": "i",
+        "model_snapshot": "openai/gpt-4o-mini-2024-07-18",
+        "prompt_version": "p1",
+        "schema_hash": "s1",
+        "system_prompt": "system",
+        "user_prompt": "user",
+    }
+    path = tmp_path / "requests.json"
+    path.write_text(json.dumps([request]), encoding="utf-8")
+    client = MagicMock()
+    client.submit.return_value = "batch-1"
+    monkeypatch.setattr(batch_cli, "OpenRouterBatchClient", lambda _settings: client)
+
+    @contextmanager
+    def fake_context(settings: Settings) -> Any:
+        yield MagicMock()
+
+    finished: list[Any] = []
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", fake_context)
+    monkeypatch.setattr(
+        "media_quotes.db.repository.finish_pipeline_run",
+        lambda session, **kwargs: finished.append(kwargs),
+    )
+    settings = _settings(
+        tmp_path,
+        persist_to_postgres=True,
+        batch_model_snapshot="openai/gpt-4o-mini-2024-07-18",
+    )
+    assert (
+        batch_cli._do_batch(
+            settings,
+            requests_path=path,
+            max_cost=10.0,
+            execute=True,
+            status_id=None,
+            dry_run=False,
+        )
+        == 0
+    )
+    assert finished and finished[0]["status"] == "succeeded"

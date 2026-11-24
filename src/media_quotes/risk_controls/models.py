@@ -12,6 +12,11 @@ STRICT = ConfigDict(strict=True, extra="forbid")
 ReviewState = Literal["pending", "needs_evidence", "confirmed", "rejected", "escalated"]
 
 
+def utc_now() -> datetime:
+    """Single clock helper; production code should pass an explicit `now` in tests."""
+    return datetime.now(UTC)
+
+
 class ObsolescenceEvidence(BaseModel):
     """Bundle required before a quote may be hidden as obsolete (RSK-07)."""
 
@@ -45,13 +50,16 @@ class ObsolescenceFlag(BaseModel):
     raised_at: datetime | None = None
     reason_code: str | None = None
 
-    def may_hide_quote(self) -> bool:
-        return (
+    def may_hide_quote(self, *, now: datetime, hold_hours: int = 24) -> bool:
+        """A confirmed flag hides only after the provisional hold expires."""
+        if not (
             self.state == "confirmed"
             and self.evidence.is_primary_evidence
             and self.reviewer is not None
             and self.reviewed_at is not None
-        )
+        ):
+            return False
+        return now - self.reviewed_at > timedelta(hours=hold_hours)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +103,3 @@ class RetentionPlan:
     log_cutoff: date
     detach: tuple[str, ...]
     keep_hot: tuple[str, ...]
-
-
-def utc_now() -> datetime:
-    """Single clock helper; production code should pass an explicit `now` in tests."""
-    return datetime.now(UTC)

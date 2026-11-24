@@ -20,8 +20,8 @@ def retention_plan(policy: RetentionPolicy, today: date, months: Iterable[date])
     detach: list[str] = []
     keep: list[str] = []
     for month in sorted(set(months)):
-        # Only audit_events is partitioned. decision_cache/llm_decisions cannot be
-        # partitioned without dropping FKs and unique-by-key lookups (see docs/10 §3).
+        # Only audit_events is partitioned. decision_cache cannot be partitioned
+        # without dropping unique-by-key lookups (see docs/10 §3).
         for table in ("audit_events",):
             name = partition_name(table, month)
             if (month.year, month.month) < current:

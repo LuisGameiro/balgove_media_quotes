@@ -40,8 +40,10 @@ def estimate_backfill(
 
 
 def budget_gate(estimate: BackfillEstimate, max_cost: float, *, force: bool = False) -> str:
-    if max_cost <= 0:
-        raise ValueError("max_cost must be positive")
+    import math
+
+    if not math.isfinite(max_cost) or max_cost <= 0:
+        raise ValueError("max_cost must be positive and finite")
     if estimate.cost > max_cost:
         if not force:
             raise BudgetExceededError(

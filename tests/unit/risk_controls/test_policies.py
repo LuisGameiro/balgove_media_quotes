@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
+from media_quotes.models import ExportQuoteRecord
 from media_quotes.risk_controls import (
     BackfillEstimate,
     BudgetExceededError,
@@ -49,7 +50,7 @@ def test_triage_thresholds(confidence: float, expected: str) -> None:
 
 def test_quote_stays_visible_until_human_confirms() -> None:
     flag = ObsolescenceFlag(evidence=evidence(), confidence=0.95)
-    assert not flag.may_hide_quote()
+    assert not flag.may_hide_quote(now=datetime.now(UTC))
     assert triage_obsolescence(flag.confidence) == "pending"
 
 
@@ -58,7 +59,9 @@ def test_confirmed_flag_hides_only_with_evidence_and_reviewer() -> None:
     good = ObsolescenceFlag(
         evidence=evidence(), confidence=0.95, state="confirmed", reviewer="BI", reviewed_at=now
     )
-    assert good.may_hide_quote()
+    assert not good.may_hide_quote(now=now)
+    assert not good.may_hide_quote(now=now + timedelta(hours=1))
+    assert good.may_hide_quote(now=now + timedelta(hours=25))
 
     relayed = ObsolescenceFlag(
         evidence=evidence(first_hand=False),
@@ -67,10 +70,53 @@ def test_confirmed_flag_hides_only_with_evidence_and_reviewer() -> None:
         reviewer="BI",
         reviewed_at=now,
     )
-    assert not relayed.may_hide_quote()
+    assert not relayed.may_hide_quote(now=now)
 
     unreviewed = ObsolescenceFlag(evidence=evidence(), confidence=0.95, state="confirmed")
-    assert not unreviewed.may_hide_quote()
+    assert not unreviewed.may_hide_quote(now=now)
+
+
+def test_propose_obsolescence_builds_evidence_and_holds_for_review() -> None:
+    from media_quotes.risk_controls.obsolescence import propose_obsolescence
+
+    def record(quote_id: str, text: str, day: date) -> ExportQuoteRecord:
+        return ExportQuoteRecord.model_construct(
+            quote_id=quote_id,
+            quote_text_original=text,
+            topic_id="ukraine-war",
+            publication_date=day,
+            original_reporting_flag="first-hand",
+            rights_status="license_held",
+            access_mode="licensed_database",
+            article_url="https://example.invalid/a",
+            content_hash="a" * 64,
+        )
+
+    older = record("Q-20261101-0001", "Talks continue tomorrow", date(2026, 11, 1))
+    newer = record("Q-20261119-0001", "Talks have been paused", date(2026, 11, 19))
+    now = datetime(2026, 11, 19, 12, tzinfo=UTC)
+
+    class Judge:
+        verdict = "confirmed"
+        confidence = 0.95
+        rationale = "Newer first-hand statement supersedes the earlier position."
+        actor = "bi"
+        escalation_reason = ""
+
+    class NoJudge:
+        verdict = "escalate"
+        confidence = 0.0
+        rationale = ""
+        actor = "bi"
+        escalation_reason = "unclear"
+
+    assert propose_obsolescence([older, newer], now=now, judge=NoJudge()) == []
+    flags = propose_obsolescence([older, newer], now=now, judge=Judge())
+    assert len(flags) == 1
+    assert flags[0].evidence.old_quote_id == older.quote_id
+    assert flags[0].evidence.is_primary_evidence
+    assert flags[0].state in {"pending", "needs_evidence"}
+    assert not flags[0].may_hide_quote(now=now)
 
 
 def test_evidence_bundle_rejects_empty_span_and_coercion() -> None:
@@ -101,12 +147,12 @@ def test_review_overdue_sla() -> None:
 def test_review_queue_state_machine_and_hideable() -> None:
     now = datetime.now(UTC)
     queue = ReviewQueue([ObsolescenceFlag(evidence=evidence(), confidence=0.95)])
-    assert queue.hideable_quotes() == []
+    assert queue.hideable_quotes(now=now) == []
     updated = queue.decide(
         "Q-20261101-0001", "confirmed", reviewer="BI", now=now, reason_code="superseded"
     )
-    assert updated.may_hide_quote()
-    assert queue.hideable_quotes() == ["Q-20261101-0001"]
+    assert not updated.may_hide_quote(now=now)
+    assert queue.hideable_quotes(now=now + timedelta(hours=25)) == ["Q-20261101-0001"]
     with pytest.raises(ValueError):
         queue.decide("Q-20261101-0001", "rejected", reviewer="BI", now=now, reason_code="late")
 

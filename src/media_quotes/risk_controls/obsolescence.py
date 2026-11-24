@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
+from ..enums import APPROVED_RIGHTS, PERMITTED_ACCESS
 from ..exceptions import ReviewNotFoundError, ReviewStateError
+from ..models import ExportQuoteRecord
+from ..text_utils import normalise_text
 from .models import ObsolescenceEvidence, ObsolescenceFlag, ReviewState
 
 VERDICTS = frozenset({"confirmed", "rejected", "escalated"})
@@ -110,6 +113,66 @@ def flag_with_judge_provenance(
     return flag.model_copy(update={"evidence": evidence, "confidence": confidence})
 
 
+def assess_obsolescence(
+    old: ExportQuoteRecord,
+    newer: ExportQuoteRecord,
+    *,
+    now: datetime,
+    judge: JudgeDecisionLike,
+) -> ObsolescenceFlag | None:
+    """Build a flag only when the judge confirms a newer quote supersedes an older one."""
+    if old.quote_id == newer.quote_id or old.topic_id != newer.topic_id:
+        return None
+    if newer.publication_date < old.publication_date:
+        return None
+    if normalise_text(old.quote_text_original) == normalise_text(newer.quote_text_original):
+        return None
+    if newer.original_reporting_flag != "first-hand":
+        return None
+    if newer.rights_status not in APPROVED_RIGHTS or newer.access_mode not in PERMITTED_ACCESS:
+        return None
+
+    confidence = float(_value(judge, "confidence", 0.0))
+    verdict = judge_obsolescence_verdict(judge)
+    if verdict != "confirmed":
+        return None
+    state: ReviewState = triage_obsolescence(confidence)
+    rationale = _label(judge, "rationale") or "Judge confirmed supersession."
+    decision_id = f"supersession:{old.quote_id}:{newer.quote_id}"
+    evidence = ObsolescenceEvidence(
+        old_quote_id=old.quote_id,
+        old_content_hash=old.content_hash,
+        newer_article_id=newer.article_url,
+        newer_content_hash=newer.content_hash,
+        newer_is_first_hand=newer.original_reporting_flag == "first-hand",
+        newer_rights_cleared=True,
+        superseding_span=newer.quote_text_original,
+        decision_id=decision_id,
+        rationale=rationale or "Newer first-hand quote supersedes the earlier position.",
+    )
+    return ObsolescenceFlag(
+        evidence=evidence,
+        confidence=confidence,
+        state=state,
+        raised_at=now,
+        reason_code="supersession",
+    )
+
+
+def propose_obsolescence(
+    records: Sequence[ExportQuoteRecord], *, now: datetime, judge: JudgeDecisionLike
+) -> list[ObsolescenceFlag]:
+    """Deterministic candidate flags; a human still decides before any quote is hidden."""
+    proposed: list[ObsolescenceFlag] = []
+    for index, old in enumerate(records):
+        for newer in records[index + 1 :]:
+            flag = assess_obsolescence(old, newer, now=now, judge=judge)
+            if flag is not None:
+                proposed.append(flag)
+                break
+    return proposed
+
+
 def triage_obsolescence(confidence: float) -> ReviewState:
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be in [0, 1]")
@@ -178,8 +241,12 @@ class ReviewQueue:
             if flag.state not in TERMINAL_STATES and review_overdue(flag, now, sla_days)
         )
 
-    def hideable_quotes(self) -> list[str]:
-        return sorted(q for q, flag in self._flags.items() if flag.may_hide_quote())
+    def hideable_quotes(self, *, now: datetime, hold_hours: int = 24) -> list[str]:
+        return sorted(
+            q
+            for q, flag in self._flags.items()
+            if flag.may_hide_quote(now=now, hold_hours=hold_hours)
+        )
 
 
 def obsoletion_allowed(*, obsolete_precision: float, consecutive_failures: int) -> bool:
@@ -193,11 +260,13 @@ __all__ = [
     "ObsolescenceEvidence",
     "ObsolescenceFlag",
     "ReviewQueue",
+    "assess_obsolescence",
     "flag_with_judge_provenance",
     "judge_obsolescence_verdict",
     "obsolescence_judge_payload",
     "obsoletion_allowed",
     "pending_flags",
+    "propose_obsolescence",
     "review_overdue",
     "triage_obsolescence",
 ]

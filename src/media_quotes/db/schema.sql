@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS articles_text_fts_idx
 -- 'unverified' to 'verified'/'rejected', but text and offsets are immutable.
 CREATE TABLE IF NOT EXISTS quotes (
     quote_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    canonical_quote_id  TEXT UNIQUE,  -- Q-YYYYMMDD-NNNN, unique when present
+    canonical_quote_id  TEXT NOT NULL UNIQUE,  -- Q-YYYYMMDD-NNNN
     article_id          UUID NOT NULL REFERENCES articles(article_id),
     quote_text_raw      TEXT NOT NULL,
     quote_text_normalised TEXT NOT NULL,
@@ -131,32 +131,11 @@ CREATE INDEX IF NOT EXISTS quotes_text_fts_idx
 
 -- Content-addressed decision cache. Key includes content + extractor + prompt +
 -- schema + model snapshot + decoding params. Never rely on temperature=0 alone.
-CREATE TABLE IF NOT EXISTS llm_decisions (
-    decision_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    decision_type       TEXT NOT NULL,
-    article_id          UUID REFERENCES articles(article_id),
-    quote_id            UUID REFERENCES quotes(quote_id),
-    cache_key           TEXT NOT NULL UNIQUE,
-    input_hash          TEXT NOT NULL,
-    model_snapshot      TEXT NOT NULL,
-    prompt_version      TEXT NOT NULL,
-    schema_hash         TEXT NOT NULL,
-    decoding_params     JSONB NOT NULL DEFAULT '{}'::jsonb,
-    input_payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
-    output_payload      JSONB,
-    provider_response_id TEXT,
-    refusal             BOOLEAN NOT NULL DEFAULT FALSE,
-    incomplete          BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS llm_decisions_article_idx ON llm_decisions(article_id);
-
 CREATE TABLE IF NOT EXISTS quote_classifications (
     classification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     quote_id          UUID NOT NULL REFERENCES quotes(quote_id),
     section           TEXT NOT NULL,
     rationale         TEXT,
-    decision_id       UUID REFERENCES llm_decisions(decision_id),
     assigned_by       TEXT NOT NULL DEFAULT 'llm' CHECK (assigned_by IN ('llm','human','rule')),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -168,7 +147,6 @@ CREATE TABLE IF NOT EXISTS obsolescence_flags (
     is_obsolete   BOOLEAN NOT NULL,
     reason        TEXT,
     superseded_by UUID[] NOT NULL DEFAULT '{}',
-    decision_id   UUID REFERENCES llm_decisions(decision_id),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS obsolescence_flags_quote_idx ON obsolescence_flags(quote_id);
@@ -181,10 +159,9 @@ CREATE TABLE IF NOT EXISTS digests (
     md_path     TEXT NOT NULL,
     manifest    JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    topic_id    TEXT NOT NULL DEFAULT 'ukraine-war'
+    topic_id    TEXT NOT NULL DEFAULT 'ukraine-war',
+    CONSTRAINT digests_topic_date_unique UNIQUE (topic_id, digest_date)
 );
--- The (topic_id, digest_date) unique constraint is added by migration 0006, so a fresh
--- install and an upgraded database end up with the same single constraint and index.
 
 -- Append-only audit log; surrogate key, no updates.
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -200,3 +177,55 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_idx ON audit_events(run_id, created_at);
 CREATE INDEX IF NOT EXISTS audit_events_trace_idx ON audit_events(trace_id);
+
+-- Gold-set labels and Postgres-backed evaluation runs.
+CREATE TABLE IF NOT EXISTS gold_set_labels (
+    label_id UUID PRIMARY KEY,
+    gold_set_version TEXT NOT NULL,
+    split TEXT NOT NULL CHECK (split IN ('train', 'dev', 'test')),
+    article_ref TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    publication_date DATE NOT NULL,
+    relevant BOOLEAN NOT NULL,
+    quote_text TEXT,
+    section_id TEXT,
+    human_label BOOLEAN NOT NULL,
+    is_negative_candidate BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_gold_set_labels_version_split
+    ON gold_set_labels (gold_set_version, split);
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+    eval_id UUID PRIMARY KEY,
+    gold_set_version TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    report_date DATE NOT NULL,
+    metrics JSONB NOT NULL,
+    thresholds JSONB NOT NULL,
+    passed BOOLEAN NOT NULL,
+    trace_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_eval_runs_version
+    ON eval_runs (gold_set_version, created_at DESC);
+
+-- Content-addressed LLM decision cache and the monthly partition registry.
+CREATE TABLE IF NOT EXISTS decision_cache (
+    cache_key TEXT PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    model_snapshot TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    schema_hash TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    output JSONB NOT NULL,
+    trace_id TEXT
+);
+CREATE INDEX IF NOT EXISTS decision_cache_input_idx ON decision_cache (input_hash);
+
+CREATE TABLE IF NOT EXISTS storage_partitions (
+    table_name TEXT NOT NULL,
+    month DATE NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('hot', 'cold', 'detached')),
+    PRIMARY KEY (table_name, month)
+);

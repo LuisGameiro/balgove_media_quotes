@@ -7,6 +7,7 @@ this revision emits each statement with `op.execute`, including
 
 from __future__ import annotations
 
+import importlib.resources
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -24,11 +25,14 @@ _DROP_STATEMENTS = (
     "DROP TABLE IF EXISTS digests;",
     "DROP TABLE IF EXISTS obsolescence_flags;",
     "DROP TABLE IF EXISTS quote_classifications;",
-    "DROP TABLE IF EXISTS llm_decisions;",
     "DROP TABLE IF EXISTS quotes;",
     "DROP TABLE IF EXISTS articles;",
     "DROP TABLE IF EXISTS pipeline_runs;",
     "DROP TABLE IF EXISTS sources;",
+    "DROP TABLE IF EXISTS gold_set_labels;",
+    "DROP TABLE IF EXISTS eval_runs;",
+    "DROP TABLE IF EXISTS decision_cache;",
+    "DROP TABLE IF EXISTS storage_partitions;",
 )
 
 
@@ -50,8 +54,19 @@ def _statements(sql: str) -> Iterator[str]:
         yield tail
 
 
+def _load_schema_sql() -> str:
+    if _SCHEMA_SQL.is_file():
+        return _SCHEMA_SQL.read_text(encoding="utf-8")
+    try:
+        sql_file = importlib.resources.files("media_quotes.db").joinpath("schema.sql")
+        return sql_file.read_text(encoding="utf-8")
+    except Exception as exc:
+        msg = f"schema.sql not found at {_SCHEMA_SQL} or in package resources"
+        raise FileNotFoundError(msg) from exc
+
+
 def upgrade() -> None:
-    for statement in _statements(_SCHEMA_SQL.read_text(encoding="utf-8")):
+    for statement in _statements(_load_schema_sql()):
         op.execute(statement)
 
 

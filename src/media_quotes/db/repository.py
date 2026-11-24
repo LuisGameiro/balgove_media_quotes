@@ -234,6 +234,9 @@ def persist_articles_and_quotes(
                         "topic_id": record.topic_id,
                         "claim_only": record.claim_only,
                         "original_reporting_flag": record.original_reporting_flag,
+                        "content_hash": record.content_hash,
+                        "quote_html": record.quote_html,
+                        "notes": record.notes,
                     }
                 ),
                 "topic_id": record.topic_id,
@@ -252,6 +255,16 @@ def persist_articles_and_quotes(
         )
     inserted_articles = 0
     if article_values:
+        existing_articles = set(
+            session.execute(
+                select(articles_table.c.article_id).where(
+                    articles_table.c.article_id.in_(list(article_values))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        inserted_articles = len(set(article_values) - existing_articles)
         statement = pg_insert(articles_table).values(list(article_values.values()))
         statement = statement.on_conflict_do_update(
             index_elements=["article_id"],
@@ -262,28 +275,50 @@ def persist_articles_and_quotes(
                 "article_metadata": statement.excluded.article_metadata,
             },
         )
-        result = session.execute(statement)
-        inserted_articles = _inserted_count(result, len(article_values))
+        session.execute(statement)
     inserted_quotes = 0
     if quote_values:
-        # A quote id collision with an older run is not a duplicate business record.
-        # Remap only the display id, keeping the business-key conflict target below.
+        # Reuse the stored display id when the same quote (business key) already exists:
+        # an idempotent re-run must not treat its own row as a collision.
         # Only the date prefixes in this batch can collide with a remapped candidate.
         prefixes = sorted({str(item["canonical_quote_id"])[:10] for item in quote_values})
-        existing_statement = select(quotes_table.c.canonical_quote_id).where(
+        existing_statement = select(
+            quotes_table.c.canonical_quote_id,
+            quotes_table.c.article_id,
+            quotes_table.c.quote_text_normalised,
+            quotes_table.c.char_start,
+            quotes_table.c.char_end,
+        ).where(
             or_(*(quotes_table.c.canonical_quote_id.like(f"{prefix}-%") for prefix in prefixes))
         )
-        existing_ids = {str(row[0]) for row in session.execute(existing_statement)}
-        assigned_ids = set(existing_ids)
+        existing_by_key = {
+            (str(row[1]), str(row[2] or ""), int(row[3]), int(row[4])): str(row[0])
+            for row in session.execute(existing_statement)
+        }
+        assigned_ids = set(existing_by_key.values())
         for item in quote_values:
+            key = (
+                str(item["article_id"]),
+                str(item["quote_text_normalised"] or ""),
+                int(item["char_start"]),
+                int(item["char_end"]),
+            )
+            stable_id = existing_by_key.get(key)
+            if stable_id is not None:
+                item["canonical_quote_id"] = stable_id
+                continue
             quote_id = str(item["canonical_quote_id"])
             if quote_id not in assigned_ids:
                 assigned_ids.add(quote_id)
                 continue
             date_prefix, sequence = quote_id.rsplit("-", 1)
             next_sequence = (int(sequence) + 1) % 10000
+            attempts = 0
             while f"{date_prefix}-{next_sequence:04d}" in assigned_ids:
                 next_sequence = (next_sequence + 1) % 10000
+                attempts += 1
+                if attempts > 10000:
+                    raise RuntimeError(f"Exhausted quote id namespace for prefix {date_prefix}")
             remapped = f"{date_prefix}-{next_sequence:04d}"
             item["canonical_quote_id"] = remapped
             assigned_ids.add(remapped)
@@ -336,7 +371,6 @@ def persist_quote_classifications(
                 "quote_id": quote_uuid,
                 "section": record.section_id,
                 "rationale": f"Assigned to section '{record.section_id}' via {assigned_by}",
-                "decision_id": None,
                 "assigned_by": assigned_by,
             }
         )
@@ -351,8 +385,7 @@ def persist_quote_classifications(
         .scalars()
         .all()
     )
-    if db_quotes:
-        rows = [row for row in rows if row["quote_id"] in db_quotes]
+    rows = [row for row in rows if row["quote_id"] in db_quotes]
     if not rows:
         return 0
 
@@ -444,10 +477,9 @@ def persist_obsolescence_flags(
             {
                 "flag_id": flag_id,
                 "quote_id": quote_uuid,
-                "is_obsolete": flag.state == "confirmed",
+                "is_obsolete": flag.may_hide_quote(now=datetime.now(UTC)),
                 "reason": f"[{flag.state}] {flag.reason_code or flag.evidence.rationale}",
                 "superseded_by": [],
-                "decision_id": None,
             }
         )
     if not rows:
@@ -472,6 +504,7 @@ def start_pipeline_run(
     pipeline: str,
     partition_date: date,
     topic_id: str = DEFAULT_TOPIC_ID,
+    stats: dict[str, Any] | None = None,
     commit: bool = True,
 ) -> str:
     """Insert a run row in 'running' state; idempotent on re-run."""
@@ -480,7 +513,7 @@ def start_pipeline_run(
         "pipeline": pipeline,
         "partition_date": partition_date,
         "status": "running",
-        "stats": {},
+        "stats": _jsonable(stats or {}),
         "topic_id": topic_id,
     }
     statement = pg_insert(pipeline_runs_table).values(values)
@@ -577,6 +610,46 @@ def get_decision_cache(session: Session, cache_key: str) -> dict[str, Any] | Non
     return dict(row) if row else None
 
 
+def read_audit_events(
+    session: Session, run_id: str, *, trace_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Read persisted audit events for one run, optionally filtered by trace id."""
+    statement = select(
+        audit_events_table.c.step,
+        audit_events_table.c.status,
+        audit_events_table.c.entity_type,
+        audit_events_table.c.entity_id,
+        audit_events_table.c.trace_id,
+        audit_events_table.c.details,
+    ).where(audit_events_table.c.run_id == _run_uuid(run_id))
+    if trace_id is not None:
+        statement = statement.where(audit_events_table.c.trace_id == trace_id)
+    statement = statement.order_by(audit_events_table.c.event_id)
+    return [dict(row) for row in session.execute(statement).mappings()]
+
+
+def eval_recent_failures(session: Session, gold_set_version: str, *, limit: int = 2) -> int:
+    """Count consecutive failed eval runs for one gold set, newest first."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    rows = (
+        session.execute(
+            select(eval_runs_table.c.passed)
+            .where(eval_runs_table.c.gold_set_version == gold_set_version)
+            .order_by(eval_runs_table.c.report_date.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    failures = 0
+    for passed in rows:
+        if passed:
+            break
+        failures += 1
+    return failures
+
+
 def read_export_records(
     session: Session,
     *,
@@ -596,6 +669,7 @@ def read_export_records(
             quotes_table.c.canonical_quote_id.label("q_id"),
             quotes_table.c.quote_text_raw.label("q_text"),
             quotes_table.c.quote_text_en.label("q_text_en"),
+            quotes_table.c.char_start.label("q_char_start"),
             quotes_table.c.quote_metadata.label("q_meta"),
             quotes_table.c.verification_details.label("q_details"),
             quotes_table.c.extraction_method.label("q_method"),
@@ -627,11 +701,18 @@ def read_export_records(
             sources_table.c.discovery_method.label("s_discovery"),
             sources_table.c.claim_only.label("s_claim"),
             sources_table.c.language.label("s_language"),
+            obsolescence_flags_table.c.is_obsolete.label("o_obsolete"),
+            obsolescence_flags_table.c.reason.label("o_reason"),
         )
         .select_from(
             quotes_table.join(
                 articles_table, quotes_table.c.article_id == articles_table.c.article_id
-            ).join(sources_table, articles_table.c.source_id == sources_table.c.source_id)
+            )
+            .join(sources_table, articles_table.c.source_id == sources_table.c.source_id)
+            .outerjoin(
+                obsolescence_flags_table,
+                quotes_table.c.quote_id == obsolescence_flags_table.c.quote_id,
+            )
         )
         .where(
             quotes_table.c.topic_id == active_topic,
@@ -641,8 +722,14 @@ def read_export_records(
         )
         .order_by(articles_table.c.publication_date, quotes_table.c.canonical_quote_id)
     )
-    records: list[Any] = []
+    # A quote can carry several obsolescence flags (one per state transition); keep one row.
+    unique_rows: dict[Any, Any] = {}
     for row in session.execute(statement).mappings():
+        previous = unique_rows.get(row["q_id"])
+        if previous is None or (row.get("o_obsolete") and not previous.get("o_obsolete")):
+            unique_rows[row["q_id"]] = row
+    records: list[Any] = []
+    for row in unique_rows.values():
         meta = row["q_meta"] or {}
         article_meta = row["a_meta"] or {}
         details = row["q_details"] or {}
@@ -664,6 +751,7 @@ def read_export_records(
                 {
                     "quote_id": row["q_id"],
                     "quote_text_original": row["q_text"],
+                    "quote_html": str(meta.get("quote_html") or ""),
                     "quote_text_en": row["q_text_en"] or "",
                     "source_id": row["s_id"],
                     "source_name": row["s_name"],
@@ -686,9 +774,17 @@ def read_export_records(
                         article_meta.get("extraction_date") or row["a_date"].isoformat()
                     ),
                     "section_id": meta.get("section_id") or "other",
-                    "is_obsolete": False,
-                    "content_hash": row["a_hash"],
+                    "is_obsolete": bool(row.get("o_obsolete") or False),
+                    "obsolete_reason": str(row.get("o_reason") or ""),
+                    "content_hash": (
+                        str(meta.get("content_hash") or "")
+                        if len(str(meta.get("content_hash") or "")) == 64
+                        else str((row["q_details"] or {}).get("content_hash") or "")
+                        if len(str((row["q_details"] or {}).get("content_hash") or "")) == 64
+                        else row["a_hash"]
+                    ),
                     "verification": verification.model_dump(mode="json"),
+                    "notes": str(meta.get("notes") or ""),
                     "topic_id": row["q_topic"] or active_topic,
                     "topic_status": row["q_topic_status"] or "accepted",
                     "topic_rule_version": row["q_rule_version"] or "",
@@ -732,10 +828,10 @@ def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
     ]
     statement = pg_insert(storage_partitions_table).values(rows)
     statement = statement.on_conflict_do_nothing(index_elements=["table_name", "month"])
-    session.execute(statement)
+    result = session.execute(statement)
     if commit:
         session.commit()
-    return len(rows)
+    return _inserted_count(result, len(rows))
 
 
 def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: bool = True) -> int:
