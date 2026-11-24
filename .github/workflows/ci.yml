@@ -1,6 +1,6 @@
 name: CI
 
-# CHK-10..13 enforcement (docs/02 §7). One gate: `make check`.
+# Enforcement of quality gate (docs/02-architecture.md). One gate: `make check`.
 on:
   push:
     branches: [main]
@@ -38,17 +38,17 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Sync locked environment (CHK-11)
+      - name: Sync locked environment
         run: uv sync --frozen --all-extras --dev --python ${{ matrix.python-version }}
 
-      - name: Verify lockfile freshness (CHK-11)
+      - name: Verify lockfile freshness
         run: uv lock --check
 
-      - name: Single quality gate (CHK-08, CHK-10, CHK-12, CHK-13)
+      - name: Single quality gate
         run: uv run --frozen make check
 
   secret-scan:
-    name: Secret scan (CHK-13)
+    name: Secret scan
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

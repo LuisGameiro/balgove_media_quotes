@@ -1,4 +1,4 @@
-# One-command quality gate: docs/02 §7 (CHK-10..13) and README "Quick start".
+# One-command quality gate: docs/02-architecture.md and README "Quick start".
 .PHONY: help docs-qa format-check format lint typecheck test coverage build smoke check clean
 
 PYTHON ?= python
@@ -36,7 +36,7 @@ smoke:
 	$(PYTHON) -m media_quotes --help >/dev/null
 	mq --help >/dev/null
 
-# docs/02 §7: single gate; the CLI smoke exercises the installed `mq` entry point.
+# docs/02-architecture.md: single gate; the CLI smoke exercises the installed `mq` entry point.
 check: docs-qa format-check lint typecheck coverage build smoke
 
 clean:

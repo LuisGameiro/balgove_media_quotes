@@ -27,6 +27,8 @@ var/dagster/*
 !var/dagster/dagster.yaml
 var/export/*
 !var/export/.gitkeep
+var/output/*
+!var/output/.gitkeep
 var/logs/*
 !var/logs/.gitkeep
 var/tmp-*
