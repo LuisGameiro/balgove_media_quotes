@@ -13,7 +13,7 @@ def _do_dagster(settings: Settings) -> int:  # pragma: no cover - operator guida
     if importlib.util.find_spec("dagster") is None:
         print(
             "Dagster is not installed. Install the extra with: "
-            "uv sync --frozen --group dev --extra orchestration",
+            "uv sync --frozen --all-extras --group dev",
             file=sys.stderr,
         )
         return EXIT_FAILURE
@@ -30,6 +30,10 @@ def _do_dagster(settings: Settings) -> int:  # pragma: no cover - operator guida
     print("Jobs: daily_quotes_digest_job, governance_audit_job")
     print("Schedule: daily_digest_schedule (06:00, stopped by default)")
     print("Sensor: review_queue_sla_sensor (300s interval, stopped by default)")
-    print("Start UI: powershell -ExecutionPolicy Bypass -File .\\scripts\\run_dagster.ps1")
+    print("Start UI: uv run dagster dev -m media_quotes.orchestration")
+    print("Set DAGSTER_HOME=var/dagster to use var/dagster/dagster.yaml")
+    print(
+        "Start UI (Windows): powershell -ExecutionPolicy Bypass -File .\\scripts\\run_dagster.ps1"
+    )
     print(f"Persist to Postgres: PERSIST_TO_POSTGRES=true (current={settings.persist_to_postgres})")
     return EXIT_OK

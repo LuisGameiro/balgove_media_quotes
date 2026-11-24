@@ -16,6 +16,7 @@ dist/
 build/
 .venv-smoke/
 .tmp_dagster_home_*
+.slim/deepwork/
 
 # Runtime artifacts
 var/blobs/*

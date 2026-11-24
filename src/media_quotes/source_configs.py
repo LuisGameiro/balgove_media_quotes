@@ -146,6 +146,7 @@ class ExtractorHints(BaseModel):
     include_comments: bool = False
     include_tables: bool = False
     min_text_length: int = Field(default=200, ge=0)
+    fallback_byline: str = ""
     strip_selectors: list[str] = Field(default_factory=list)
     render_js: bool = False  # opt-in to the optional browser fallback; off for every source today
 
@@ -538,7 +539,6 @@ def scaffold_source_config(
     target = root / f"{cleaned}.json"
     if target.exists():
         raise FileExistsError(f"source config already exists: {target}")
-    admission = probe_source_admission(homepage_url.strip(), feed_url=feed_url.strip())
     cfg = SourceConfig(
         source_id=cleaned,
         source_name=source_name.strip() or cleaned.upper(),
@@ -558,10 +558,7 @@ def scaffold_source_config(
         discovery_method="web",
         archive_start_date=date(2026, 10, 1),
         enabled=False,
-        notes=(
-            f"Scaffolded source (probe_ready={admission['admission_ready']}); "
-            "complete T0 rights review before enabling."
-        ),
+        notes="Scaffolded source; complete T0 rights review before enabling.",
         routes=[
             SourceRouteConfig(
                 route_id=f"route-{cleaned}-{topic_id}-default",

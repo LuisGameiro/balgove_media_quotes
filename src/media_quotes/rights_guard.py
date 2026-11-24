@@ -25,10 +25,7 @@ class RightsDecision(BaseModel):
 
 
 def _word_count(text: str) -> int:
-    words = text.split()
-    if len(words) <= 1 and len(text) > 20:
-        return len(text)
-    return len(words)
+    return len(text.split())
 
 
 def apply_rights_limits(

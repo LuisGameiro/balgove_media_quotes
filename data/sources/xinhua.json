@@ -17,7 +17,7 @@
   "discovery_method": "rss",
   "archive_start_date": "2026-10-01",
   "enabled": true,
-  "notes": "Enabled by the owner for all-source validation on 2026-11-24. State-controlled material remains claim-only perspective and never establishes facts. The current web route is not a supported live discovery feed.",
+  "notes": "Enabled by the owner for all-source validation on 2026-11-24. State-controlled material remains claim-only perspective and never establishes facts. Bing-discovered original pages now provide verified quote proof.",
   "routes": [
     {
       "route_id": "route-xinhua-ukraine-default",
@@ -41,9 +41,10 @@
     "include_comments": false,
     "include_tables": false,
     "min_text_length": 200,
+    "fallback_byline": "Xinhua",
     "strip_selectors": []
   },
   "tier_block": false,
   "blocker_reason": "",
-  "availability_status": "accessible_no_quotes"
+  "availability_status": "live"
 }

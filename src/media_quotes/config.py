@@ -26,8 +26,7 @@ REPORT_WINDOW_DAYS: Final = 14
 GOLD_SET_VERSION: Final = "synthetic-v1"
 DEFAULT_TOPIC_ID: Final = "ukraine-war"
 
-# DEC-10 licence-limit policy — word cap and attribution are enforced before rendering.
-# Licence territory is metadata only; the renderer does not enforce geography.
+# DEC-10 licence-limit policy — enforced by the renderer, never by the frozen schema.
 MAX_QUOTE_WORDS: Final = 30
 ATTRIBUTION_FORMAT: Final = "Outlet — Named person (role), Article, YYYY-MM-DD, URL"
 LICENCE_TERRITORY: Final = "internal worldwide"
@@ -80,7 +79,7 @@ class Settings(BaseSettings):
     report_window_days: int = REPORT_WINDOW_DAYS
     gold_set_version: str = GOLD_SET_VERSION
 
-    # DEC-10 (docs/07): word cap and attribution are enforced; territory is metadata only.
+    # DEC-10 (docs/04): renderer-enforced rights limits; no change to quotes.schema.json.
     max_quote_words: int = Field(default=MAX_QUOTE_WORDS, gt=0)
     attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
     licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)

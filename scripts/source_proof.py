@@ -14,8 +14,10 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from media_quotes.adapters import BlobCache
+from media_quotes.bing_news import discover_bing_news
 from media_quotes.config import get_settings
 from media_quotes.export import atomic_write_text
 from media_quotes.fetch import fetch_bytes
@@ -27,6 +29,10 @@ _DISCOVERY_ONLY = frozenset({"gdelt", "guardian_api"})
 _LICENSED_FULL_TEXT = frozenset({"reuters", "bloomberg", "ft", "economist", "nyt_api"})
 _PARTIAL_BODY_SOURCES = frozenset({"bloomberg", "ft", "scmp"})
 _MIN_FULL_TEXT_CHARS = 1200
+_DISCOVERY_QUERIES = {
+    "ukrainskapravda": ("Ukraine", 'Україна "заявив"', 'Україна "повідомив"'),
+    "ria": ("Украина", 'Украина "заявил"', 'Украина "сообщил"'),
+}
 
 
 def _proof_policy() -> scraper.FetchPolicy:
@@ -127,6 +133,8 @@ def _max_text_length(articles: list[dict[str, Any]]) -> int:
 
 
 def _no_quote_status(row: SourceRegistryRow, articles: list[dict[str, Any]]) -> str:
+    if row.availability_status == "partial_body":
+        return "partial_body"
     if row.source_id in _PARTIAL_BODY_SOURCES and _max_text_length(articles) < _MIN_FULL_TEXT_CHARS:
         return "partial_body"
     return "accessible_no_quotes"
@@ -289,6 +297,113 @@ def _url_entry(
     return entry
 
 
+def _discovery_entry(row: SourceRegistryRow) -> dict[str, Any]:
+    entry = _base_entry(row, "discovery_only")
+    entry.update(
+        {
+            "status": "discovery_only",
+            "collected": False,
+            "blocker": "",
+            "detail": "Discovery metadata only; publisher full text is required for quotes.",
+        }
+    )
+    return entry
+
+
+def _bing_entry(
+    row: SourceRegistryRow,
+    context: scraper.TopicContext,
+    cache: BlobCache,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    entry = _base_entry(row, "bing_discovery")
+    domain = (urlparse(row.homepage_url).hostname or "").lower()
+    if not domain:
+        return _fixture_entry(
+            row,
+            context,
+            mode="fixture_fallback",
+            blocker="no_public_feed",
+            detail="No publisher domain is configured.",
+        )
+
+    candidates: list[dict[str, str]] = []
+    seen: set[str] = set()
+    discovery_errors: list[str] = []
+    queries = _DISCOVERY_QUERIES.get(
+        row.source_id,
+        ("Ukraine", 'Russia Ukraine "said"'),
+    )
+    for query in queries:
+        try:
+            discovered = scraper.asyncio.run(discover_bing_news(domain, query=query, limit=limit))
+        except Exception as exc:
+            discovery_errors.append(str(exc) or type(exc).__name__)
+            continue
+        for item in discovered:
+            url = item.get("url", "")
+            if url and url not in seen:
+                seen.add(url)
+                candidates.append(item)
+        if len(candidates) >= limit * 2:
+            break
+
+    reports: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for candidate in candidates[: limit * 2]:
+        url = candidate["url"]
+        try:
+            raw, _ = scraper.asyncio.run(
+                fetch_bytes(
+                    url,
+                    row=row,
+                    policy=_proof_policy(),
+                    track_a_approved=row.usable,
+                    check_dns=True,
+                    allowed_hosts=_approved_redirect_hosts(row),
+                )
+            )
+            reports.append(_inspect_bytes(row, raw, url, context, cache))
+        except Exception as exc:
+            errors.append(str(exc) or type(exc).__name__)
+        if sum(int(item.get("quotes_verified_publishable", 0)) for item in reports) >= 3:
+            break
+
+    quotes = sum(int(item.get("quotes_verified_publishable", 0)) for item in reports)
+    entry.update(
+        {
+            "articles_discovered": len(candidates),
+            "articles_fetched": len(reports),
+            "quotes_verified": quotes,
+            "sections": _sections_from_articles(reports),
+            "metadata_complete": _metadata_complete_count(reports),
+            "max_text_length": _max_text_length(reports),
+            "urls": _article_urls(reports),
+        }
+    )
+    if quotes:
+        if row.availability_status == "partial_body":
+            entry.update({"status": "partial_body", "collected": True, "blocker": "partial_body"})
+        else:
+            entry.update({"status": "live_verified", "collected": True, "blocker": ""})
+    elif reports:
+        status = _no_quote_status(row, reports)
+        entry.update({"status": status, "collected": False, "blocker": status})
+    else:
+        blocker = _blocker_from_text(errors[0]) if errors else "no_bing_results"
+        if discovery_errors and not errors:
+            blocker = _blocker_from_text(discovery_errors[0])
+        entry.update({"status": "blocked", "collected": False, "blocker": blocker})
+    if errors:
+        entry["detail"] = errors[0]
+    elif discovery_errors:
+        entry["detail"] = discovery_errors[0]
+    else:
+        entry["detail"] = domain
+    return entry
+
+
 def _live_entry(
     row: SourceRegistryRow,
     context: scraper.TopicContext,
@@ -297,90 +412,122 @@ def _live_entry(
     topic_id: str,
     limit: int,
 ) -> dict[str, Any]:
-    if row.source_id in _DISCOVERY_ONLY:
-        return _fixture_entry(
-            row,
-            context,
-            mode="fixture_fallback",
-            blocker="discovery_only",
-            detail="GDELT supplies article metadata, not publisher full text.",
-        )
+    if row.availability_status == "discovery_only" or row.source_id in _DISCOVERY_ONLY:
+        entry = _discovery_entry(row)
+        if row.tier_block:
+            entry.update(
+                {
+                    "status": "blocked",
+                    "blocker": row.blocker_reason or "discovery_only_no_article_text",
+                    "detail": row.blocker_reason,
+                }
+            )
+        return entry
 
     entry = _base_entry(row, "live_feed")
     feed_url = scraper._resolve_feed_url(row, topic_id=topic_id)
     entry["detail"] = feed_url
-    if not feed_url:
-        return _fixture_entry(
-            row,
-            context,
-            mode="fixture_fallback",
-            blocker="no_public_feed",
-            detail="No public feed or sitemap is configured.",
-        )
+    articles: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    discovered = 0
+    feed_error = ""
+    if feed_url:
+        try:
+            report = scraper.run_live_feed(
+                row,
+                limit=limit,
+                topic_id=topic_id,
+                cache=cache,
+                policy=_proof_policy(),
+                extra_hosts=_approved_redirect_hosts(row),
+            )
+            if report.get("status"):
+                feed_error = str(report.get("message") or report.get("status"))
+            else:
+                articles = [item for item in report.get("articles", []) if isinstance(item, dict)]
+                errors = [item for item in articles if item.get("status") == "fetch_or_parse_error"]
+                discovered = int(report.get("articles_discovered_in_feed", 0))
+        except Exception as exc:
+            feed_error = str(exc) or type(exc).__name__
 
-    try:
-        report = scraper.run_live_feed(
-            row,
-            limit=limit,
-            topic_id=topic_id,
-            cache=cache,
-            policy=_proof_policy(),
-        )
-    except Exception as exc:
-        message = str(exc) or type(exc).__name__
-        return _fixture_entry(
-            row,
-            context,
-            mode="fixture_fallback",
-            blocker=_blocker_from_text(message),
-            detail=message,
-        )
-
-    if report.get("status"):
-        return _fixture_entry(
-            row,
-            context,
-            mode="fixture_fallback",
-            blocker=_blocker_from_text(str(report.get("status"))),
-            detail=str(report.get("message") or report.get("status")),
-        )
-
-    articles = [item for item in report.get("articles", []) if isinstance(item, dict)]
-    errors = [item for item in articles if item.get("status") == "fetch_or_parse_error"]
     successful = [item for item in articles if item.get("status") != "fetch_or_parse_error"]
     quotes = sum(int(item.get("quotes_verified_publishable", 0)) for item in successful)
-    discovered = int(report.get("articles_discovered_in_feed", 0))
-    blocker = ""
     if quotes and not errors:
-        status = "live_verified"
-    elif successful:
-        status = "live_partial"
-        if quotes:
-            blocker = "partial_article_failures"
-        elif row.source_id in _LICENSED_FULL_TEXT:
-            blocker = "paywall_or_incomplete_body"
-        else:
-            blocker = "no_verified_quotes"
-    else:
-        status = "live_partial"
-        blocker = (
-            _blocker_from_text(errors[0].get("error", "")) if errors else "no_articles_fetched"
+        entry.update(
+            {
+                "status": (
+                    "partial_body" if row.availability_status == "partial_body" else "live_verified"
+                ),
+                "collected": True,
+                "articles_discovered": discovered,
+                "articles_fetched": len(successful),
+                "quotes_verified": quotes,
+                "sections": _sections_from_articles(successful),
+                "metadata_complete": _metadata_complete_count(successful),
+                "max_text_length": _max_text_length(successful),
+                "urls": _article_urls(successful),
+                "blocker": ("partial_body" if row.availability_status == "partial_body" else ""),
+            }
         )
+        return entry
 
-    entry.update(
-        {
-            "status": status,
-            "articles_discovered": discovered,
-            "articles_fetched": len(successful),
-            "quotes_verified": quotes,
-            "sections": _sections_from_articles(successful),
-            "metadata_complete": _metadata_complete_count(successful),
-            "blocker": blocker,
-        }
+    bing = _bing_entry(row, context, cache, limit=limit)
+    if bing["collected"]:
+        return bing
+    if bing["articles_fetched"] and bing["status"] in {"partial_body", "accessible_no_quotes"}:
+        return bing
+
+    if quotes:
+        entry.update(
+            {
+                "status": (
+                    "partial_body" if row.availability_status == "partial_body" else "live_partial"
+                ),
+                "collected": True,
+                "articles_discovered": discovered,
+                "articles_fetched": len(successful),
+                "quotes_verified": quotes,
+                "sections": _sections_from_articles(successful),
+                "metadata_complete": _metadata_complete_count(successful),
+                "max_text_length": _max_text_length(successful),
+                "urls": _article_urls(successful),
+                "blocker": (
+                    "partial_body"
+                    if row.availability_status == "partial_body"
+                    else "partial_article_failures"
+                ),
+            }
+        )
+        if errors:
+            entry["detail"] = str(errors[0].get("error") or feed_url)
+        return entry
+
+    if successful:
+        status = _no_quote_status(row, successful)
+        entry.update(
+            {
+                "status": status,
+                "collected": False,
+                "articles_discovered": discovered,
+                "articles_fetched": len(successful),
+                "sections": _sections_from_articles(successful),
+                "metadata_complete": _metadata_complete_count(successful),
+                "max_text_length": _max_text_length(successful),
+                "urls": _article_urls(successful),
+                "blocker": status,
+            }
+        )
+        return entry
+
+    blocker = row.blocker_reason or bing["blocker"] or _blocker_from_text(feed_error)
+    detail = feed_error or bing["detail"]
+    return _fixture_entry(
+        row,
+        context,
+        mode="fixture_fallback",
+        blocker=blocker,
+        detail=detail,
     )
-    if errors:
-        entry["detail"] = str(errors[0].get("error") or feed_url)
-    return entry
 
 
 def build_report(
@@ -394,6 +541,8 @@ def build_report(
     for entry in entries:
         status = str(entry["status"])
         statuses[status] = statuses.get(status, 0) + 1
+    collected = [entry for entry in entries if entry.get("collected") is True]
+    fixture_only = [entry for entry in entries if str(entry.get("mode", "")).startswith("fixture")]
     return {
         "generated_at": generated_at,
         "topic_id": topic_id,
@@ -401,10 +550,25 @@ def build_report(
         "summary": {
             "total_sources": len(entries),
             "statuses": statuses,
-            "sources_with_verified_quotes": sum(
-                int(entry["quotes_verified"]) > 0 for entry in entries
+            "sources_with_collected_data": len(collected),
+            "sources_with_verified_quotes": len(collected),
+            "sources_fixture_only": len(fixture_only),
+            "sources_not_collected": len(entries) - len(collected),
+            "sources_with_blockers": sum(
+                bool(entry.get("blocker")) and entry.get("status") != "discovery_only"
+                for entry in entries
             ),
-            "sources_with_blockers": sum(bool(entry["blocker"]) for entry in entries),
+            "live_quotes_verified": sum(
+                int(entry["quotes_verified"])
+                for entry in collected
+                if entry.get("mode") != "manual_sample"
+            ),
+            "sample_quotes_verified": sum(
+                int(entry["quotes_verified"])
+                for entry in collected
+                if entry.get("mode") == "manual_sample"
+            ),
+            "fixture_quotes_verified": sum(int(entry["quotes_verified"]) for entry in fixture_only),
         },
         "sources": entries,
     }
@@ -418,17 +582,20 @@ def render_markdown(report: dict[str, Any], report_date: str) -> str:
         f"Topic: `{report['topic_id']}`. "
         f"Live requested: `{str(report['live_requested']).lower()}`.",
         "",
-        f"Sources: **{summary['total_sources']}**; with verified quotes: "
-        f"**{summary['sources_with_verified_quotes']}**; with blockers: "
+        f"Sources: **{summary['total_sources']}**; with collected data: "
+        f"**{summary['sources_with_collected_data']}**; fixture-only: "
+        f"**{summary['sources_fixture_only']}**; not collected: "
+        f"**{summary['sources_not_collected']}**; with blockers: "
         f"**{summary['sources_with_blockers']}**.",
         "",
-        "| Source | Tier | Mode | Status | Articles | Quotes | Sections | Blocker |",
-        "|---|---:|---|---|---:|---:|---|---|",
+        "| Source | Tier | Availability | Mode | Status | Articles | Quotes | Sections | Blocker |",
+        "|---|---:|---|---|---|---:|---:|---|---|",
     ]
     for entry in report["sources"]:
         lines.append(
-            "| {source_name} (`{source_id}`) | {tier} | {mode} | {status} | "
-            "{articles_fetched} | {quotes_verified} | {sections} | {blocker} |".format(
+            "| {source_name} (`{source_id}`) | {tier} | {availability_status} | "
+            "{mode} | {status} | {articles_fetched} | {quotes_verified} | "
+            "{sections} | {blocker} |".format(
                 **{
                     **entry,
                     "sections": ", ".join(entry["sections"]) or "—",

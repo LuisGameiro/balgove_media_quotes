@@ -113,6 +113,10 @@ def rendered_html_fallback(raw_html: str, *, source_url: str) -> str:
 
             def _route_handler(route: Route) -> None:
                 req_url = route.request.url
+                if req_url == source_url:
+                    # Serve the vetted fetch, never re-request the main document.
+                    route.fulfill(status=200, content_type="text/html", body=raw_html)
+                    return
                 req_parsed = urlparse(req_url)
                 if req_parsed.scheme != "https":
                     route.abort()

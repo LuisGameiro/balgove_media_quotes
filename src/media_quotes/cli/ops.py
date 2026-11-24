@@ -158,6 +158,35 @@ def _do_backfill(  # pragma: no cover
     return EXIT_OK
 
 
+def _do_audit_quotes(
+    settings: Settings,
+    *,
+    report_date: date,
+    topic_id: str | None,
+    limit: int,
+    max_cost: float | None,
+    execute: bool,
+) -> int:  # pragma: no cover
+    import json
+
+    from ..quote_audit import audit_missed_quotes, write_report
+
+    report, path = audit_missed_quotes(
+        settings,
+        report_date=report_date,
+        topic_id=topic_id,
+        limit=limit,
+        max_cost=max_cost,
+        execute=execute,
+    )
+    if execute:
+        write_report(report, path)
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    if execute:
+        print(f"Missed-quote report: {path}")
+    return EXIT_OK
+
+
 def _do_sources(
     settings: Settings,
     *,
@@ -175,9 +204,6 @@ def _do_sources(
     if action == "add":
         if not source_id or not homepage_url:
             raise ConfigError("sources --action add requires --source-id and --homepage-url")
-        from ..source_configs import probe_source_admission
-
-        probe = probe_source_admission(homepage_url, feed_url=feed_url or "")
         created = scaffold_source_config(
             source_id,
             source_name=source_name or source_id.upper(),
@@ -191,10 +217,8 @@ def _do_sources(
         )
         print(f"Created source config: {created}")
         print(
-            f"Admission probe: robots_txt={'OK' if probe['robots_txt_ok'] else 'DISALLOWED'}, "
-            f"feed_depth={'OK' if probe['feed_depth_ok'] else 'EMPTY'}, "
-            f"first_hand={'OK' if probe['first_hand_check_ok'] else 'UNCHECKED'} "
-            f"(ready={probe['admission_ready']})"
+            "Admission probe requires fetched robots.txt/feed/article content; "
+            "not run in offline mode (no network calls)."
         )
         print("Next: complete T0 rights review, then run `mq sources --action sync-csv`.")
         return EXIT_OK

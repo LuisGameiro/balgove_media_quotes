@@ -127,6 +127,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--live", action="store_true", help="actually fetch; without it the command only plans"
     )
     subparsers.add_parser("audit", help="deterministic audit report (JSON + MD)", **shared)
+    missed_parser = subparsers.add_parser(
+        "audit-quotes",
+        help="AI shadow audit for quotes the deterministic rules may have missed (paid)",
+        **shared,
+    )
+    missed_parser.add_argument(
+        "--limit", dest="missed_limit", type=int, default=20, help="max articles to audit"
+    )
+    missed_parser.add_argument(
+        "--max-cost", dest="max_cost", type=float, help="required with --execute"
+    )
+    missed_parser.add_argument(
+        "--execute", action="store_true", help="make paid model calls (default: plan only)"
+    )
     subparsers.add_parser("logs", help="correlated JSON logs for a run", **shared)
     eval_parser = subparsers.add_parser("eval", help="metrics on a synthetic gold set", **shared)
     eval_parser.add_argument("--gold-set", dest="gold_set", help="gold set version")
@@ -273,6 +287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from . import (
         _bootstrap,
         _do_audit,
+        _do_audit_quotes,
         _do_backfill,
         _do_batch,
         _do_blob_prune,
@@ -431,6 +446,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     topic_id=topic_arg,
                 )
             return _do_digest(settings, report_date=report_date, out=getattr(args, "out", None))
+        if command == "audit-quotes":
+            report_date = _parse_report_date(getattr(args, "date", None), settings)
+            return _do_audit_quotes(
+                settings,
+                report_date=report_date,
+                topic_id=topic_arg,
+                limit=int(getattr(args, "missed_limit", 20)),
+                max_cost=getattr(args, "max_cost", None),
+                execute=bool(getattr(args, "execute", False)),
+            )
         if command == "logs":
             run_id = getattr(args, "run_id", None)
             if not run_id:

@@ -29,6 +29,7 @@ from media_quotes.adapters import (
 )
 from media_quotes.models import QuoteCandidate
 from media_quotes.registry import load_sources_csv
+from media_quotes.source_configs import ExtractorHints
 from media_quotes.verification_stages import verify_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -229,6 +230,24 @@ def test_parse_newspaper_html_extracts_clean_body_and_multi_format_quotes() -> N
     assert any("Rustem Umerov" in s for s in speakers if s)
     assert any("Денис Шмигаль" in s for s in speakers if s)
     assert any("Denys Shmyhal" in s for s in speakers if s)
+
+
+def test_parse_newspaper_html_uses_configured_fallback_byline() -> None:
+    html = (
+        "<html><head><title>Ukraine update</title>"
+        "<meta property='article:published_time' content='2026-11-24T10:00:00Z'>"
+        "</head><body><article><h1>Ukraine update</h1>"
+        "<p>Ukraine and Russia continued negotiations on security guarantees.</p>"
+        "</article></body></html>"
+    )
+
+    parsed = parse_newspaper_html(
+        html,
+        source_url="https://english.news.cn/20261124/example/c.html",
+        extractor_hints=ExtractorHints(fallback_byline="Xinhua"),
+    )
+
+    assert parsed["byline"] == "Xinhua"
 
 
 def test_scraped_newspaper_quotes_pass_two_stage_deterministic_verifier() -> None:

@@ -43,7 +43,7 @@
     "min_text_length": 200,
     "strip_selectors": []
   },
-  "tier_block": false,
-  "blocker_reason": "",
+  "tier_block": true,
+  "blocker_reason": "API route is not configured for quote acquisition; Guardian RSS already provides live article discovery and full-text proof.",
   "availability_status": "discovery_only"
 }

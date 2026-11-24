@@ -1088,6 +1088,7 @@ def run_live_feed(
     topic_id: str | None = None,
     cache: BlobCache | None = None,
     policy: FetchPolicy | None = None,
+    extra_hosts: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Fetch live feed for source, discover articles, and scrape top N articles."""
     pack = _resolve_topic_pack(topic_id)
@@ -1125,6 +1126,7 @@ def run_live_feed(
         require_topic=require_topic,
         limit=limit,
         cache=cache,
+        extra_hosts=extra_hosts,
     )
 
     articles_results: list[dict[str, Any]] = []
