@@ -178,8 +178,14 @@ def fetch_url_documents(
     cache: BlobCache | None = None,
     extra_hosts: frozenset[str] = frozenset(),
     transport: httpx.AsyncBaseTransport | None = None,
+    provenance: AcquisitionProvenance = "live_bing",
+    discovered_via: str = "bing_news",
 ) -> list[FetchedArticle]:
-    """Fetch original publisher URLs through the rights gate, one error per article."""
+    """Fetch original publisher URLs through the rights gate, one error per article.
+
+    ``provenance``/``discovered_via`` label the acquisition path; archive discovery stamps
+    them as ``live_feed``/``archive`` while Bing fallback keeps the defaults.
+    """
     if not row.usable:
         raise SourceNotPermitted(f"source '{row.source_id}' is not permitted for live fetch")
     cache = cache or BlobCache()
@@ -215,8 +221,8 @@ def fetch_url_documents(
                             "title": item.get("title", ""),
                             "published": item.get("published", ""),
                             "source_id": row.source_id,
-                            "provenance": "live_bing",
-                            "discovered_via": "bing_news",
+                            "provenance": provenance,
+                            "discovered_via": discovered_via,
                         },
                     )
                     results.append(
@@ -226,8 +232,8 @@ def fetch_url_documents(
                             raw=raw,
                             sha256=digest,
                             blob_path=str(blob_path),
-                            provenance="live_bing",
-                            discovered_via="bing_news",
+                            provenance=provenance,
+                            discovered_via=discovered_via,
                         )
                     )
                 except Exception as exc:  # one bad article must not abort the rest
@@ -239,8 +245,8 @@ def fetch_url_documents(
                             sha256="",
                             blob_path="",
                             error=str(exc),
-                            provenance="live_bing",
-                            discovered_via="bing_news",
+                            provenance=provenance,
+                            discovered_via=discovered_via,
                         )
                     )
         return results

@@ -91,7 +91,10 @@ def _do_backfill(  # pragma: no cover
         expected_cache_hit_rate=cache_rate,
     )
     note = "budget not capped"
-    if max_cost is not None:
+    if source_mode == "live":
+        note = "paid inference disabled; actual paid calls are zero (operator cap only)"
+        print("Archive backfill: paid inference is disabled; actual paid calls are zero.")
+    elif max_cost is not None:
         note = budget_gate(estimate, max_cost)
     print(
         f"Backfill {start}..{start + timedelta(days=span - 1)} ({span} day(s)): "
@@ -102,9 +105,24 @@ def _do_backfill(  # pragma: no cover
         f"Cache-hit summary: {cached_hashes} stored content hash(es), "
         f"assumed hit rate {cache_rate:.2%}."
     )
+    if execute and source_mode == "live" and (max_cost is None or max_cost <= 0):
+        raise ConfigError("--max-cost must be present and positive for an archive backfill")
     if execute and max_cost is None:
         raise ConfigError("--max-cost is required to execute a backfill")
     if execute and not dry_run:
+        if source_mode == "live":
+            from ..backfill import run_historical_backfill
+
+            if max_cost is None:
+                raise ConfigError("--max-cost is required to execute a backfill")
+            print(f"Budget: {note}; executing bounded historical backfill (archive).")
+            summary = run_historical_backfill(
+                settings, start=start, end=end, max_cost=max_cost, topic_id=topic_id
+            )
+            print(f"Manifest: {summary['manifest']}")
+            print(f"Backfill summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True)}")
+            return EXIT_GAPS if summary["gaps"] else EXIT_OK
+
         from ..pipeline import run_daily_pipeline
 
         print(f"Budget: {note}; executing bounded historical backfill ({source_mode}).")

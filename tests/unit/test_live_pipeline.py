@@ -500,3 +500,85 @@ def test_live_pipeline_writes_live_review_queue(
         (settings.audit_dir / f"audit-{REPORT_DATE.isoformat()}.json").read_text(encoding="utf-8")
     )
     assert quote_id in [flag["evidence"]["old_quote_id"] for flag in audit["review_queue"]]
+
+
+def _archive_refs(cache: BlobCache, source_id: str) -> list[str]:
+    article = _success(cache, source_id, route="archive").articles[0]
+    return [f"fixture://{source_id}/{Path(str(article.blob_path)).name}"]
+
+
+def _forbid_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("archive mode must not run live or fixture discovery")
+
+    monkeypatch.setattr("media_quotes.cli.run.collect_live_source", forbidden)
+    monkeypatch.setattr(FixtureSource, "list_refs", forbidden)
+
+
+def test_archive_run_uses_prefetched_refs_without_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    refs = {source_id: _archive_refs(cache, source_id) for source_id in _SOURCES}
+    _forbid_discovery(monkeypatch)
+
+    result = run_daily_pipeline(
+        settings, report_date=REPORT_DATE, source_mode="archive", prefetched_refs=refs
+    )
+
+    assert result.status == "succeeded"
+    assert {record.source_id for record in result.records} == set(_SOURCES)
+    assert all(record.provenance == "live_feed" for record in result.records)
+    assert all("fixtures" not in str(record.article_url) for record in result.records)
+    assert result.provenance == "live_feed"
+    assert all(item["discovery_route"] == "archive" for item in result.coverage)
+    assert result.audit_json_path is not None
+    manifest = json.loads(result.audit_json_path.read_text(encoding="utf-8"))
+    assert manifest["version_manifest"]["source_mode"] == "archive"
+    assert manifest["version_manifest"]["fixture_replay"] is False
+
+
+def test_archive_unusable_row_is_blocked_without_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    blocked = [row for row in _load_registry(settings) if row.source_id == "reuters"]
+    blocked = [row.model_copy(update={"enabled": False}) for row in blocked]
+    monkeypatch.setattr("media_quotes.cli.run._load_registry", lambda _settings: blocked)
+    _forbid_discovery(monkeypatch)
+    cache = BlobCache(settings.blob_dir)
+    refs = {"reuters": _archive_refs(cache, "reuters")}
+
+    result = run_daily_pipeline(
+        settings, report_date=REPORT_DATE, source_mode="archive", prefetched_refs=refs
+    )
+
+    assert result.status == "failed"
+    assert result.gaps[0]["source_id"] == "reuters"
+    assert result.gaps[0]["gap_reason"] in {"rights_blocked", "not_enabled"}
+    assert result.coverage[0]["status"] == "blocked"
+    assert result.coverage[0]["discovery_route"] == "archive"
+
+
+def test_archive_failed_mandatory_sources_publish_no_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    _forbid_discovery(monkeypatch)
+
+    result = run_daily_pipeline(
+        settings,
+        report_date=REPORT_DATE,
+        source_mode="archive",
+        prefetched_refs={"guardian": _archive_refs(cache, "guardian")},
+    )
+
+    assert result.status == "failed"
+    assert result.digest_path is None
+    assert result.audit_json_path is not None
+    report = json.loads(result.audit_json_path.read_text(encoding="utf-8"))
+    assert report["artifacts"]["digest"] == ""

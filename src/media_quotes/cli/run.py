@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
@@ -852,6 +853,7 @@ def _collect(  # pragma: no cover
     topic_pack: TopicPack | None = None,
     source_mode: str = "fixtures",
     tier: int | None = None,
+    prefetched_refs: Mapping[str, list[str]] | None = None,
 ) -> tuple[
     list[ExportQuoteRecord],
     list[dict[str, Any]],
@@ -860,7 +862,7 @@ def _collect(  # pragma: no cover
     int,
     dict[str, dict[str, Any]],
 ]:
-    if source_mode not in {"fixtures", "blobs", "live"}:
+    if source_mode not in {"fixtures", "blobs", "live", "archive"}:
         raise ConfigError(f"unsupported source_mode {source_mode!r}")
     window_start, _ = _window(report_date, settings)
     records: list[ExportQuoteRecord] = []
@@ -883,11 +885,15 @@ def _collect(  # pragma: no cover
     for row in rows:
         refs: list[str] | None = None
         row_provenance: AcquisitionProvenance = (
-            "live_feed" if source_mode in {"blobs", "live"} else "fixture"
+            "live_feed" if source_mode in {"blobs", "live", "archive"} else "fixture"
         )
         discovery_route = ""
         collector_errors: list[str] = []
-        if source_mode == "live" and row.usable:
+        if source_mode == "archive":
+            # Historical refs were fetched by the backfill orchestrator; no live discovery.
+            refs = list((prefetched_refs or {}).get(row.source_id, []))
+            discovery_route = "archive"
+        elif source_mode == "live" and row.usable:
             config = source_configs.get(row.source_id)
             feed_url = (config.discovery_feed_url(topic_id) if config else "") or row.feed_url
             extra_hosts = frozenset(
@@ -923,7 +929,7 @@ def _collect(  # pragma: no cover
             used_quote_ids=used_quote_ids,
             topic_pack=active_pack,
             source_config=source_configs.get(row.source_id),
-            source_mode="blobs" if source_mode == "live" else source_mode,
+            source_mode="blobs" if source_mode in {"live", "archive"} else source_mode,
             refs=refs,
             provenance=row_provenance,
             discovery_route=discovery_route,

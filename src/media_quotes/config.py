@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     fetch_max_bytes: int = Field(default=5_000_000, gt=0)
     fetch_max_connections: int = Field(default=10, gt=0)
     live_article_limit: int = Field(default=5, gt=0)
+    archive_article_limit: int = Field(default=500, gt=0)
 
     # Neo4j derived graph projection (opt-in; Postgres remains system of record)
     sync_to_neo4j: bool = False

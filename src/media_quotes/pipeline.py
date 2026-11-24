@@ -518,9 +518,10 @@ def run_daily_pipeline(
     source_mode: str = "fixtures",
     tier: int | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    prefetched_refs: Mapping[str, list[str]] | None = None,
 ) -> DailyPipelineResult:
     """Run one report date through the shared T0-gated offline pipeline."""
-    if source_mode in {"live", "blobs"} and provenance == "fixture":
+    if source_mode in {"live", "blobs", "archive"} and provenance == "fixture":
         provenance = "live_feed"
     from .cli.audit import _audit_report, _write_audit
     from .cli.common import (
@@ -555,8 +556,9 @@ def run_daily_pipeline(
         topic_pack=topic_pack,
         source_mode=source_mode,
         tier=tier,
+        prefetched_refs=prefetched_refs,
     )
-    if (source_mode in {"live", "blobs"} or provenance != "fixture") and any(
+    if (source_mode in {"live", "blobs", "archive"} or provenance != "fixture") and any(
         record.provenance == "fixture" for record in records
     ):
         raise ConfigError(
@@ -591,7 +593,7 @@ def run_daily_pipeline(
 
     mandatory_coverage = [cov for cov in coverage if cov.get("source_id") in _MANDATORY]
     failed_live = (
-        source_mode == "live"
+        source_mode in {"live", "archive"}
         and bool(mandatory_coverage)
         and all(not cov.get("quotes") for cov in mandatory_coverage)
     )
