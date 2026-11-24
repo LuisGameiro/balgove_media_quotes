@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import Engine, text
@@ -19,25 +19,24 @@ from .queries import _normalize_speaker_key
 
 
 def _get_val(obj: Any, key: str, default: Any = None) -> Any:
-    if isinstance(obj, Mapping):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+    val = obj.get(key, default) if isinstance(obj, Mapping) else getattr(obj, key, default)
+    return default if val is None else val
 
 
 _MERGE_QUOTE_CYPHER = """
 MERGE (s:Source {source_id: $source_id})
-ON CREATE SET s.source_name = $source_name,
-              s.tier = $source_tier,
-              s.country_region = $source_country_region,
-              s.source_type = $source_type,
-              s.claim_only = $claim_only,
-              s.rights_status = $rights_status
+SET s.source_name = $source_name,
+    s.tier = $source_tier,
+    s.country_region = $source_country_region,
+    s.source_type = $source_type,
+    s.claim_only = $claim_only,
+    s.rights_status = $rights_status
 
 MERGE (a:Article {canonical_url: $article_url})
-ON CREATE SET a.title = $article_name,
-              a.publication_date = $publication_date,
-              a.content_hash = $content_hash,
-              a.author = $article_author
+SET a.title = $article_name,
+    a.publication_date = $publication_date,
+    a.content_hash = $content_hash,
+    a.author = $article_author
 
 MERGE (s)-[:PUBLISHED]->(a)
 
@@ -77,6 +76,16 @@ MATCH (q:Quote {canonical_quote_id: $quote_id})
 MATCH (ancestor:Quote {canonical_quote_id: $superseded_id})
 MERGE (q)-[sup:SUPERSEDES]->(ancestor)
 SET sup.reason = $reason
+"""
+
+_WRITE_SYNC_METADATA_CYPHER = """
+MERGE (m:ProjectionMetadata {key: 'media_quotes'})
+SET m.last_synced_at = $last_synced_at,
+    m.quotes_projected = $quotes_projected,
+    m.sources_projected = $sources_projected,
+    m.articles_projected = $articles_projected,
+    m.speakers_projected = $speakers_projected,
+    m.error_count = $error_count
 """
 
 
@@ -147,18 +156,21 @@ def project_records_to_graph(
             articles_seen.add(article_url)
 
             # Speaker projection
-            speaker = str(_get_val(rec, "speaker") or _get_val(rec, "article_author") or "").strip()
+            speaker = str(_get_val(rec, "speaker") or "").strip()
+            if not speaker:
+                speaker = str(_get_val(rec, "article_author") or "").strip()
             if speaker:
                 speaker_key = _normalize_speaker_key(speaker)
-                session.run(
-                    _MERGE_SPEAKER_CYPHER,
-                    {
-                        "quote_id": quote_id,
-                        "speaker_key": speaker_key,
-                        "speaker_name": speaker,
-                    },
-                )
-                speakers_seen.add(speaker_key)
+                if speaker_key:
+                    session.run(
+                        _MERGE_SPEAKER_CYPHER,
+                        {
+                            "quote_id": quote_id,
+                            "speaker_key": speaker_key,
+                            "speaker_name": speaker,
+                        },
+                    )
+                    speakers_seen.add(speaker_key)
 
             # Terms projection
             matched_terms = _get_val(rec, "matched_terms") or []
@@ -172,6 +184,18 @@ def project_records_to_graph(
                     )
 
             # Supersession projection
+            superseded_ids = _get_val(rec, "superseded_by")
+            if isinstance(superseded_ids, list):
+                for sup_id in superseded_ids:
+                    if sup_id:
+                        session.run(
+                            _MERGE_SUPERSESSION_CYPHER,
+                            {
+                                "quote_id": quote_id,
+                                "superseded_id": str(sup_id),
+                                "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
+                            },
+                        )
             superseded_id = _get_val(rec, "superseded_id")
             if not superseded_id:
                 notes_text = str(_get_val(rec, "notes", ""))
@@ -190,13 +214,25 @@ def project_records_to_graph(
         except Exception as exc:
             errors.append(f"Error projecting quote {getattr(rec, 'quote_id', '?')}: {exc}")
 
-    return GraphSyncStats(
+    stats = GraphSyncStats(
         quotes_projected=quotes_count,
         sources_projected=len(sources_seen),
         articles_projected=len(articles_seen),
         speakers_projected=len(speakers_seen),
         errors=errors,
     )
+    session.run(
+        _WRITE_SYNC_METADATA_CYPHER,
+        {
+            "last_synced_at": datetime.now(UTC).isoformat(),
+            "quotes_projected": stats.quotes_projected,
+            "sources_projected": stats.sources_projected,
+            "articles_projected": stats.articles_projected,
+            "speakers_projected": stats.speakers_projected,
+            "error_count": len(stats.errors),
+        },
+    )
+    return stats
 
 
 def sync_postgres_to_graph(
@@ -217,10 +253,13 @@ def sync_postgres_to_graph(
            qc.section AS section_id,
            coalesce(obs.is_obsolete, false) AS is_obsolete,
            obs.reason AS obsolete_reason,
+           obs.superseded_by,
+           q.quote_metadata->>'notes' AS notes,
            a.canonical_url AS article_url,
            a.title AS article_name,
            a.publication_date,
            a.content_hash,
+           coalesce(a.article_metadata->>'byline', '') AS article_author,
            s.source_id,
            s.source_name,
            s.tier AS source_tier,
@@ -231,9 +270,15 @@ def sync_postgres_to_graph(
     FROM quotes q
     JOIN articles a ON q.article_id = a.article_id
     JOIN sources s ON a.source_id = s.source_id
-    LEFT JOIN quote_classifications qc ON q.quote_id = qc.quote_id
     LEFT JOIN LATERAL (
-        SELECT is_obsolete, reason
+        SELECT section
+        FROM quote_classifications
+        WHERE quote_id = q.quote_id
+        ORDER BY created_at DESC
+        LIMIT 1
+    ) qc ON true
+    LEFT JOIN LATERAL (
+        SELECT is_obsolete, reason, superseded_by
         FROM obsolescence_flags
         WHERE quote_id = q.quote_id
         ORDER BY created_at DESC

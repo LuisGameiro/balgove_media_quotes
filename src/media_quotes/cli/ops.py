@@ -62,7 +62,7 @@ def _do_backfill(  # pragma: no cover
     cached_hashes = 0
     for day in range(span):
         current = start + timedelta(days=day)
-        path = local_store_path(settings.export_dir, current)
+        path = local_store_path(settings.export_dir, current, topic_id=topic_id)
         if not path.is_file():
             continue
         # Only hashes are needed: never parse hundreds of full records into memory.
@@ -98,6 +98,8 @@ def _do_backfill(  # pragma: no cover
         f"Cache-hit summary: {cached_hashes} stored content hash(es), "
         f"assumed hit rate {cache_rate:.2%}."
     )
+    if execute and max_cost is None:
+        raise ConfigError("--max-cost is required to execute a backfill")
     if execute and not dry_run:
         from ..pipeline import run_daily_pipeline
 
@@ -173,6 +175,9 @@ def _do_sources(
     if action == "add":
         if not source_id or not homepage_url:
             raise ConfigError("sources --action add requires --source-id and --homepage-url")
+        from ..source_configs import probe_source_admission
+
+        probe = probe_source_admission(homepage_url, feed_url=feed_url or "")
         created = scaffold_source_config(
             source_id,
             source_name=source_name or source_id.upper(),
@@ -185,6 +190,12 @@ def _do_sources(
             out_dir=settings.sources_dir,
         )
         print(f"Created source config: {created}")
+        print(
+            f"Admission probe: robots_txt={'OK' if probe['robots_txt_ok'] else 'DISALLOWED'}, "
+            f"feed_depth={'OK' if probe['feed_depth_ok'] else 'EMPTY'}, "
+            f"first_hand={'OK' if probe['first_hand_check_ok'] else 'UNCHECKED'} "
+            f"(ready={probe['admission_ready']})"
+        )
         print("Next: complete T0 rights review, then run `mq sources --action sync-csv`.")
         return EXIT_OK
 
@@ -317,6 +328,7 @@ def _do_digest(
         obsolescence_flags=review_flags,
         review_badges=review_badges,
         notice=_NOTICE,
+        now=now,
     )
     print(f"Digest {len(records)} quote(s): {path}")
     return EXIT_OK

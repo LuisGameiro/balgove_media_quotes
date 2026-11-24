@@ -79,7 +79,7 @@ def pre_llm_filter(
         if norm in seen:
             drop("duplicate")
             continue
-        if policy_flags.get("original_reporting_flag", "first-hand") != "first-hand":
+        if policy_flags.get("original_reporting_flag", "unknown") != "first-hand":
             drop("not_first_hand")
             continue
         seen.add(norm)

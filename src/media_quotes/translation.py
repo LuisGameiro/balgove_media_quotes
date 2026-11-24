@@ -58,6 +58,7 @@ class TranslationResult:
     prompt_version: str = ""
     content_hash: str = ""
     error: str = ""
+    native_quote_text: str = ""
 
 
 class TranslationProvider(Protocol):
@@ -207,6 +208,7 @@ class OpenRouterTranslationProvider:
             model_snapshot=self._model_snapshot,
             prompt_version=prompt_version,
             content_hash=digest,
+            native_quote_text=structured.quote_text,
         )
 
 
@@ -310,4 +312,5 @@ def translate_quote(
         model_snapshot=proposal.model_snapshot or model_snapshot,
         prompt_version=proposal.prompt_version or prompt_version,
         content_hash=_output_hash(digest, translated),
+        native_quote_text=proposal.native_quote_text or text,
     )

@@ -75,7 +75,7 @@ def test_schema_sql_has_t0_constraints() -> None:
     ddl = SCHEMA_SQL.read_text(encoding="utf-8")
     assert "CONSTRAINT sources_t0_gate CHECK" in ddl
     assert "CONSTRAINT sources_state_controlled_claim_only CHECK" in ddl
-    assert "CONSTRAINT sources_tier4_disabled CHECK" in ddl
+    assert "CONSTRAINT sources_tier4_claim_only CHECK" in ddl
     assert "rights_status IN ('license_held','api_permitted')" in ddl
 
 
@@ -382,10 +382,16 @@ def test_read_export_records_keeps_one_row_per_quote() -> None:
         s_claim=False,
         s_language="en",
         o_reason="pending",
+        o_created_at=datetime(2026, 11, 19, 10, 0, tzinfo=UTC),
     )
     rows = [
         {**base, "o_obsolete": False},
-        {**base, "o_obsolete": True, "o_reason": "confirmed"},
+        {
+            **base,
+            "o_obsolete": True,
+            "o_reason": "confirmed",
+            "o_created_at": datetime(2026, 11, 19, 12, 0, tzinfo=UTC),
+        },
     ]
     session = MagicMock()
     session.execute.return_value.mappings.return_value = rows

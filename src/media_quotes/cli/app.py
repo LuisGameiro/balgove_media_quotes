@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
+
 from ..config import Settings, get_settings, unknown_setting_env_vars
 from ..exceptions import BudgetExceededError, ConfigError, MediaQuotesError, ValidationError
 from ..observability import configure_observability
@@ -215,9 +217,7 @@ def _build_parser() -> argparse.ArgumentParser:
     drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
     drill.add_argument("--reference", dest="reference")
 
-    graph_parser = subparsers.add_parser(
-        "graph", help="manage derived Neo4j graph projection", **shared
-    )
+    graph_parser = subparsers.add_parser("graph", help="manage derived Neo4j graph projection")
     graph_sub = graph_parser.add_subparsers(dest="graph_action", required=True)
     graph_sub.add_parser("init", help="apply Neo4j schema constraints and indexes", **shared)
     graph_sub.add_parser("status", help="check Neo4j connectivity and element counts", **shared)
@@ -296,8 +296,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
-    settings = get_settings()
     try:
+        settings = get_settings()
         command = str(args.command)
         topic_arg = getattr(args, "topic", None)
         if command == "batch":
@@ -395,6 +395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_date=report_date,
                 limit=int(args.limit),
                 dry_run=not bool(args.live),
+                topic_id=topic_arg,
             )
         if command in {"run", "audit", "digest"}:
             report_date = _parse_report_date(getattr(args, "date", None), settings)
@@ -537,11 +538,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_tokens=int(getattr(args, "max_tokens", 4000)),
                     limit=int(getattr(args, "limit", 25)),
                 )
-    except (ValidationError, MediaQuotesError, FileExistsError, ValueError) as exc:
+    except (
+        ValidationError,
+        PydanticValidationError,
+        MediaQuotesError,
+        FileExistsError,
+        FileNotFoundError,
+        ValueError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return (
             EXIT_CONFIG
-            if isinstance(exc, (ConfigError, BudgetExceededError, ValueError))
+            if isinstance(
+                exc,
+                (
+                    ConfigError,
+                    BudgetExceededError,
+                    ValueError,
+                    PydanticValidationError,
+                    FileNotFoundError,
+                ),
+            )
             else EXIT_FAILURE
         )
     parser.error(f"unknown command: {args.command}")

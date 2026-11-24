@@ -438,9 +438,6 @@ def _process_source(  # pragma: no cover
         )
 
     policy_flags = dict(adapter.policy_flags())
-    # This pipeline only consumes fixture refs. They are synthetic first-hand material,
-    # even for a rights-cleared source: the T0 gate changes who may be contacted, not the text.
-    policy_flags["original_reporting_flag"] = "first-hand"
     policy_flags["fixture_replay"] = replay
     verified_at = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
     gate = _topic_gate(settings, topic_pack=topic_pack)
@@ -592,11 +589,17 @@ def _process_source(  # pragma: no cover
                 )
             )
 
+        article_policy = dict(policy_flags)
+        article_policy["original_reporting_flag"] = (
+            metadata.get("original_reporting_flag")
+            or sidecar_meta.get("original_reporting_flag")
+            or "first-hand"
+        )
         pipeline_outcome = verify_pipeline(
             candidates,
             text=text,
             source_row=row,
-            policy_flags=policy_flags,
+            policy_flags=article_policy,
             metadata=metadata,
             window_start=window_start,
             window_end=report_date,
@@ -721,7 +724,7 @@ def _process_source(  # pragma: no cover
                     license_reference=row.license_reference,
                     discovery_method=str(row.discovery_method),
                     claim_only=row.claim_only,
-                    original_reporting_flag="first-hand",
+                    original_reporting_flag=str(article_policy["original_reporting_flag"]),
                     source_language=row.language,
                     publication_date=publication_date,
                     article_name=article_ref_name,

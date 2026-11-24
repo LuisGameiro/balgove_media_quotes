@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .. import __version__
-from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings, require_safe_id
+from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
 from ..enums import APPROVED_RIGHTS
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, content_hash
@@ -24,6 +24,7 @@ from ..source_configs import (
     load_source_configs,
 )
 from ..source_topics import load_source_topic_routes
+from ..text_utils import require_safe_id
 from ..topics import DEFAULT_TOPICS_DIR, TopicPack, load_topic_pack
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -46,8 +47,8 @@ def exit_code_for(*, ok: bool = True, gaps: Sequence[Any] = (), config_error: bo
 
 
 _NOTICE = (
-    "BLOCKED/DEGRADED MODE: quotes below come from clearly labelled synthetic fixtures for "
-    "blocked mandatory sources. Not real reporting; no live source, database or LLM was used."
+    "OFFLINE FIXTURE REPLAY: quotes below come from clearly labelled synthetic fixtures. "
+    "Not real reporting; source material is replayed from local files."
 )
 _MANDATORY = ("reuters", "bbc")
 _ARTICLES_PER_SOURCE_DAY = 10.0  # planning envelope

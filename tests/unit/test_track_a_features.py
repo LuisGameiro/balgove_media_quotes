@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip("dagster")
+
 from media_quotes import cli
 from media_quotes.adapters import BlobCache
 from media_quotes.config import Settings
@@ -76,13 +78,13 @@ def test_blob_cache_sidecar_metadata_roundtrip(tmp_path: Path) -> None:
         cache.store_meta("bad/id", digest, {"url": "https://example.com"})
 
 
-def test_live_blob_bridge_ingests_t0_cleared_and_blocks_disabled(
+def test_live_blob_bridge_ingests_t0_cleared_and_claim_only_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = _isolated_settings(tmp_path)
     cache = BlobCache(settings.blob_dir)
 
-    # Store a live blob for a T0-cleared source (guardian) and for a disabled tier-4 source (rt)
+    # Store live blobs for a standard source and an enabled tier-4 claim-only source.
     g_digest, _ = cache.store("guardian", _LIVE_HTML)
     cache.store_meta(
         "guardian",
@@ -92,7 +94,11 @@ def test_live_blob_bridge_ingests_t0_cleared_and_blocks_disabled(
             "title": "Ukraine air defence update after summit",
         },
     )
-    rt_digest, _ = cache.store("rt", _LIVE_HTML)
+    rt_html = _LIVE_HTML.replace(
+        b"Air defence deliveries will accelerate this winter",
+        b"RT claims air defence deliveries will accelerate this winter",
+    )
+    rt_digest, _ = cache.store("rt", rt_html)
     cache.store_meta(
         "rt",
         rt_digest,
@@ -112,8 +118,8 @@ def test_live_blob_bridge_ingests_t0_cleared_and_blocks_disabled(
         guardian_records[0].article_url
         == "https://www.theguardian.com/world/2026/nov/23/ukraine-air-defence"
     )
-    # Disabled tier-4 source must never be ingested from blobs
-    assert rt_records == []
+    assert rt_records
+    assert all(record.claim_only for record in rt_records)
 
     # Also verify CLI flag `mq run --from-blobs --tier 2`
     monkeypatch.setattr("media_quotes.cli.app.get_settings", lambda: settings)

@@ -40,7 +40,12 @@ def verify_export_integrity(
 
 
 def retention_readiness(
-    policy: RetentionPolicy, today: date, partitions: Sequence[date], *, longest_txn_seconds: int
+    policy: RetentionPolicy,
+    today: date,
+    partitions: Sequence[date],
+    *,
+    longest_txn_seconds: int,
+    measured_index_bloat_ratio: float = 0.0,
 ) -> dict[str, Any]:
     """Machine-readable readiness report for the live retention job / load test."""
     plan = retention_plan(policy, today, partitions)
@@ -51,4 +56,7 @@ def retention_readiness(
         "partitions_hot": list(plan.keep_hot),
         "longest_txn_ok": policy.lock_ok(longest_txn_seconds),
         "audit_rows_dropped": policy.audit_rows_dropped,
+        "max_index_bloat_ratio": policy.max_index_bloat_ratio,
+        "index_bloat_ratio": measured_index_bloat_ratio,
+        "index_bloat_ok": policy.index_bloat_ok(measured_index_bloat_ratio),
     }

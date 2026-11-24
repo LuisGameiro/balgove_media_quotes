@@ -3,7 +3,7 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Sources mirror the authoritative registry in data/sources.csv. docs/07-sources.md
+-- Sources mirror the authoritative registry in data/sources.csv. docs/03-sources.md
 -- explains each row. The CHECK constraints are the T0 gate: a source may only be enabled
 -- when rights are approved, a licence reference exists, the access mode is permitted,
 -- and discovery is enumerable (not vague "web").
@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS sources (
     discovery_method     TEXT NOT NULL CHECK (discovery_method IN ('sitemap','rss','web','api','gdelt','licensed_database')),
     archive_start_date   DATE NOT NULL,
     enabled              BOOLEAN NOT NULL DEFAULT FALSE,
+    tier_block           BOOLEAN NOT NULL DEFAULT FALSE,
+    blocker_reason       TEXT NOT NULL DEFAULT '',
+    availability_status  TEXT NOT NULL DEFAULT 'live'
+                          CHECK (availability_status IN ('live','partial_body','accessible_no_quotes','blocked','discovery_only','fixture_only')),
     notes                TEXT NOT NULL DEFAULT '',
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -40,8 +44,11 @@ CREATE TABLE IF NOT EXISTS sources (
     CONSTRAINT sources_state_controlled_claim_only CHECK (
         source_type <> 'state-controlled' OR claim_only
     ),
-    CONSTRAINT sources_tier4_disabled CHECK (
-        tier <> 4 OR (enabled = FALSE AND cadence_hours = 0)
+    CONSTRAINT sources_tier4_claim_only CHECK (
+        tier <> 4 OR claim_only
+    ),
+    CONSTRAINT sources_tier_block_reason CHECK (
+        NOT tier_block OR blocker_reason <> ''
     )
 );
 

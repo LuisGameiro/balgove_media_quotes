@@ -31,6 +31,7 @@ class ObsolescenceEvidence(BaseModel):
     superseding_span: str = Field(min_length=1)
     decision_id: str
     rationale: str = Field(min_length=1)
+    new_quote_id: str = ""
 
     @property
     def is_primary_evidence(self) -> bool:
@@ -81,6 +82,7 @@ class RetentionPolicy:
     log_days: int = 90
     max_transaction_seconds: int = 60
     audit_rows_dropped: bool = False
+    max_index_bloat_ratio: float = 0.30
 
     def prune_cutoffs(self, today: date) -> tuple[date, date]:
         return today - timedelta(days=self.blob_days), today - timedelta(days=self.log_days)
@@ -93,6 +95,9 @@ class RetentionPolicy:
 
     def lock_ok(self, transaction_seconds: int) -> bool:
         return transaction_seconds < self.max_transaction_seconds
+
+    def index_bloat_ok(self, bloat_ratio: float) -> bool:
+        return bloat_ratio <= self.max_index_bloat_ratio
 
 
 @dataclass(frozen=True, slots=True)

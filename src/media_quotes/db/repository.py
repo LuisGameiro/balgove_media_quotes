@@ -55,9 +55,16 @@ def record_eval_run(
     """Append one evaluation result; eval ids are stable per gold set + date."""
     from ..evaluation import EVAL_CONTRACT_VERSION
 
-    eval_id = _run_uuid(
+    eval_split = str(metrics.get("evaluated_split") or "all")
+    eval_id_seed = (
         f"eval:{EVAL_CONTRACT_VERSION}:{gold_set_version}:{report_date.isoformat()}"
+        if eval_split == "all"
+        else (
+            f"eval:{EVAL_CONTRACT_VERSION}:{gold_set_version}:"
+            f"{eval_split}:{report_date.isoformat()}"
+        )
     )
+    eval_id = _run_uuid(eval_id_seed)
     eval_id_str = str(eval_id)
     statement = pg_insert(eval_runs_table).values(
         eval_id=eval_id,
@@ -457,7 +464,9 @@ def persist_obsolescence_flags(
     """Sync human-in-the-loop obsolescence flags to PostgreSQL when matching quotes exist."""
     if not flags:
         return 0
-    canonical_ids = {flag.evidence.old_quote_id for flag in flags}
+    canonical_ids = {flag.evidence.old_quote_id for flag in flags} | {
+        flag.evidence.new_quote_id for flag in flags if flag.evidence.new_quote_id
+    }
     mapping = dict(
         session.execute(
             select(quotes_table.c.canonical_quote_id, quotes_table.c.quote_id).where(
@@ -473,19 +482,31 @@ def persist_obsolescence_flags(
         flag_id = _run_uuid(
             f"obs-flag:{flag.evidence.old_quote_id}:{flag.evidence.decision_id}:{flag.state}"
         )
+        superseded_list = (
+            [mapping[flag.evidence.new_quote_id]]
+            if flag.evidence.new_quote_id and flag.evidence.new_quote_id in mapping
+            else []
+        )
         rows.append(
             {
                 "flag_id": flag_id,
                 "quote_id": quote_uuid,
                 "is_obsolete": flag.may_hide_quote(now=datetime.now(UTC)),
                 "reason": f"[{flag.state}] {flag.reason_code or flag.evidence.rationale}",
-                "superseded_by": [],
+                "superseded_by": superseded_list,
             }
         )
     if not rows:
         return 0
     statement = pg_insert(obsolescence_flags_table).values(rows)
-    statement = statement.on_conflict_do_nothing(index_elements=["flag_id"])
+    statement = statement.on_conflict_do_update(
+        index_elements=["flag_id"],
+        set_={
+            "is_obsolete": statement.excluded.is_obsolete,
+            "reason": statement.excluded.reason,
+            "superseded_by": statement.excluded.superseded_by,
+        },
+    )
     result = session.execute(statement)
     if commit:
         session.commit()
@@ -703,6 +724,7 @@ def read_export_records(
             sources_table.c.language.label("s_language"),
             obsolescence_flags_table.c.is_obsolete.label("o_obsolete"),
             obsolescence_flags_table.c.reason.label("o_reason"),
+            obsolescence_flags_table.c.created_at.label("o_created_at"),
         )
         .select_from(
             quotes_table.join(
@@ -722,11 +744,13 @@ def read_export_records(
         )
         .order_by(articles_table.c.publication_date, quotes_table.c.canonical_quote_id)
     )
-    # A quote can carry several obsolescence flags (one per state transition); keep one row.
+    # A quote can carry several flags (one per review decision); keep the newest one.
     unique_rows: dict[Any, Any] = {}
     for row in session.execute(statement).mappings():
         previous = unique_rows.get(row["q_id"])
-        if previous is None or (row.get("o_obsolete") and not previous.get("o_obsolete")):
+        if previous is None or (row.get("o_created_at") or datetime.min.replace(tzinfo=UTC)) > (
+            previous.get("o_created_at") or datetime.min.replace(tzinfo=UTC)
+        ):
             unique_rows[row["q_id"]] = row
     records: list[Any] = []
     for row in unique_rows.values():
@@ -813,7 +837,9 @@ def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
     months = (
         session.execute(
             select(
-                func.date_trunc("month", audit_events_table.c.created_at).label("month")
+                func.date_trunc(
+                    "month", audit_events_table.c.created_at.op("AT TIME ZONE")("UTC")
+                ).label("month")
             ).distinct()
         )
         .scalars()

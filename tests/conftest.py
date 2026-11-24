@@ -7,6 +7,7 @@ are declared in pyproject.toml and must be opted into explicitly.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -38,11 +39,17 @@ def pytest_configure(config: Config) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolate_unit_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolate_unit_test_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Isolate unit tests from host .env and ensure fail-closed offline defaults."""
+    from media_quotes.config import get_settings
+
+    get_settings.cache_clear()
     monkeypatch.setenv("PERSIST_TO_POSTGRES", "false")
     monkeypatch.setenv("LLM_PROVIDER", "local")
+    monkeypatch.setenv("SYNC_TO_NEO4J", "false")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture

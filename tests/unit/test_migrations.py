@@ -52,16 +52,36 @@ def test_later_migrations_are_noops() -> None:
             action()
 
 
+def test_alembic_version_width_migration_precedes_long_revision() -> None:
+    module = _load("0007_widen_alembic_version")
+    assert module.revision == "0007_widen_version"
+    assert module.down_revision == "0006_digest_topic_unique"
+    assert "VARCHAR(64)" in inspect.getsource(module.upgrade)
+
+    partition = _load("0007_audit_events_monthly_partition")
+    assert partition.down_revision == module.revision
+
+
 def test_monthly_partition_migration_carries_all_ddl() -> None:
     module = _load("0007_audit_events_monthly_partition")
     assert module.revision == "0007_audit_events_monthly_partition"
-    assert module.down_revision == "0006_digest_topic_unique"
+    assert module.down_revision == "0007_widen_version"
     source = inspect.getsource(module)
     assert "PARTITION BY RANGE (created_at)" in source
     assert "audit_events_{month:%Y_%m}" in source
     assert "DEFAULT" in source
     assert "def downgrade" in source
     assert "pg_dump" in source  # maintenance window documented with the DDL
+
+
+def test_tier4_migration_preserves_claim_only_gate() -> None:
+    module = _load("0008_enable_tier4")
+    assert module.revision == "0008_enable_tier4"
+    assert module.down_revision == "0007_audit_events_monthly_partition"
+    source = inspect.getsource(module)
+    assert "sources_tier4_claim_only" in source
+    assert "CHECK (tier <> 4 OR claim_only)" in source
+    assert "sources_tier4_disabled" in source
 
 
 def test_initial_migration_executes_schema_sql() -> None:

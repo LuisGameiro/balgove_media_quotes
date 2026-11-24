@@ -74,6 +74,7 @@ def test_definitions_expose_asset_job_checks_and_schedule() -> None:
         "export_schema_valid",
         "gold_set_thresholds_met",
         "quote_rights_limits_respected",
+        "retention_index_bloat_within_limit",
         "t0_rights_boundary_enforced",
     ]
     assert PARTITION_START == "2026-10-01"

@@ -19,6 +19,7 @@ from .queries import (
     fetch_graphrag_subgraph,
     fetch_speaker_timeline,
     fetch_supersession_lineage,
+    fetch_sync_metadata,
 )
 from .schema import CONSTRAINTS, INDEXES, init_schema
 from .sync import project_records_to_graph, sync_postgres_to_graph
@@ -36,6 +37,7 @@ __all__ = [
     "fetch_graphrag_subgraph",
     "fetch_speaker_timeline",
     "fetch_supersession_lineage",
+    "fetch_sync_metadata",
     "get_driver",
     "graph_session",
     "init_schema",

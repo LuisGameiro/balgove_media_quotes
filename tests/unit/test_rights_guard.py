@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from media_quotes.config import Settings
 from media_quotes.rights_guard import apply_rights_limits
 
@@ -14,21 +16,21 @@ def test_limits_are_strict() -> None:
 
 
 def test_real_records_pass_default_limit() -> None:
-    from media_quotes.cli.common import _parse_report_date
     from media_quotes.cli.run import _collect
 
     settings = Settings(_env_file=None)
-    records, *_rest = _collect(settings, run_id="r", report_date=_parse_report_date(None, settings))
+    fixed_date = date(2026, 11, 19)
+    records, *_rest = _collect(settings, run_id="r", report_date=fixed_date)
     decision = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
     assert len(decision.kept) + len(decision.rejected) == len(records)
 
 
 def test_overlimit_and_missing_attribution_are_rejected() -> None:
-    from media_quotes.cli.common import _parse_report_date
     from media_quotes.cli.run import _collect
 
     settings = Settings(_env_file=None)
-    records, *_rest = _collect(settings, run_id="r", report_date=_parse_report_date(None, settings))
+    fixed_date = date(2026, 11, 19)
+    records, *_rest = _collect(settings, run_id="r", report_date=fixed_date)
     assert records
     strict = apply_rights_limits(records, max_quote_words=1)
     assert strict.kept == []

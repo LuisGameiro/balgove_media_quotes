@@ -451,10 +451,41 @@ def build_definitions() -> dg.Definitions:
                 "audit_rows_dropped": bool(report["audit_rows_dropped"]),
                 "hot_partition_count": hot_count,
                 "detach_partition_count": detach_count,
+                "max_index_bloat_ratio": float(report["max_index_bloat_ratio"]),
+                "index_bloat_ratio": float(report["index_bloat_ratio"]),
+                "index_bloat_ok": bool(report["index_bloat_ok"]),
                 "plan_json": dg.MetadataValue.json(report),
             }
         )
         return report
+
+    @dg.asset_check(
+        asset=retention_readiness_report,
+        name="retention_index_bloat_within_limit",
+        description="Verify measured index bloat does not exceed the agreed threshold.",
+    )
+    def retention_index_bloat_within_limit(
+        context: dg.AssetCheckExecutionContext,
+        settings: dg.ResourceParam[Settings],
+    ) -> dg.AssetCheckResult:
+        del context
+        from .restore_drill import retention_readiness
+        from .risk_controls.retention import RetentionPolicy
+
+        today = settings.report_date
+        months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
+        report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
+        bloat_ok = bool(report.get("index_bloat_ok", True))
+        ratio = float(report.get("index_bloat_ratio", 0.0))
+        max_ratio = float(report.get("max_index_bloat_ratio", 0.30))
+        return dg.AssetCheckResult(
+            passed=bloat_ok,
+            severity=dg.AssetCheckSeverity.ERROR,
+            metadata={"index_bloat_ratio": ratio, "max_index_bloat_ratio": max_ratio},
+            description=f"Index bloat ratio {ratio:.2%} exceeds limit {max_ratio:.2%}"
+            if not bloat_ok
+            else None,
+        )
 
     @dg.asset_check(
         asset=daily_quotes_digest,
@@ -781,6 +812,7 @@ def build_definitions() -> dg.Definitions:
             t0_rights_boundary_enforced,
             quote_rights_limits_respected,
             gold_set_thresholds_met,
+            retention_index_bloat_within_limit,
         ],
         jobs=[job, governance_job],
         schedules=[daily_digest_schedule, tier1_six_hourly_schedule],
