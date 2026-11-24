@@ -1188,7 +1188,9 @@ def _probe_approved_route(
     if not url:
         return {"status": "no_route_url", "message": "Approved route has no discovery URL."}
     try:
-        raw, _ = asyncio.run(fetch_bytes(url, row=row, policy=_policy(), track_a_approved=True))
+        raw, _ = asyncio.run(
+            fetch_bytes(url, row=row, policy=_policy(), track_a_approved=True, check_dns=True)
+        )
         body = raw.decode("utf-8", errors="replace")
         if "<urlset" in body or "<sitemapindex" in body:
             discovered = parse_sitemap_xml(body, topic_pack=topic_pack, require_topic=True)
@@ -1742,6 +1744,7 @@ def main(argv: list[str] | None = None) -> int:
                     row=row,
                     policy=_policy(),
                     track_a_approved=row.usable,
+                    check_dns=True,
                 )
             )
         except SourceNotPermitted as exc:

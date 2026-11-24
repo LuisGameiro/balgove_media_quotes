@@ -171,11 +171,41 @@ class _FixtureHTMLParser(HTMLParser):
         }
 
 
+class _JsonLdParser(HTMLParser):
+    """ReDoS-free streaming parser for <script type="application/ld+json"> blocks."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[str] = []
+        self._in_json_ld = False
+        self._current: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "script":
+            attr_dict = {k.lower(): (v or "").lower() for k, v in attrs}
+            if attr_dict.get("type") == "application/ld+json":
+                self._in_json_ld = True
+                self._current = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "script" and self._in_json_ld:
+            self._in_json_ld = False
+            self.blocks.append("".join(self._current))
+            self._current = []
+
+    def handle_data(self, data: str) -> None:
+        if self._in_json_ld:
+            self._current.append(data)
+
+
 def extract_json_ld_metadata(raw_html: str) -> dict[str, str]:
     """Extract NewsArticle/Article metadata from ``<script type="application/ld+json">`` blocks."""
     result: dict[str, str] = {}
-    for match in _JSON_LD_RE.finditer(raw_html):
-        block = match.group(1).strip()
+    parser = _JsonLdParser()
+    with contextlib.suppress(Exception):
+        parser.feed(raw_html)
+    for raw_block in parser.blocks:
+        block = raw_block.strip()
         if not block:
             continue
         with contextlib.suppress(Exception):
@@ -188,7 +218,12 @@ def extract_json_ld_metadata(raw_html: str) -> dict[str, str]:
                 if not isinstance(item, dict):
                     continue
                 schema_type = item.get("@type", "")
-                types = [schema_type] if isinstance(schema_type, str) else list(schema_type)
+                if isinstance(schema_type, str):
+                    types = [schema_type]
+                elif isinstance(schema_type, (list, tuple, set)):
+                    types = list(schema_type)
+                else:
+                    types = []
                 if not any("Article" in str(t) or "News" in str(t) for t in types):
                     continue
                 if item.get("headline") and not result.get("title"):
@@ -206,14 +241,22 @@ def extract_json_ld_metadata(raw_html: str) -> dict[str, str]:
                     result["canonical_url"] = str(main_entity["@id"]).strip()
                 author = item.get("author")
                 if author and not result.get("byline"):
-                    if isinstance(author, dict) and author.get("name"):
+                    if isinstance(author, str):
+                        result["byline"] = author.strip()
+                    elif isinstance(author, dict) and author.get("name"):
                         result["byline"] = str(author["name"]).strip()
                     elif isinstance(author, list):
                         names = [
-                            str(a["name"]).strip()
+                            (
+                                str(a["name"]).strip()
+                                if isinstance(a, dict) and a.get("name")
+                                else str(a).strip()
+                                if isinstance(a, str)
+                                else ""
+                            )
                             for a in author
-                            if isinstance(a, dict) and a.get("name")
                         ]
+                        names = [n for n in names if n]
                         if names:
                             result["byline"] = ", ".join(names)
                 publisher = item.get("publisher")
@@ -229,11 +272,15 @@ def extract_json_ld_metadata(raw_html: str) -> dict[str, str]:
 def _params_from_hints(hints: ExtractorHints | None) -> ExtractionParams:
     if hints is None:
         return ExtractionParams()
+    prune = tuple(hints.strip_selectors) if hints.strip_selectors else ()
     return ExtractionParams(
         include_comments=hints.include_comments,
         include_tables=hints.include_tables,
-        favor_precision=hints.favor_precision,
+        favor_precision=hints.favor_precision
+        if (hints.favor_precision or hints.favor_recall)
+        else True,
         favor_recall=hints.favor_recall,
+        prune_xpath=prune,
     )
 
 
@@ -261,6 +308,7 @@ def parse_newspaper_html(
     dom_meta = dom_parser.metadata()
     ld_meta = extract_json_ld_metadata(raw_html)
 
+    min_chars = extractor_hints.min_text_length if extractor_hints is not None else 400
     extracted = extract_article(
         raw_html,
         params=extraction_params,
@@ -269,6 +317,7 @@ def parse_newspaper_html(
         or dom_meta.get("canonical_url")
         or "https://example.invalid",
         fallback=fallback,
+        min_chars=min_chars,
     )
 
     article_text = (
@@ -309,11 +358,19 @@ def parse_newspaper_html(
         # A low-quality body is reporting only: never publish quotes from it.
         pass
     elif dom_meta.get("quote_spans"):
+        last_offset = 0
         for span in dom_meta["quote_spans"]:
+            found_offsets = find_span(
+                article_text, str(span.get("quote_text") or ""), start_from=last_offset
+            )
+            if found_offsets is None:
+                found_offsets = find_span(article_text, str(span.get("quote_text") or ""))
+            if found_offsets is None:
+                # DOM offsets belong to the source HTML, never to Trafilatura text.
+                continue
+            last_offset = found_offsets[1]
             realigned = dict(span)
-            found_offsets = find_span(article_text, str(span.get("quote_text") or ""))
-            if found_offsets is not None:
-                realigned["char_start"], realigned["char_end"] = found_offsets
+            realigned["char_start"], realigned["char_end"] = found_offsets
             if (
                 enforce_topic
                 and not topic_relevant
@@ -321,6 +378,12 @@ def parse_newspaper_html(
             ):
                 continue
             quote_spans.append(realigned)
+        if not quote_spans:
+            quote_spans = _extract_quotes(
+                article_text,
+                require_topic=enforce_topic,
+                topic_pack=topic_pack,
+            )
     else:
         if enforce_topic and not topic_relevant:
             quote_spans = []

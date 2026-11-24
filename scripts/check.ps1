@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Windows-native equivalent of `make check` (docs/02 §7; CHK-10..13).
+Windows-native equivalent of `make check` (docs/02-architecture.md).
 
 .DESCRIPTION
 Runs the full local/CI gate from the repository root: documentation QA, format check,

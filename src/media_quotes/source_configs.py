@@ -72,6 +72,7 @@ class ExtractorHints(BaseModel):
     include_tables: bool = False
     min_text_length: int = Field(default=200, ge=0)
     strip_selectors: list[str] = Field(default_factory=list)
+    render_js: bool = False  # opt-in to the optional browser fallback; off for every source today
 
 
 class SourceRouteConfig(BaseModel):
@@ -193,6 +194,8 @@ class SourceConfig(BaseModel):
         if topic_id:
             topic_routes = self.routes_for_topic(topic_id)
             for route in topic_routes:
+                if not route.approved:
+                    continue
                 if route.discovery_url and (
                     "rss" in route.route_type.lower()
                     or "sitemap" in route.route_type.lower()
@@ -206,6 +209,8 @@ class SourceConfig(BaseModel):
         if self.extractor_hints.default_feed_url:
             return self.extractor_hints.default_feed_url
         for route in sorted(self.routes, key=lambda item: (item.priority, item.route_id)):
+            if not route.approved:
+                continue
             if route.discovery_url and (
                 "rss" in route.route_type.lower()
                 or "rss" in route.discovery_url.lower()

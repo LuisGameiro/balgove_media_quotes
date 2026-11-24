@@ -9,13 +9,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..config import DEFAULT_TOPIC_ID, Settings
-from ..enums import APPROVED_RIGHTS
 from ..export import atomic_write_text, local_store_path, read_jsonl
 from ..models import ExportQuoteRecord
+from ..text_utils import require_safe_id
 from .common import (
     EXIT_FAILURE,
-    EXIT_GAPS,
-    EXIT_OK,
+    _digest_path,
     _gap_record,
     _load_registry,
     _read_json,
@@ -23,6 +22,7 @@ from .common import (
     _version_manifest,
     _window,
     _write_json,
+    exit_code_for,
 )
 
 
@@ -43,8 +43,7 @@ def _audit_report(  # pragma: no cover
     checks = {
         "config_valid": settings.sources_csv.is_file() and settings.sections_csv.is_file(),
         "registry_t0_gate_approved": all(
-            not row.enabled or row.rights_status in APPROVED_RIGHTS
-            for row in _load_registry(settings)
+            not row.enabled or row.usable for row in _load_registry(settings)
         ),
         "coverage_gaps_disclosed": bool(gaps),
         "records_nonempty": bool(records),
@@ -62,9 +61,13 @@ def _audit_report(  # pragma: no cover
     # Coverage gaps are expected while sources are T0-blocked. Database writes are
     # allowed when PERSIST_TO_POSTGRES=true (the mode used for production verification);
     # in that mode `no_database_writes` stays informational rather than a gate.
+    # Similarly, when live LLM provider is explicitly enabled (e.g. OpenRouter),
+    # `no_llm_api_calls` stays informational rather than failing gates_pass.
     informational = {"coverage_gaps_disclosed"}
     if settings.persist_to_postgres:
         informational.add("no_database_writes")
+    if settings.llm_provider.strip().lower() == "openrouter":
+        informational.add("no_llm_api_calls")
     checks["gates_pass"] = all(value for key, value in checks.items() if key not in informational)
     return {
         "topic_id": topic_id,
@@ -72,17 +75,22 @@ def _audit_report(  # pragma: no cover
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "run_id": run_id,
-        "mode": "blocked/degraded (synthetic fixture replay)",
-        "exit_code": EXIT_GAPS if gaps else EXIT_OK,
+        "mode": (
+            "live Postgres + OpenRouter"
+            if settings.persist_to_postgres and settings.llm_provider == "openrouter"
+            else "Postgres persistent"
+            if settings.persist_to_postgres
+            else "blocked/degraded (synthetic fixture replay)"
+        ),
         "verified_quotes": len(records),
         "rejected_candidates": rejected,
         "coverage": list(coverage),
         "coverage_gaps": list(gaps),
         "review_queue": list(review_queue),
         "checks": checks,
-        "version_manifest": _version_manifest(settings),
+        "version_manifest": _version_manifest(settings, topic_id=topic_id),
         "artifacts": {
-            "digest": str(settings.digest_dir / f"{report_date.isoformat()}.md"),
+            "digest": str(_digest_path(settings, report_date, topic_id=topic_id)),
             "quotes": str(local_store_path(settings.export_dir, report_date, topic_id=topic_id)),
             "logs": str(settings.logs_dir / f"{run_id}.jsonl"),
         },
@@ -108,39 +116,41 @@ def _audit_markdown(report: dict[str, Any]) -> str:  # pragma: no cover
     lines.extend(["", "## Coverage gaps", ""])
     gaps = cast(list[dict[str, Any]], report["coverage_gaps"])
     if gaps:
+        lines.append("| Source ID | Status | Reason |")
+        lines.append("|---|---|---|")
         for gap in gaps:
-            mandatory = " (mandatory)" if gap.get("mandatory") else ""
-            lines.append(
-                f"- {gap['source_id']}{mandatory}: {gap['gap_reason']} — {gap.get('detail', '')}"
-            )
+            lines.append(f"| {gap['source_id']} | {gap['status']} | {gap['gap_reason']} |")
     else:
-        lines.append("- None.")
-    lines.extend(["", "## Version manifest", ""])
-    manifest = cast(dict[str, Any], report["version_manifest"])
-    lines.extend(f"- `{name}`: {value}" for name, value in sorted(manifest.items()))
+        lines.append("_No coverage gaps._")
+    lines.extend(["", "## Artifacts", ""])
+    for key, path in sorted(report["artifacts"].items()):
+        lines.append(f"- {key}: `{path}`")
     return "\n".join(lines) + "\n"
 
 
-def _audit_target_dir(settings: Settings, topic_id: str) -> Path:
-    """Non-default topics get their own audit folder, like digests and exports."""
+def _audit_target_dir(settings: Settings, topic_id: str | None = None) -> Path:
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        return settings.audit_dir / topic_id
-    return settings.audit_dir
+        target = settings.audit_dir / require_safe_id(topic_id, "topic_id")
+    else:
+        target = settings.audit_dir
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
-def _write_audit(  # pragma: no cover
-    settings: Settings, report: dict[str, Any], out_dir: Path | None = None
+def _write_audit(
+    settings: Settings,
+    report: dict[str, Any],
+    out_dir: Path | None = None,
 ) -> tuple[Path, Path]:
-    day = str(report["report_date"])
+    topic_id = str(report.get("topic_id", DEFAULT_TOPIC_ID))
+    day = report["report_date"]
     if out_dir is not None and out_dir.suffix == ".json":
         json_path = out_dir
         md_path = out_dir.with_suffix(".md")
     else:
-        target = out_dir or _audit_target_dir(
-            settings, str(report.get("topic_id", DEFAULT_TOPIC_ID))
-        )
-        json_path = target / f"audit-{day}.json"
-        md_path = target / f"audit-{day}.md"
+        target_dir = out_dir or _audit_target_dir(settings, topic_id)
+        json_path = target_dir / f"audit-{day}.json"
+        md_path = target_dir / f"audit-{day}.md"
     json_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(json_path, report)
@@ -157,14 +167,24 @@ def _do_audit(  # pragma: no cover
     topic_id: str | None = None,
 ) -> int:
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
+    require_safe_id(active_topic, "topic_id")
+    if run_id:
+        require_safe_id(run_id, "run_id")
     day = report_date.isoformat()
     stored = _read_json(_audit_target_dir(settings, active_topic) / f"audit-{day}.json")
-    if run_id and stored and stored.get("run_id") != run_id:
-        print(
-            f"no audit report for run_id={run_id} on {day} (stored run={stored.get('run_id')})",
-            file=sys.stderr,
-        )
-        return EXIT_FAILURE
+    if run_id:
+        if not stored:
+            print(
+                f"no stored audit report found on {day} for run_id={run_id}",
+                file=sys.stderr,
+            )
+            return EXIT_FAILURE
+        if stored.get("run_id") != run_id:
+            print(
+                f"no audit report for run_id={run_id} on {day} (stored run={stored.get('run_id')})",
+                file=sys.stderr,
+            )
+            return EXIT_FAILURE
     if stored:
         if str(stored.get("topic_id", DEFAULT_TOPIC_ID)) != active_topic:
             print(
@@ -175,10 +195,24 @@ def _do_audit(  # pragma: no cover
             return EXIT_FAILURE
         report: dict[str, Any] = stored
     else:
-        records = read_jsonl(
-            local_store_path(settings.export_dir, report_date, topic_id=active_topic)
-        )
+        if settings.persist_to_postgres:
+            from ..db.repository import read_export_records
+            from ..pipeline import _default_session_context
+
+            with _default_session_context(settings) as session:
+                records = read_export_records(
+                    session,
+                    report_date=report_date,
+                    window_days=settings.report_window_days,
+                    topic_id=active_topic,
+                )
+        else:
+            records = read_jsonl(
+                local_store_path(settings.export_dir, report_date, topic_id=active_topic)
+            )
         audit_run_id = run_id or _run_id(report_date, settings, topic_id=active_topic)
+        from .common import load_review_flags
+
         report = _audit_report(
             settings,
             report_date=report_date,
@@ -188,7 +222,7 @@ def _do_audit(  # pragma: no cover
             gaps=[_gap_record(row) for row in _load_registry(settings) if not row.usable],
             events=[],
             rejected=0,
-            review_queue=[],
+            review_queue=[flag.model_dump(mode="json") for flag in load_review_flags(settings)],
             topic_id=active_topic,
         )
     out_dir = Path(out) if out else None
@@ -200,4 +234,4 @@ def _do_audit(  # pragma: no cover
     )
     print(f"JSON: {json_path}")
     print(f"MD:   {md_path}")
-    return EXIT_OK if checks["gates_pass"] else EXIT_FAILURE
+    return exit_code_for(ok=bool(checks["gates_pass"]), gaps=report["coverage_gaps"])

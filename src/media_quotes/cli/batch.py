@@ -18,7 +18,7 @@ from ..batch import (
 from ..batch_runner import OpenRouterBatchClient
 from ..config import Settings
 from ..exceptions import ConfigError
-from ..llm_live import LLMRequest
+from ..llm_live import LLMRequest, contains_instruction_override, is_refusal_text
 from ..risk_controls.budget import budget_gate
 from ..risk_controls.models import BackfillEstimate
 from .common import _PRICE_PER_CALL, EXIT_FAILURE, EXIT_OK
@@ -32,13 +32,21 @@ def _load_requests(path: Path) -> list[LLMRequest]:
 
 
 def _extract_text(result: dict[str, Any]) -> str | None:
-    """Pull output text from an inlined OpenRouter batch result."""
+    """Pull output text from an inlined OpenRouter batch result; reject errors and refusals."""
+    if not isinstance(result, dict) or result.get("error") is not None:
+        return None
     response = result.get("response")
     if not isinstance(response, dict):
         return None
-    body = response.get("body")
-    if not isinstance(body, dict):
+    status_code = response.get("status_code")
+    if status_code is not None and status_code != 200:
         return None
+    body = response.get("body")
+    if not isinstance(body, dict) or body.get("error"):
+        return None
+    if body.get("refusal"):
+        return None
+
     # Responses API (the default endpoint): output[].content[].text.
     pieces: list[str] = []
     for item in body.get("output") or []:
@@ -57,9 +65,16 @@ def _extract_text(result: dict[str, Any]) -> str | None:
         return str(text)
     choices = body.get("choices")
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-        message = choices[0].get("message")
-        if isinstance(message, dict) and isinstance(message.get("content"), str):
-            return str(message["content"])
+        choice = choices[0]
+        if choice.get("finish_reason") == "content_filter":
+            return None
+        message = choice.get("message")
+        if isinstance(message, dict):
+            if message.get("refusal"):
+                return None
+            content = message.get("content")
+            if isinstance(content, str):
+                return str(content)
     return None
 
 
@@ -78,6 +93,7 @@ def _apply_results(
     requests: list[LLMRequest],
 ) -> tuple[int, int]:
     from ..db.repository import DecisionCacheEntry, upsert_decision_cache
+    from ..llm_cache import _ENVELOPE
     from ..pipeline import _default_session_context
 
     by_cache_key = {custom_id(item.cache_key): item for item in requests}
@@ -92,16 +108,26 @@ def _apply_results(
                 continue
             if text is None:
                 continue  # failed provider result, not a mapping mismatch
+            if contains_instruction_override(text) or is_refusal_text(text):
+                continue  # never cache a refusal or an injected instruction
             entry = DecisionCacheEntry(
                 cache_key=request.cache_key,
                 model_snapshot=request.model_snapshot,
                 prompt_version=request.prompt_version,
                 schema_hash=request.schema_hash,
                 input_hash=request.input_hash,
-                output={"text": text},
+                output={
+                    _ENVELOPE: {
+                        "output": {"text": text},
+                        "refusal": False,
+                        "incomplete": False,
+                        "provider_response_id": "",
+                    }
+                },
             )
-            upsert_decision_cache(session, entry)
+            upsert_decision_cache(session, entry, commit=False)
             applied += 1
+        session.commit()
     return applied, unmatched
 
 
@@ -122,18 +148,42 @@ def _do_batch(
         finally:
             client.close()
         print(json.dumps(asdict(job), ensure_ascii=False, sort_keys=True, indent=2))
-        if job.status == "completed" and apply and settings.persist_to_postgres:
-            requests = _load_requests(requests_path)
-            _require_matching_model(requests, settings.batch_model_snapshot)
-            applied, unmatched = _apply_results(settings, job.results, requests)
-            print(f"Applied {applied} batch result(s) to decision_cache.")
-            if unmatched:
-                print(
-                    f"warning: {unmatched} result(s) had no matching request; "
-                    "check that --requests matches the submitted batch",
-                    file=sys.stderr,
+        if apply:
+            if not settings.persist_to_postgres:
+                raise ConfigError(
+                    "PERSIST_TO_POSTGRES must be true to apply batch results to Postgres"
                 )
-                return EXIT_FAILURE
+            if job.status == "completed":
+                requests = _load_requests(requests_path)
+                _require_matching_model(requests, settings.batch_model_snapshot)
+                applied, unmatched = _apply_results(settings, job.results, requests)
+                from ..db.repository import finish_pipeline_run, start_pipeline_run
+                from ..pipeline import _default_session_context
+
+                run_id = f"batch-{status_id}"
+                with _default_session_context(settings) as session:
+                    start_pipeline_run(
+                        session,
+                        run_id=run_id,
+                        pipeline="mq-batch",
+                        partition_date=settings.report_date,
+                        stats={"applied": applied, "unmatched": unmatched},
+                        commit=False,
+                    )
+                    finish_pipeline_run(
+                        session,
+                        run_id=run_id,
+                        status="succeeded",
+                        stats={"applied": applied, "unmatched": unmatched},
+                    )
+                print(f"Applied {applied} batch result(s) to decision_cache.")
+                if unmatched:
+                    print(
+                        f"warning: {unmatched} result(s) had no matching request; "
+                        "check that --requests matches the submitted batch",
+                        file=sys.stderr,
+                    )
+                    return EXIT_FAILURE
         return EXIT_OK if job.status == "completed" else EXIT_FAILURE
 
     if dry_run or not execute:
@@ -195,6 +245,10 @@ def _do_batch(
         duration_hours=0.0,
     )
     budget_gate(estimate, max_cost)
+    print(
+        "warning: --max-cost checks a flat estimate only; it cannot cap provider spend.",
+        file=sys.stderr,
+    )
 
     client = OpenRouterBatchClient(settings)
     try:
@@ -202,31 +256,27 @@ def _do_batch(
     finally:
         client.close()
 
+    print(f"Submitted batch {batch_id}; poll with `mq batch --status {batch_id}`.")
+
     if settings.persist_to_postgres:
         run_id = f"batch-{batch_id}"
         from ..db.repository import finish_pipeline_run, start_pipeline_run
         from ..pipeline import _default_session_context
 
+        stats = {
+            "batch_id": batch_id,
+            "requests": len(requests),
+            "estimated_cost": estimate.cost,
+            "max_cost": max_cost,
+        }
         with _default_session_context(settings) as session:
             start_pipeline_run(
                 session,
                 run_id=run_id,
                 pipeline="mq-batch",
                 partition_date=settings.report_date,
+                stats=stats,
                 commit=False,
             )
-            finish_pipeline_run(
-                session,
-                run_id=run_id,
-                status="running",
-                stats={
-                    "batch_id": batch_id,
-                    "requests": len(requests),
-                    "estimated_cost": estimate.cost,
-                    "max_cost": max_cost,
-                },
-                commit=False,
-            )
-            session.commit()
-    print(f"Submitted batch {batch_id}; poll with `mq batch --status {batch_id}`.")
+            finish_pipeline_run(session, run_id=run_id, status="succeeded", stats=stats)
     return EXIT_OK

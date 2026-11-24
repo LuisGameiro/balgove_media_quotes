@@ -7,7 +7,9 @@ verifier -> digest so every quote can be traced end to end.
 from __future__ import annotations
 
 import logging
+import re
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -19,21 +21,41 @@ if TYPE_CHECKING:
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.trace import Tracer
 
-_SENSITIVE_KEYS = frozenset(
-    {"api_key", "apikey", "token", "authorization", "password", "secret", "database_url"}
+_SENSITIVE_PATTERNS = (
+    "api_key",
+    "apikey",
+    "token",
+    "authorization",
+    "password",
+    "secret",
+    "database_url",
 )
+_SENSITIVE_KEYS = _SENSITIVE_PATTERNS
 _REDACTED = "[REDACTED]"
 
 
+def _is_sensitive_key(key: Any) -> bool:
+    norm = str(key).casefold().replace("-", "_")
+    return any(p in norm for p in _SENSITIVE_PATTERNS)
+
+
+_SECRET_STRING_PATTERNS = re.compile(
+    r"(https?://[^:@/\s]+:[^@/\s]+@|Bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]{20,})",
+    re.IGNORECASE,
+)
+
+
+def _scrub_string(s: str) -> str:
+    return _SECRET_STRING_PATTERNS.sub("[REDACTED_SECRET]", s)
+
+
 def _redact(value: Any) -> Any:
-    """Redact sensitive mapping keys, including mappings nested in lists/tuples."""
-    if isinstance(value, dict):
+    """Redact sensitive mapping keys, string secrets, and collections."""
+    if isinstance(value, str):
+        return _scrub_string(value)
+    if isinstance(value, (dict, Mapping)):
         return {
-            key: (
-                _REDACTED
-                if str(key).casefold().replace("-", "_") in _SENSITIVE_KEYS
-                else _redact(item)
-            )
+            key: (_REDACTED if _is_sensitive_key(key) else _redact(item))
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -58,15 +80,15 @@ def configure_logging(settings: Settings) -> None:
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
-            redact_sensitive,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            redact_sensitive,
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(sys.stdout),
+        logger_factory=structlog.PrintLoggerFactory(sys.stderr),
         cache_logger_on_first_use=True,
     )
 
@@ -92,7 +114,7 @@ def configure_tracing(settings: Settings) -> Tracer | None:
     endpoint = settings.otel_exporter_otlp_endpoint
     if endpoint:
         try:
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         except ImportError:  # pragma: no cover - core dependency installed
             return None
         exporter = OTLPSpanExporter(endpoint=endpoint)

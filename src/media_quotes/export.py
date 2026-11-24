@@ -17,12 +17,14 @@ from typing import Any, cast
 
 from .config import DEFAULT_TOPIC_ID
 from .models import ExportQuoteRecord
+from .text_utils import require_safe_id
 
 
 def local_store_path(export_dir: Path, report_date: date, *, topic_id: str | None = None) -> Path:
     """Canonical offline store path for one report date (and optional non-default topic)."""
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        return export_dir / topic_id / f"quotes-{report_date.isoformat()}.jsonl"
+        safe_topic = require_safe_id(topic_id, "topic_id")
+        return export_dir / safe_topic / f"quotes-{report_date.isoformat()}.jsonl"
     return export_dir / f"quotes-{report_date.isoformat()}.jsonl"
 
 
@@ -46,29 +48,74 @@ def content_hash(parts: Sequence[str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _safe_replace(temp: Path, target: Path) -> None:
+    """Atomically replace target with temp file; retry briefly on Windows locks."""
+    for attempt in range(5):
+        try:
+            # NamedTemporaryFile is 0600; the dashboard runs as a different UID.
+            temp.chmod(0o644)
+            os.replace(temp, target)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            import time
+
+            time.sleep(0.05 * (attempt + 1))
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     """Write through a temporary file so a crash cannot truncate the final artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(temp, path)
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="\n",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as f:
+        temp_path = Path(f.name)
+        f.write(text)
+    try:
+        _safe_replace(temp_path, path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 def write_jsonl(records: Iterable[ExportQuoteRecord], path: Path) -> int:
     """Stream validated records to a temp file, then replace the final export atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    import tempfile
+
     count = 0
-    with temp.open("w", encoding="utf-8", newline="\n") as handle:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="\n",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as f:
+        temp_path = Path(f.name)
         for record in records:
-            handle.write(
+            f.write(
                 json.dumps(
                     record.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
                 )
             )
-            handle.write("\n")
+            f.write("\n")
             count += 1
-    os.replace(temp, path)
+    try:
+        _safe_replace(temp_path, path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     return count
 
 

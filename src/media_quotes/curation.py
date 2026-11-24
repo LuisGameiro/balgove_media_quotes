@@ -65,7 +65,7 @@ def dedupe_quotes(
         raise ValueError("window_days must be positive")
     groups: dict[str, list[ExportQuoteRecord]] = {}
     for record in records:
-        groups.setdefault(normalise_text(record.quote_text_original), []).append(record)
+        groups.setdefault(normalise_text(record.quote_text_original).casefold(), []).append(record)
     chosen: list[ExportQuoteRecord] = []
     for group in groups.values():
         group.sort(
@@ -76,12 +76,12 @@ def dedupe_quotes(
                 item.quote_id,
             )
         )
-        last_kept: date | None = None
+        kept_dates: list[date] = []
         for record in group:
-            if last_kept is not None and (record.publication_date - last_kept).days < window_days:
+            if any(abs((record.publication_date - d).days) < window_days for d in kept_dates):
                 continue
             chosen.append(record)
-            last_kept = record.publication_date
+            kept_dates.append(record.publication_date)
     chosen.sort(key=lambda item: (item.publication_date, item.quote_id))
     return chosen
 

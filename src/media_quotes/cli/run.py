@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
-from ..adapters import FixtureSource, build_adapter
+from ..adapters import BlobCache, FixtureSource, build_adapter
 from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
+from ..exceptions import ConfigError
 from ..export import content_hash, quote_record
 from ..models import ExportQuoteRecord, QuoteCandidate
 from ..pipeline import (
@@ -169,6 +170,7 @@ def _select_topic_route(gate: TopicGate | None, source_id: str) -> SourceTopicRo
                 and _text(_field(route, "topic_rule_id", "")) == gate.preferred_rule_id
             ):
                 return route
+        return None
     for route in source_routes:
         if _field(route, "approved", False) and _text(_field(route, "topic_rule_id", "")):
             return route
@@ -330,6 +332,7 @@ def _process_source(  # pragma: no cover
     used_quote_ids: set[str],
     topic_pack: TopicPack | None = None,
     source_config: SourceConfig | None = None,
+    source_mode: str = "fixtures",
 ) -> tuple[
     list[ExportQuoteRecord],
     dict[str, Any],
@@ -339,7 +342,8 @@ def _process_source(  # pragma: no cover
     dict[str, dict[str, Any]],
 ]:
     """Process one source through discovery, fixture fetch, two-stage verification and metadata."""
-    replay = _fixture_mode(row, settings)
+    use_blobs = source_mode == "blobs"
+    replay = False if use_blobs else _fixture_mode(row, settings)
     active_topic_id = (
         topic_pack.topic_id
         if topic_pack is not None
@@ -406,12 +410,15 @@ def _process_source(  # pragma: no cover
     if not row.usable:
         add_gap(_gap_record(row, "fixture replay only; the T0 gate refuses live contact"))
 
+    article_root = settings.blob_dir if use_blobs else settings.fixtures_dir
+    blob_cache = BlobCache(settings.blob_dir) if use_blobs else None
     adapter = build_adapter(
         row,
-        FixtureSource(settings.fixtures_dir),
+        FixtureSource(article_root),
         replay=replay,
         topic_pack=topic_pack,
         source_config=source_config,
+        extraction_fallback=settings.extraction_fallback,
     )
     refs = adapter.discover(window_start, report_date)
     if replay:
@@ -447,7 +454,24 @@ def _process_source(  # pragma: no cover
     for ref in refs:
         trace_id = _trace_id(row.source_id, ref)
         raw = adapter.fetch(ref)
-        metadata = adapter.parse_metadata(raw)
+        sidecar_meta: dict[str, Any] = {}
+        if blob_cache is not None:
+            ref_stem = Path(ref.rsplit("/", 1)[-1]).stem
+            sidecar_meta = blob_cache.read_meta(row.source_id, ref_stem)
+        sidecar_url = str(sidecar_meta.get("url") or "") or None
+        metadata = (
+            adapter.parse_metadata(raw, source_url=sidecar_url)
+            if sidecar_url is not None
+            else adapter.parse_metadata(raw)
+        )
+        if sidecar_meta:
+            if not metadata.get("title") and sidecar_meta.get("title"):
+                metadata["title"] = str(sidecar_meta["title"])
+            if not metadata.get("canonical_url") and sidecar_meta.get("url"):
+                metadata["canonical_url"] = str(sidecar_meta["url"])
+        if metadata.get("quality_ok") is False:
+            rejected += 1
+            continue
         text = str(metadata.get("article_text") or "")
         canonical_url = str(metadata.get("canonical_url") or "")
         article_ref_name = str(metadata.get("title") or ref)
@@ -541,11 +565,18 @@ def _process_source(  # pragma: no cover
 
         spans_raw = metadata.get("quote_spans", [])
         spans = [s for s in spans_raw if isinstance(s, dict)] if isinstance(spans_raw, list) else []
+        spans_by_text: dict[str, list[dict[str, Any]]] = {}
+        for span in spans:
+            norm = normalise_text(str(span.get("quote_text") or ""))
+            spans_by_text.setdefault(norm, []).append(span)
         by_text = {normalise_text(str(span.get("quote_text") or "")): span for span in spans}
+
         candidates: list[QuoteCandidate] = []
         for found in adapter.extract_quotes(text):
             quote_text = str(found.get("quote_text") or "")
-            span = by_text.get(normalise_text(quote_text), {})
+            norm = normalise_text(quote_text)
+            matching_spans = spans_by_text.get(norm)
+            span = matching_spans.pop(0) if matching_spans else {}
             candidates.append(
                 QuoteCandidate(
                     quote_text=quote_text,
@@ -616,10 +647,13 @@ def _process_source(  # pragma: no cover
                 ).encode("utf-8")
             ).hexdigest()
             sequence = int(id_seed[:8], 16) % 10000
+            first_sequence = sequence
             while (
                 quote_id := f"Q-{publication_date.replace('-', '')}-{sequence:04d}"
             ) in used_quote_ids:
                 sequence = (sequence + 1) % 10000
+                if sequence == first_sequence:
+                    raise ConfigError(f"quote id space exhausted for {publication_date}")
             used_quote_ids.add(quote_id)
             offsets[quote_id] = {
                 "char_start": candidate.char_start,
@@ -712,7 +746,11 @@ def _process_source(  # pragma: no cover
                         "verified_at": verified_at.isoformat(),
                     },
                     publication_name=str(metadata.get("publication_name") or row.source_name),
-                    notes="synthetic fixture replay" if replay else "offline replay",
+                    notes=(
+                        "synthetic fixture replay"
+                        if replay
+                        else ("live blob ingest" if use_blobs else "offline replay")
+                    ),
                     topic_id=active_topic_id,
                 ).model_copy(update=topic_updates)
             )
@@ -761,6 +799,8 @@ def _collect(  # pragma: no cover
     run_id: str,
     report_date: date,
     topic_pack: TopicPack | None = None,
+    source_mode: str = "fixtures",
+    tier: int | None = None,
 ) -> tuple[
     list[ExportQuoteRecord],
     list[dict[str, Any]],
@@ -779,7 +819,10 @@ def _collect(  # pragma: no cover
     offsets: dict[str, dict[str, Any]] = {}
     source_configs = _load_source_configs(settings)
     active_pack = topic_pack if topic_pack is not None else _load_topic_pack(settings)
-    for row in _load_registry(settings):
+    rows = _load_registry(settings)
+    if tier is not None:
+        rows = [row for row in rows if row.tier == tier]
+    for row in rows:
         found, cov, row_gaps, row_events, row_rejected, row_offsets = _process_source(
             row,
             settings=settings,
@@ -789,6 +832,7 @@ def _collect(  # pragma: no cover
             used_quote_ids=used_quote_ids,
             topic_pack=active_pack,
             source_config=source_configs.get(row.source_id),
+            source_mode=source_mode,
         )
         records.extend(found)
         coverage.append(cov)
@@ -808,6 +852,8 @@ def _do_run(  # pragma: no cover
     run_id: str | None,
     verbose: bool,
     topic_id: str | None = None,
+    source_mode: str = "fixtures",
+    tier: int | None = None,
 ) -> int:
     from ..pipeline import run_daily_pipeline
 
@@ -818,6 +864,8 @@ def _do_run(  # pragma: no cover
         dry_run=dry_run,
         pipeline="mq-run",
         topic_id=topic_id,
+        source_mode=source_mode,
+        tier=tier,
     )
 
     if result.dry_run:

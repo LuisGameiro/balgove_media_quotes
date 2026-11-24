@@ -26,10 +26,15 @@ function check {
 }
 '@
 
+$docs = [Environment]::GetFolderPath('MyDocuments')
 $profiles = @(
-    'C:\Users\lgame\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1',
-    'C:\Users\lgame\Documents\PowerShell\profile.ps1'
+    (Join-Path $docs 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path $docs 'PowerShell\profile.ps1')
 )
+if ($PROFILE -and -not ($profiles -contains $PROFILE)) {
+    $profiles += $PROFILE
+}
+
 foreach ($profile in $profiles) {
     $dir = Split-Path -Path $profile
     if (-not (Test-Path -Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }

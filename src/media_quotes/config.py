@@ -6,17 +6,20 @@ relative to PROJECT_ROOT so the CLI, bootstrap and scripts share one convention.
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Mapping
 from datetime import date
 from difflib import get_close_matches
 from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_ENV_FILE_UNSET = object()
 
 # Canonical defaults from docs/01 §6 #4 and the version manifest.
 BACKFILL_START: Final = date(2026, 10, 1)
@@ -29,6 +32,16 @@ MAX_QUOTE_WORDS: Final = 30
 ATTRIBUTION_FORMAT: Final = "Outlet — Named person (role), Article, YYYY-MM-DD, URL"
 LICENCE_TERRITORY: Final = "internal worldwide"
 
+_SAFE_ID_RE: Final = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def require_safe_id(value: str, name: str = "id") -> str:
+    """Validate that an identifier matches safe slug requirements (preventing path traversal)."""
+    cleaned = value.strip()
+    if not _SAFE_ID_RE.fullmatch(cleaned):
+        raise ValueError(f"invalid {name} {value!r}; expected lowercase alphanumeric, '-' or '_'")
+    return cleaned
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -38,6 +51,13 @@ class Settings(BaseSettings):
         validate_default=True,
     )
 
+    def __init__(self, _env_file: Any = _ENV_FILE_UNSET, **values: Any) -> None:
+        """Expose pydantic-settings' private init keys to static type checkers."""
+        if _env_file is _ENV_FILE_UNSET:
+            super().__init__(**values)
+        else:
+            super().__init__(_env_file=_env_file, **values)
+
     database_url: SecretStr = Field(
         default=SecretStr("postgresql+psycopg://news:news@127.0.0.1:5432/news")
     )
@@ -46,8 +66,9 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str | None = None
 
-    digest_dir: Path = Path("digests")
-    blob_dir: Path = Path("var/blobs")
+    output_dir: Path = Path("var/output")
+    digest_dir: Path = Path("var/output/digests")
+    blob_dir: Path = Path("var/output/raw")
     sources_csv: Path = Path("data/sources.csv")
     sources_dir: Path = Path("data/sources")
     sections_csv: Path = Path("data/sections.csv")
@@ -58,9 +79,9 @@ class Settings(BaseSettings):
     schema_path: Path = Path("data/quotes.schema.json")
     fixtures_dir: Path = Path("data/fixtures")
     gold_set_dir: Path = Path("data/gold_set")
-    audit_dir: Path = Path("var/audit")
-    export_dir: Path = Path("var/export")
-    logs_dir: Path = Path("var/logs")
+    audit_dir: Path = Path("var/output/audit")
+    export_dir: Path = Path("var/output/quotes")
+    logs_dir: Path = Path("var/output/logs")
     alembic_ini: Path = Path("alembic.ini")
 
     # REPORT_DATE defaults to today but is normally pinned by --date for replay.
@@ -94,7 +115,7 @@ class Settings(BaseSettings):
     ai_judge_model_snapshot: str = "unset"
     judge_prompt_version: str = "judge-v1"
     translation_prompt_version: str = "translation-v1"
-    extraction_fallback: str = "off"  # off | static
+    extraction_fallback: str = "off"  # off | static | rendered
 
     # Batch backfill policy (Opt-in; requires an explicit cost cap on the CLI).
     batch_model_snapshot: str = ""
@@ -106,7 +127,33 @@ class Settings(BaseSettings):
     fetch_max_bytes: int = Field(default=5_000_000, gt=0)
     fetch_max_connections: int = Field(default=10, gt=0)
 
+    # Neo4j derived graph projection (opt-in; Postgres remains system of record)
+    sync_to_neo4j: bool = False
+    neo4j_uri: str = "bolt://127.0.0.1:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: SecretStr = SecretStr("password123")
+    neo4j_database: str = "neo4j"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_output_paths(cls, values: object) -> object:
+        if not isinstance(values, dict):
+            return values
+        raw_output = values.get("output_dir") or os.getenv("OUTPUT_DIR", "var/output")
+        output = Path(str(raw_output))
+        for key, sub in (
+            ("digest_dir", "digests"),
+            ("blob_dir", "raw"),
+            ("audit_dir", "audit"),
+            ("export_dir", "quotes"),
+            ("logs_dir", "logs"),
+        ):
+            if not values.get(key):
+                values[key] = output / sub
+        return values
+
     @field_validator(
+        "output_dir",
         "digest_dir",
         "blob_dir",
         "sources_csv",
@@ -149,8 +196,8 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_extraction_fallback(cls, value: object) -> str:
         mode = str(value).strip().lower()
-        if mode not in {"off", "static"}:
-            raise ValueError("extraction_fallback must be off or static")
+        if mode not in {"off", "static", "rendered"}:
+            raise ValueError("extraction_fallback must be off, static or rendered")
         return mode
 
     @field_validator("ai_judge_mode", mode="before")
@@ -209,6 +256,11 @@ class Settings(BaseSettings):
     def database_url_value(self) -> str:
         """Raw connection string; never log this value."""
         return self.database_url.get_secret_value()
+
+    @property
+    def neo4j_password_value(self) -> str:
+        """Raw Neo4j password; never log this value."""
+        return self.neo4j_password.get_secret_value()
 
     def quote_within_limits(self, quote_text: str) -> bool:
         """DEC-10 word-count gate; strict counting on Unicode whitespace."""

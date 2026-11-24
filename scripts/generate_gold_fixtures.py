@@ -219,13 +219,19 @@ def main() -> None:
         s1 = SECTIONS[i % len(SECTIONS)]
         s2 = SECTIONS[(i + 2) % len(SECTIONS)]
 
+        # Direct mapping of non-English quotes to their true semantic sections
+        uk_sections = ["resources", "war_intensity", "international_support"]
+        ru_sections = ["peace_initiatives", "sanctions", "other"]
+
         quotes_data: list[tuple[str, str, str, str]] = []
         if source_id == "ukrainskapravda":
-            q_raw, speaker, q_en = UKRAINIAN_QUOTES[i % len(UKRAINIAN_QUOTES)]
-            quotes_data.append((q_raw, speaker, s1, q_en))
+            uk_idx = i % len(UKRAINIAN_QUOTES)
+            q_raw, speaker, q_en = UKRAINIAN_QUOTES[uk_idx]
+            quotes_data.append((q_raw, speaker, uk_sections[uk_idx], q_en))
         elif source_id == "tass":
-            q_raw, speaker, q_en = RUSSIAN_QUOTES[i % len(RUSSIAN_QUOTES)]
-            quotes_data.append((q_raw, speaker, s1, q_en))
+            ru_idx = i % len(RUSSIAN_QUOTES)
+            q_raw, speaker, q_en = RUSSIAN_QUOTES[ru_idx]
+            quotes_data.append((q_raw, speaker, ru_sections[ru_idx], q_en))
         else:
             t1 = QUOTE_TEMPLATES[s1][(i // len(SECTIONS)) % len(QUOTE_TEMPLATES[s1])]
             quotes_data.append((t1[0], t1[1], s1, ""))

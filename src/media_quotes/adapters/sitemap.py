@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from datetime import date
 from typing import TYPE_CHECKING
+
+import defusedxml.ElementTree as ET
 
 from .quote_extractor import is_topic_relevant
 from .rss import _local_tag, _parse_feed_date
@@ -23,6 +24,8 @@ def parse_sitemap_xml(
     require_ukraine_topic: bool = False,
     topic_pack: TopicPack | None = None,
     require_topic: bool = False,
+    max_bytes: int = 10_000_000,
+    max_items: int | None = None,
 ) -> list[dict[str, str]]:
     """Parse standard XML Sitemap (``<urlset>``) and Google News Sitemap (``<news:news>``).
 
@@ -30,12 +33,18 @@ def parse_sitemap_xml(
     ``<lastmod>``), and optional ``title`` (``<news:title>``). Filters by ``[start, end]``
     when dates are present.
     """
+    raw_len = len(raw_xml) if isinstance(raw_xml, bytes) else len(raw_xml.encode("utf-8"))
+    if raw_len > max_bytes:
+        raise ValueError(f"Sitemap XML payload exceeds size limit ({raw_len} > {max_bytes} bytes)")
+
     enforce_topic = require_topic or require_ukraine_topic
     xml_text = raw_xml.decode("utf-8") if isinstance(raw_xml, bytes) else raw_xml
-    root = ET.fromstring(xml_text)  # noqa: S314
+    root = ET.fromstring(xml_text)
     entries: list[dict[str, str]] = []
 
     for elem in root.iter():
+        if max_items is not None and len(entries) >= max_items:
+            break
         if _local_tag(elem.tag).lower() != "url":
             continue
         loc = ""

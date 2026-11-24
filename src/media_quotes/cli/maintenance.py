@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from ..config import DEFAULT_TOPIC_ID, Settings
+from ..config import DEFAULT_TOPIC_ID, Settings, require_safe_id
 from ..exceptions import ConfigError
 from ..export import local_store_path, read_jsonl
 from ..pipeline import (
@@ -24,6 +24,7 @@ from ..pipeline import (
 from ..restore_drill import retention_readiness, verify_export_integrity
 from ..risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
 from ..risk_controls.obsolescence import (
+    VERDICTS,
     ReviewQueue,
     flag_with_judge_provenance,
     judge_obsolescence_verdict,
@@ -54,10 +55,18 @@ def _queue_lock(path: Path) -> Iterator[None]:
     while True:
         try:
             handle = lock.open("x", encoding="utf-8")
+            handle.write(str(time.time()) + "\n")
+            handle.flush()
             break
         except FileExistsError:
+            try:
+                mtime = lock.stat().st_mtime
+                if time.time() - mtime > 60.0:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
             if time.monotonic() >= deadline:
-                # shortcut: a crashed process leaves a lock; add a TTL if this recurs
                 raise ConfigError("review queue is locked by another process") from None
             time.sleep(0.05)
     try:
@@ -201,6 +210,10 @@ def _do_review(
         raise ConfigError("--quote-id is required for review decide")
 
     chosen_verdict = verdict or ("rejected" if reason_code == "reject" else "confirmed")
+    if chosen_verdict not in VERDICTS:
+        raise ConfigError(
+            f"invalid verdict: {chosen_verdict!r}; expected one of {sorted(VERDICTS)}"
+        )
     if mode == "advisory" and quote_id in suggestions:
         print(
             "ai-judge advisory: "
@@ -248,8 +261,28 @@ def _do_review(
                 updated_list.append(flag.model_dump(mode="json"))
         payload["flags"] = updated_list
         _write_json(_queue_path(settings), payload)
+        if settings.persist_to_postgres:
+            from ..db.repository import persist_obsolescence_flags
+            from ..pipeline import _default_session_context
+
+            with _default_session_context(settings) as session:
+                persist_obsolescence_flags(session, [decided_flag])
         print(f"review recorded: {quote_id} -> {chosen_verdict}")
         return EXIT_OK
+
+
+def _do_blob_prune(settings: Settings, *, tombstones_path: Path, execute: bool) -> int:
+    """Delete blobs past the cutoff only when their digest is in the tombstone manifest."""
+    from ..blob_prune import load_tombstones, prune_blobs
+
+    report = prune_blobs(
+        settings,
+        today=settings.report_date,
+        tombstones=load_tombstones(tombstones_path),
+        dry_run=not execute,
+    )
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    return EXIT_OK
 
 
 def _do_retention(settings: Settings, *, dry_run: bool) -> int:
@@ -283,6 +316,7 @@ def _do_restore_drill(
     """Compare the latest derived export with a reference export (identity + hash)."""
     today = report_date or settings.report_date
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
+    require_safe_id(active_topic, "topic_id")
     root = local_store_path(settings.export_dir, today, topic_id=active_topic).parent
     current_path = local_store_path(settings.export_dir, today, topic_id=active_topic)
     files = sorted(root.glob("quotes-*.jsonl"), reverse=True)

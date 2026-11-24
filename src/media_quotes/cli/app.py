@@ -12,6 +12,7 @@ from typing import Any
 
 from ..config import Settings, get_settings, unknown_setting_env_vars
 from ..exceptions import BudgetExceededError, ConfigError, MediaQuotesError, ValidationError
+from ..observability import configure_observability
 from ..validation import validate_data_dir
 from .common import (
     _MANDATORY,
@@ -33,7 +34,11 @@ def _validate() -> int:
 def _bootstrap() -> int:
     from ..bootstrap import main as bootstrap_main
 
-    bootstrap_main()
+    try:
+        bootstrap_main()
+    except RuntimeError as exc:
+        print(f"Error during bootstrap: {exc}", file=sys.stderr)
+        return EXIT_FAILURE
     return 0
 
 
@@ -93,7 +98,22 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("doctor", help="validate config, registry and schema", **shared)
     subparsers.add_parser("validate", help="alias for doctor", **shared)
     subparsers.add_parser("bootstrap", help="initialise database and sync sources", **shared)
-    subparsers.add_parser("run", help="offline fixture replay pipeline", **shared)
+    run_parser = subparsers.add_parser(
+        "run", help="daily collection, verification, digest and audit pipeline", **shared
+    )
+    run_parser.add_argument(
+        "--from-blobs",
+        dest="from_blobs",
+        action="store_true",
+        help="ingest T0-cleared live HTML blobs from BLOB_DIR instead of synthetic fixtures",
+    )
+    run_parser.add_argument(
+        "--tier",
+        dest="run_tier",
+        type=int,
+        choices=(1, 2, 3, 4),
+        help="optional source tier filter (e.g. 1 for Tier-1 6-hour cadence)",
+    )
     fetch_parser = subparsers.add_parser(
         "fetch", help="fetch a rights-cleared source feed and articles"
     )
@@ -114,6 +134,9 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("all", "train", "dev", "test"),
         default=None,
         help="optional split filter (all, train, dev, test)",
+    )
+    eval_parser.add_argument(
+        "--full", action="store_true", help="require held-out labels and full thresholds"
     )
     sources = subparsers.add_parser("sources", help="registry and T0 state at a glance", **shared)
     sources.add_argument(
@@ -148,16 +171,35 @@ def _build_parser() -> argparse.ArgumentParser:
         "--description", dest="topic_description", default="", help="topic description"
     )
     subparsers.add_parser("version", help="version manifest", **shared)
-    backfill = subparsers.add_parser("backfill", help="bounded offline backfill estimate", **shared)
+    backfill = subparsers.add_parser(
+        "backfill", help="bounded historical backfill estimate and execution", **shared
+    )
     backfill.add_argument("--from", dest="from_date", help="period start YYYY-MM-DD")
     backfill.add_argument("--to", dest="to_date", help="period end YYYY-MM-DD")
     backfill.add_argument("--max-cost", dest="max_cost", type=float)
+    backfill.add_argument(
+        "--execute",
+        action="store_true",
+        help="run the pipeline for each date in --from..--to after passing budget checks",
+    )
+    backfill.add_argument(
+        "--from-blobs",
+        dest="from_blobs",
+        action="store_true",
+        help="ingest live HTML blobs from BLOB_DIR instead of synthetic fixtures during --execute",
+    )
     subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
     export_parser = subparsers.add_parser("export", help="derived JSONL export", **shared)
     export_parser.add_argument(
         "--from-db",
         action="store_true",
         help="build the export from Postgres instead of local files",
+    )
+    export_parser.add_argument(
+        "--context", dest="context", help="write a bounded context pack to this JSON path"
+    )
+    export_parser.add_argument(
+        "--max-tokens", dest="max_tokens", type=int, default=4000, help="context pack token budget"
     )
     subparsers.add_parser("dashboard", help="Streamlit dashboard guidance", **shared)
     subparsers.add_parser("dagster", help="Dagster asset/schedule guidance", **shared)
@@ -166,13 +208,45 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument("--quote-id", dest="quote_id")
     review.add_argument("--verdict", choices=("confirmed", "rejected", "escalated"), dest="verdict")
     review.add_argument("--reason-code", dest="reason_code", default="human-review")
+    prune = subparsers.add_parser("blob-prune", help="prune old, tombstoned blobs", **shared)
+    prune.add_argument("--tombstones", dest="tombstones", required=True, type=Path)
+    prune.add_argument("--execute", action="store_true", help="delete files; without it only plan")
     subparsers.add_parser("retention", help="retention and lock readiness plan", **shared)
     drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
     drill.add_argument("--reference", dest="reference")
+
+    graph_parser = subparsers.add_parser(
+        "graph", help="manage derived Neo4j graph projection", **shared
+    )
+    graph_sub = graph_parser.add_subparsers(dest="graph_action", required=True)
+    graph_sub.add_parser("init", help="apply Neo4j schema constraints and indexes", **shared)
+    graph_sub.add_parser("status", help="check Neo4j connectivity and element counts", **shared)
+
+    sync_p = graph_sub.add_parser("sync", help="project quotes into Neo4j", **shared)
+    sync_p.add_argument(
+        "--from-db", action="store_true", help="sync directly from Postgres quotes table"
+    )
+
+    lineage_p = graph_sub.add_parser(
+        "lineage", help="show supersession chain for a quote", **shared
+    )
+    lineage_p.add_argument("--quote-id", required=True, help="canonical quote id Q-YYYYMMDD-NNNN")
+
+    speaker_p = graph_sub.add_parser("speaker", help="show quotes by speaker over time", **shared)
+    speaker_p.add_argument("--name", required=True, help="speaker name")
+
+    div_p = graph_sub.add_parser("divergence", help="show tier and regional distribution", **shared)
+    div_p.add_argument("--section", dest="section_id", help="section id filter")
+
+    ctx_p = graph_sub.add_parser("context", help="generate GraphRAG context pack", **shared)
+    ctx_p.add_argument("--section", dest="section_id", help="section id filter")
+    ctx_p.add_argument("--max-tokens", type=int, default=4000, help="max token budget")
+    ctx_p.add_argument("--limit", type=int, default=25, help="max quotes to query")
+
     return parser
 
 
-def _shared_parser() -> argparse.ArgumentParser:
+def _shared_parser() -> argparse.ArgumentParser:  # pragma: no cover
     parser = argparse.ArgumentParser(add_help=False)
     _add_shared(parser)
     return parser
@@ -186,9 +260,10 @@ def _ensure_utf8_output() -> None:
             reconfigure(encoding="utf-8", errors="replace")
 
 
-def cli_entry(argv: Sequence[str] | None = None) -> int:
+def cli_entry(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
     """CLI-only entry point: fix the console encoding, then run main()."""
     _ensure_utf8_output()
+    configure_observability(get_settings())  # once per process, not once per pipeline run
     return main(argv)
 
 
@@ -200,6 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _do_audit,
         _do_backfill,
         _do_batch,
+        _do_blob_prune,
         _do_dagster,
         _do_dashboard,
         _do_digest,
@@ -264,6 +340,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verdict=getattr(args, "verdict", None),
                 reason_code=str(getattr(args, "reason_code", "human-review")),
             )
+        if command == "blob-prune":
+            return _do_blob_prune(
+                settings,
+                tombstones_path=Path(str(args.tombstones)),
+                execute=bool(getattr(args, "execute", False))
+                and not bool(getattr(args, "dry_run", False)),
+            )
         if command == "retention":
             return _do_retention(settings, dry_run=bool(args.dry_run))
         if command == "restore-drill":
@@ -312,27 +395,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_date=report_date,
                 limit=int(args.limit),
                 dry_run=not bool(args.live),
-                topic_id=topic_arg,
             )
         if command in {"run", "audit", "digest"}:
             report_date = _parse_report_date(getattr(args, "date", None), settings)
             if command == "run":
+                source_mode = "blobs" if getattr(args, "from_blobs", False) else "fixtures"
+                run_tier = getattr(args, "run_tier", None)
+                run_kwargs: dict[str, Any] = {
+                    "report_date": report_date,
+                    "dry_run": args.dry_run,
+                    "run_id": getattr(args, "run_id", None),
+                    "verbose": args.verbose,
+                }
                 if topic_arg is not None:
-                    return _do_run(
-                        settings,
-                        report_date=report_date,
-                        dry_run=args.dry_run,
-                        run_id=getattr(args, "run_id", None),
-                        verbose=args.verbose,
-                        topic_id=topic_arg,
-                    )
-                return _do_run(
-                    settings,
-                    report_date=report_date,
-                    dry_run=args.dry_run,
-                    run_id=getattr(args, "run_id", None),
-                    verbose=args.verbose,
-                )
+                    run_kwargs["topic_id"] = topic_arg
+                if source_mode != "fixtures":
+                    run_kwargs["source_mode"] = source_mode
+                if run_tier is not None:
+                    run_kwargs["tier"] = int(run_tier)
+                return _do_run(settings, **run_kwargs)
             if command == "audit":
                 return _do_audit(
                     settings,
@@ -359,8 +440,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             report_date = _parse_report_date(getattr(args, "date", None), settings)
             split = getattr(args, "split", None)
             if split is not None:
-                return _do_eval(settings, gold_set=gold_set, report_date=report_date, split=split)
-            return _do_eval(settings, gold_set=gold_set, report_date=report_date)
+                return _do_eval(
+                    settings,
+                    gold_set=gold_set,
+                    report_date=report_date,
+                    split=split,
+                    full=bool(getattr(args, "full", False)),
+                )
+            return _do_eval(
+                settings,
+                gold_set=gold_set,
+                report_date=report_date,
+                full=bool(getattr(args, "full", False)),
+            )
         if command == "export":
             report_date = _parse_report_date(getattr(args, "date", None), settings)
             if topic_arg is not None:
@@ -370,12 +462,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
                     from_db=bool(getattr(args, "from_db", False)),
+                    context=getattr(args, "context", None),
+                    max_tokens=int(getattr(args, "max_tokens", 4000)),
                 )
             return _do_export(
                 settings,
                 report_date=report_date,
                 out=getattr(args, "out", None),
                 from_db=bool(getattr(args, "from_db", False)),
+                context=getattr(args, "context", None),
+                max_tokens=int(getattr(args, "max_tokens", 4000)),
             )
         if command == "backfill":
             start = (
@@ -388,13 +484,59 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if getattr(args, "to_date", None)
                 else settings.report_date
             )
-            return _do_backfill(
-                settings,
-                start=start,
-                end=end,
-                dry_run=args.dry_run,
-                max_cost=getattr(args, "max_cost", None),
+            backfill_kwargs: dict[str, Any] = {
+                "start": start,
+                "end": end,
+                "dry_run": args.dry_run,
+                "max_cost": getattr(args, "max_cost", None),
+            }
+            if getattr(args, "execute", False):
+                backfill_kwargs["execute"] = True
+            if topic_arg is not None:
+                backfill_kwargs["topic_id"] = topic_arg
+            if getattr(args, "from_blobs", False):
+                backfill_kwargs["source_mode"] = "blobs"
+            return _do_backfill(settings, **backfill_kwargs)
+        if command == "graph":
+            action = str(getattr(args, "graph_action", "") or "")
+            from .graph import (
+                _do_graph_context,
+                _do_graph_divergence,
+                _do_graph_init,
+                _do_graph_lineage,
+                _do_graph_speaker,
+                _do_graph_status,
+                _do_graph_sync,
             )
+
+            if action == "init":
+                return _do_graph_init(settings)
+            if action == "status":
+                return _do_graph_status(settings)
+            if action == "sync":
+                report_date = _parse_report_date(getattr(args, "date", None), settings)
+                return _do_graph_sync(
+                    settings,
+                    from_db=bool(getattr(args, "from_db", False)),
+                    report_date=report_date,
+                    topic_id=topic_arg,
+                )
+            if action == "lineage":
+                return _do_graph_lineage(settings, quote_id=str(args.quote_id))
+            if action == "speaker":
+                return _do_graph_speaker(settings, speaker=str(args.name), topic_id=topic_arg)
+            if action == "divergence":
+                return _do_graph_divergence(
+                    settings, topic_id=topic_arg, section_id=getattr(args, "section_id", None)
+                )
+            if action == "context":
+                return _do_graph_context(
+                    settings,
+                    topic_id=topic_arg,
+                    section_id=getattr(args, "section_id", None),
+                    max_tokens=int(getattr(args, "max_tokens", 4000)),
+                    limit=int(getattr(args, "limit", 25)),
+                )
     except (ValidationError, MediaQuotesError, FileExistsError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return (

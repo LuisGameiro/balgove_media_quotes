@@ -20,7 +20,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import PROJECT_ROOT
-from .relevance import TopicDecision, evaluate_topic, load_topic_rules
+from .relevance import TopicDecision, _folded, _matches, evaluate_topic, load_topic_rules
+from .text_utils import normalise_text
 
 __all__ = [
     "DEFAULT_TOPICS_DIR",
@@ -149,12 +150,14 @@ class TopicPack(BaseModel):
 
     def infer_section(self, text: str) -> str:
         """Deterministic keyword-based fallback section assignment for a quote."""
-        lowered = text.lower()
+        lowered = normalise_text(text).casefold()
+        folded_text = _folded(text)
         for section in self.sections:
             if section.section_id == self.default_section:
                 continue
-            if any(keyword.lower() in lowered for keyword in section.keywords if keyword):
-                return section.section_id
+            for keyword in section.keywords:
+                if keyword and _matches(keyword, lowered, folded_text):
+                    return section.section_id
         return self.default_section
 
     def evaluate_article(self, article: Mapping[str, Any]) -> TopicDecision:
@@ -174,27 +177,36 @@ class TopicPack(BaseModel):
         Exclusions reject off-topic text when no anchor is present; otherwise either an
         accepted ``evaluate_topic`` decision or a quick-keyword hit matches.
         """
-        combined = f"{url} {title} {text} {' '.join(tags)}".lower()
+        combined = normalise_text(f"{url} {title} {text} {' '.join(tags)}").casefold()
+        folded_combined = _folded(combined)
         exclusions = [
-            term.strip().lower()
+            term.strip()
             for terms in self.relevance.exclusions.values()
             for term in terms
             if term.strip()
         ]
         anchors = [
-            term.strip().lower()
+            term.strip()
             for terms in self.relevance.anchors.values()
             for term in terms
             if term.strip()
         ]
-        has_anchor = any(term in combined for term in anchors)
-        has_exclusion = any(term in combined for term in exclusions)
+        has_anchor = any(_matches(term, combined, folded_combined) for term in anchors)
+        has_exclusion = any(_matches(term, combined, folded_combined) for term in exclusions)
         if has_exclusion and not has_anchor:
             return False
-        if has_anchor:
+        if has_anchor and not has_exclusion:
             return True
-        if self.quick_keywords:
-            return any(term.lower() in combined for term in self.quick_keywords if term)
+        if (
+            self.quick_keywords
+            and not has_exclusion
+            and any(
+                _matches(term, combined, folded_combined)
+                for term in self.quick_keywords
+                if term.strip()
+            )
+        ):
+            return True
         decision = self.evaluate_article(
             {"title": title, "article_text": text, "canonical_url": url, "tags": list(tags)}
         )

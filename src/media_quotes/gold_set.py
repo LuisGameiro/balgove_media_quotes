@@ -62,6 +62,7 @@ class GoldSet(BaseModel):
     split: str = ""
     articles: list[GoldArticle] = Field(min_length=1)
     negative_candidates: list[NegativeCandidate] = Field(default_factory=list)
+    obsolete_quote_ids: list[str] = Field(default_factory=list)
 
 
 def validate_sections(gold: GoldSet) -> GoldSet:

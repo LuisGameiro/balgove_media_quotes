@@ -433,51 +433,59 @@ def _persist_result(
     # Defence in depth: only topic-accepted records may ever reach quote tables.
     publishable = [record for record in result.records if record.topic_status == "accepted"]
     context_factory = session_context or _default_session_context
-    with context_factory(settings) as session:
-        start_pipeline_run(
-            session,
-            run_id=result.run_id,
-            pipeline=pipeline,
-            partition_date=result.report_date,
-            topic_id=result.topic_id,
-            commit=False,
-        )
-        articles_n, quotes_n = persist_articles_and_quotes(
-            session, publishable, result.offsets, commit=False
-        )
-        classifications_n = persist_quote_classifications(
-            session, publishable, result.offsets, assigned_by=assigned_by, commit=False
-        )
-        digest_id = persist_digest_manifest(
-            session,
-            digest_date=result.report_date,
-            window_start=window_start,
-            window_end=result.report_date,
-            md_path=str(result.digest_path or ""),
-            records=publishable,
-            topic_id=result.topic_id,
-            commit=False,
-        )
-        flags_n = persist_obsolescence_flags(session, list(result.review_flags), commit=False)
-        append_audit_events(session, list(result.events) + list(result.coverage), commit=False)
-        finish_pipeline_run(
-            session,
-            run_id=result.run_id,
-            status=result.status,
-            stats={
-                **result.checks,
-                "topic_id": result.topic_id,
-                "quotes": len(publishable),
-                "topic_gated_records": len(result.records) - len(publishable),
-                "articles": articles_n,
-                "stored_quotes": quotes_n,
-                "classifications": classifications_n,
-                "obsolescence_flags": flags_n,
-                "digest_id": digest_id,
-            },
-            commit=False,
-        )
-        session.commit()
+    try:
+        with context_factory(settings) as session:
+            start_pipeline_run(
+                session,
+                run_id=result.run_id,
+                pipeline=pipeline,
+                partition_date=result.report_date,
+                topic_id=result.topic_id,
+                commit=False,
+            )
+            articles_n, quotes_n = persist_articles_and_quotes(
+                session, publishable, result.offsets, commit=False
+            )
+            classifications_n = persist_quote_classifications(
+                session, publishable, result.offsets, assigned_by=assigned_by, commit=False
+            )
+            digest_id = persist_digest_manifest(
+                session,
+                digest_date=result.report_date,
+                window_start=window_start,
+                window_end=result.report_date,
+                md_path=str(result.digest_path or ""),
+                records=publishable,
+                topic_id=result.topic_id,
+                commit=False,
+            )
+            flags_n = persist_obsolescence_flags(session, list(result.review_flags), commit=False)
+            append_audit_events(session, list(result.events) + list(result.coverage), commit=False)
+            finish_pipeline_run(
+                session,
+                run_id=result.run_id,
+                status=result.status,
+                stats={
+                    **result.checks,
+                    "topic_id": result.topic_id,
+                    "quotes": len(publishable),
+                    "topic_gated_records": len(result.records) - len(publishable),
+                    "articles": articles_n,
+                    "stored_quotes": quotes_n,
+                    "classifications": classifications_n,
+                    "obsolescence_flags": flags_n,
+                    "digest_id": digest_id,
+                },
+                commit=False,
+            )
+            session.commit()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to persist pipeline results to PostgreSQL: {exc}. "
+            f"Ensure PostgreSQL is accessible at {settings.database_url_value} "
+            "(e.g. run 'docker compose up -d postgres') or set PERSIST_TO_POSTGRES=false "
+            "to run in offline/file-backed mode."
+        ) from exc
     return {
         "articles": articles_n,
         "stored_quotes": quotes_n,
@@ -497,6 +505,8 @@ def run_daily_pipeline(
     topic_id: str | None = None,
     persist_to_postgres: bool | None = None,
     session_context: SessionContextFactory | None = None,
+    source_mode: str = "fixtures",
+    tier: int | None = None,
 ) -> DailyPipelineResult:
     """Run one report date through the shared T0-gated offline pipeline."""
     from .cli.audit import _audit_report, _write_audit
@@ -521,7 +531,12 @@ def run_daily_pipeline(
     topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
     actual_run_id = run_id or _run_id(report_date, settings, topic_id=active_topic_id)
     records, coverage, gaps, events, rejected, offsets = _collect(
-        settings, run_id=actual_run_id, report_date=report_date, topic_pack=topic_pack
+        settings,
+        run_id=actual_run_id,
+        report_date=report_date,
+        topic_pack=topic_pack,
+        source_mode=source_mode,
+        tier=tier,
     )
     publishable_records = [record for record in records if record.topic_status == "accepted"]
     rejected += len(records) - len(publishable_records)
@@ -548,8 +563,8 @@ def run_daily_pipeline(
     store_path = local_store_path(settings.export_dir, report_date, topic_id=active_topic_id)
     write_jsonl(kept, store_path)
 
-    review_flags = _load_review_flags(settings)
     now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
+    review_flags = _load_review_flags(settings)
     review_badges: dict[str, str] = {}
     for flag in review_flags:
         badge = review_badge(flag, now=now)
@@ -568,6 +583,7 @@ def run_daily_pipeline(
         obsolescence_flags=review_flags,
         review_badges=review_badges,
         notice=_NOTICE,
+        now=now,
     )
 
     logs_path = settings.logs_dir / f"{actual_run_id}.jsonl"

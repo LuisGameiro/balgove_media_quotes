@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
 from .. import __version__
-from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
+from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings, require_safe_id
 from ..enums import APPROVED_RIGHTS
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, content_hash
@@ -32,12 +33,24 @@ EXIT_FAILURE = 1
 EXIT_GAPS = 2
 EXIT_CONFIG = 3
 
+
+def exit_code_for(*, ok: bool = True, gaps: Sequence[Any] = (), config_error: bool = False) -> int:
+    """One exit-code contract: pass, validation failure, gaps, or config/T0 error."""
+    if config_error:
+        return EXIT_CONFIG
+    if not ok:
+        return EXIT_FAILURE
+    if gaps:
+        return EXIT_GAPS
+    return EXIT_OK
+
+
 _NOTICE = (
     "BLOCKED/DEGRADED MODE: quotes below come from clearly labelled synthetic fixtures for "
     "blocked mandatory sources. Not real reporting; no live source, database or LLM was used."
 )
 _MANDATORY = ("reuters", "bbc")
-_ARTICLES_PER_SOURCE_DAY = 10.0  # docs/02 §4 planning envelope, replaced by T2 measurements
+_ARTICLES_PER_SOURCE_DAY = 10.0  # planning envelope
 _CALLS_PER_ARTICLE = 2.0
 _PRICE_PER_CALL = 0.01
 _ARTICLES_PER_HOUR = 100.0
@@ -106,7 +119,9 @@ def _registry_sha256(settings: Settings) -> str:  # pragma: no cover
     return _sha256_file(settings.sources_csv)
 
 
-def _version_manifest(settings: Settings) -> dict[str, Any]:  # pragma: no cover
+def _version_manifest(
+    settings: Settings, topic_id: str | None = None
+) -> dict[str, Any]:  # pragma: no cover
     return {
         "app_version": __version__,
         "cli_version": __version__,
@@ -122,7 +137,7 @@ def _version_manifest(settings: Settings) -> dict[str, Any]:  # pragma: no cover
         "gold_set_version": settings.gold_set_version,
         "registry_sha256": _registry_sha256(settings),
         "sections_sha256": _sha256_file(settings.sections_csv),
-        "active_topic": getattr(settings, "active_topic", DEFAULT_TOPIC_ID),
+        "active_topic": topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID),
         "fixture_replay": True,
     }
 
@@ -231,6 +246,7 @@ def _load_topic_pack(
 
 def _digest_path(settings: Settings, report_date: date, *, topic_id: str | None = None) -> Path:
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
+        require_safe_id(topic_id, "topic_id")
         return settings.digest_dir / topic_id / f"{report_date.isoformat()}.md"
     return settings.digest_dir / f"{report_date.isoformat()}.md"
 
@@ -282,5 +298,5 @@ def _event(  # pragma: no cover
 
 
 def _fixture_mode(row: SourceRegistryRow, settings: Settings) -> bool:  # pragma: no cover
-    """Blocked sources are replayed from fixtures; live gate stays closed."""
-    return not row.usable and (settings.fixtures_dir / row.source_id).is_dir()
+    """Default replay uses fixtures for every source with fixtures; live routes stay opt-in."""
+    return (settings.fixtures_dir / row.source_id).is_dir()

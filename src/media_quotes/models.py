@@ -74,24 +74,6 @@ class VerificationResult(BaseModel):
     verified_at: datetime
 
 
-class DecisionIn(BaseModel):
-    """Provenance record for one LLM call; mirrored into llm_decisions."""
-
-    model_config = STRICT
-
-    decision_type: str
-    cache_key: str
-    input_hash: str
-    model_snapshot: str
-    prompt_version: str
-    schema_hash: str
-    decoding_params: dict[str, Any] = Field(default_factory=dict)
-    output: dict[str, Any] | None = None
-    refusal: bool = False
-    incomplete: bool = False
-    provider_response_id: str | None = None
-
-
 class VerificationRecord(BaseModel):
     """Deterministic verification snapshot stored on every exported quote."""
 
@@ -105,7 +87,11 @@ class VerificationRecord(BaseModel):
     @field_validator("verified_at", mode="before")
     @classmethod
     def _parse_verified_at(cls, value: object) -> object:
-        return _parse_datetime(value)
+        return _parse_verified_at_helper(value)
+
+
+def _parse_verified_at_helper(value: object) -> object:
+    return _parse_datetime(value)
 
 
 class ExportQuoteRecord(BaseModel):
@@ -153,7 +139,7 @@ class ExportQuoteRecord(BaseModel):
     language_confidence: float = 0.0
     translation_model_snapshot: str = ""
     translation_prompt_version: str = ""
-    translation_hash: str = ""
+    translation_hash: str = Field(default="", pattern=r"^([a-f0-9]{64})?$")
     translation_status: str = ""
 
     @field_validator("publication_date", mode="before")

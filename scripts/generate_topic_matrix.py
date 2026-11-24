@@ -30,10 +30,18 @@ FIXTURE_NOTICE = (
 )
 LANG_FOR_CODE = {"uk": "uk", "ru": "ru", "fr": "fr"}
 WAR_CONTEXT = {
-    "en": "Synthetic context: Russia, missile strikes and ceasefire monitoring in this fixture.",
-    "uk": "Синтетичний контекст: росія, обстріли та перемир'я у цій вигаданій історії.",
-    "ru": "Синтетический контекст: россия, обстрелы и перемирие в этой вымышленной истории.",
-    "fr": "Synthetic context: Russia, missile strikes and ceasefire monitoring in this fixture.",
+    "en": (
+        "Synthetic context: Ukraine, Russia, missile strikes and ceasefire "
+        "monitoring in this fixture."
+    ),
+    "uk": "Синтетичний контекст: Україна, росія, обстріли та перемир'я у цій вигаданій історії.",
+    "ru": (
+        "Синтетический контекст: Украина, россия, обстрелы и перемирие в этой вымышленной истории."
+    ),
+    "fr": (
+        "Synthetic context: Ukraine, Russia, missile strikes and ceasefire "
+        "monitoring in this fixture."
+    ),
 }
 
 QUOTES: dict[str, dict[str, str]] = {

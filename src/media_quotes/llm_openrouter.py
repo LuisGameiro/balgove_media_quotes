@@ -45,6 +45,8 @@ def make_openrouter_client(settings: Settings) -> Any:
 
     if settings.openrouter_api_key is None:
         raise ConfigError("OPENROUTER_API_KEY is required when LLM_PROVIDER=openrouter")
+    if not settings.persist_to_postgres:
+        raise ConfigError("PERSIST_TO_POSTGRES=true is required for live OpenRouter calls (cache)")
     return OpenAI(
         api_key=settings.openrouter_api_key.get_secret_value(),
         base_url=settings.openrouter_base_url,

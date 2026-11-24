@@ -37,6 +37,7 @@ _REQUIRED_CHECKS = (
     "attribution_present",
     "junk_free",
     "policy_flags_preserved",
+    "first_hand",
 )
 
 
@@ -55,7 +56,13 @@ def verify_quote(
     meta = dict(metadata or {})
     quote = candidate.quote_text
     start, end = candidate.char_start, candidate.char_end
-    context = article_text[max(0, start - 160) : min(len(article_text), end + 160)]
+    # Never include the quote itself: a capitalized phrase inside it must not
+    # satisfy the attribution check by matching its own words.
+    context = (
+        article_text[max(0, start - 160) : start]
+        + " "
+        + article_text[end : min(len(article_text), end + 160)]
+    )
 
     publication_date = _as_date(meta.get("publication_date"))
     speaker = normalise_text(candidate.speaker or "")
@@ -118,6 +125,8 @@ def verify_quote(
 
 
 def _as_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, date):
         return value
     if isinstance(value, str):
@@ -146,10 +155,19 @@ def _attribution_ok(
         return True
     # A short local cue is acceptable only next to a name-like token; long context alone
     # must not turn an unattributed quote into a verified one.
-    local = near_text[-160:] + near_text[:160]
+    local = near_text[-160:] + " " + near_text[:160]
     if not _ATTRIBUTION_NEAR_RE.search(local):
         return False
-    return bool(re.search(r"\b[A-Z][a-zA-Z'-]+\s+[A-Z][a-zA-Z'-]+\b", context))
+    # Only search context outside the quote itself to prevent self-matching
+    name_pat = (
+        r"\b[A-Z\u0410-\u042F\u0404\u0406\u0407\u0490\u00C0-\u00D6\u00D8-\u00DE]"
+        r"[a-zA-Z\u0410-\u044F\u0404\u0454\u0406\u0456\u0407\u0457\u0490\u0491"
+        r"\u00C0-\u024F'-]+\s+"
+        r"[A-Z\u0410-\u042F\u0404\u0406\u0407\u0490\u00C0-\u00D6\u00D8-\u00DE]"
+        r"[a-zA-Z\u0410-\u044F\u0404\u0454\u0406\u0456\u0407\u0457\u0490\u0491"
+        r"\u00C0-\u024F'-]+\b"
+    )
+    return bool(re.search(name_pat, near_text))
 
 
 def _junk_free(norm_quote: str) -> bool:

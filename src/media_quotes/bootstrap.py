@@ -47,6 +47,20 @@ def main() -> None:
 
         with make_session_factory(engine)() as session:
             synced = sync_sources(session, rows)
+    except Exception as exc:
+        msg = str(exc).lower()
+        if (
+            "timeout" in msg
+            or "connection refused" in msg
+            or "could not connect" in msg
+            or "operationalerror" in type(exc).__name__.lower()
+        ):
+            raise RuntimeError(
+                f"Failed to connect to PostgreSQL ({settings.database_url}): {exc}. "
+                "Ensure the PostgreSQL container is running "
+                "(e.g. 'docker compose up -d postgres') and accessible."
+            ) from exc
+        raise
     finally:
         engine.dispose()
 

@@ -54,8 +54,17 @@ from .common import (
 )
 from .eval import _do_eval
 from .fetch import _do_fetch
+from .graph import (
+    _do_graph_context,
+    _do_graph_divergence,
+    _do_graph_init,
+    _do_graph_lineage,
+    _do_graph_speaker,
+    _do_graph_status,
+    _do_graph_sync,
+)
 from .logs import _do_logs
-from .maintenance import _do_restore_drill, _do_retention, _do_review
+from .maintenance import _do_blob_prune, _do_restore_drill, _do_retention, _do_review
 from .ops import _do_backfill, _do_dashboard, _do_digest, _do_export, _do_sources, _do_topics
 from .orchestration_info import _do_dagster
 from .run import _collect, _do_run, _process_source
@@ -83,6 +92,7 @@ __all__ = [
     "_do_audit",
     "_do_backfill",
     "_do_batch",
+    "_do_blob_prune",
     "_do_dagster",
     "_do_dashboard",
     "_do_digest",
@@ -90,6 +100,13 @@ __all__ = [
     "_do_eval",
     "_do_export",
     "_do_fetch",
+    "_do_graph_context",
+    "_do_graph_divergence",
+    "_do_graph_init",
+    "_do_graph_lineage",
+    "_do_graph_speaker",
+    "_do_graph_status",
+    "_do_graph_sync",
     "_do_logs",
     "_do_restore_drill",
     "_do_retention",

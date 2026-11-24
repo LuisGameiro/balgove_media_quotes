@@ -56,7 +56,12 @@ def check_quotes(
                         errors.append(f"{where}: {key} does not match sources.csv ({expected!r})")
                 if record.get("source_tier") != int(source["tier"]):
                     errors.append(f"{where}: source_tier does not match sources.csv")
-                if source["rights_status"] == "blocked":
+                if (
+                    source["rights_status"] == "blocked"
+                    and record.get("rights_status") != "blocked"
+                ):
+                    # Fixture replay exports are labelled blocked; claiming cleared
+                    # rights for a blocked source is a T0 violation.
                     errors.append(f"{where}: quote cannot be stored from a blocked source")
             if record.get("section_id") not in sections:
                 errors.append(f"{where}: unknown section_id {record.get('section_id')!r}")
@@ -85,5 +90,10 @@ def check_quotes(
             needs_translation = record.get("source_language") not in (None, "en") or (
                 quote_language not in ("", "en", "und")
             )
-            if needs_translation and not record.get("quote_text_en"):
+            translation_status = record.get("translation_status", "")
+            if (
+                needs_translation
+                and not record.get("quote_text_en")
+                and translation_status != "skipped"
+            ):
                 errors.append(f"{where}: non-English quotes need quote_text_en")

@@ -90,6 +90,7 @@ def build_adapter(
     replay: bool = False,
     topic_pack: TopicPack | None = None,
     source_config: SourceConfig | None = None,
+    extraction_fallback: str | None = None,
 ) -> SourceAdapter:
     """Instantiate the best adapter for ``row``.
 
@@ -119,4 +120,5 @@ def build_adapter(
         replay=replay,
         topic_pack=topic_pack,
         source_config=source_config,
+        extraction_fallback=extraction_fallback,
     )

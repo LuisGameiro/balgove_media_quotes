@@ -46,6 +46,14 @@ def _do_fetch(
         print(f"error: unknown source_id {source_id!r}", file=sys.stderr)
         return EXIT_CONFIG
 
+    if not row.usable:
+        print(
+            f"error: source {source_id!r} is blocked by the T0 rights gate "
+            f"(rights={row.rights_status}, access={row.access_mode})",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+
     pack: TopicPack | None = _load_topic_pack(settings, topic_id)
     active_topic = (
         pack.topic_id
@@ -56,13 +64,6 @@ def _do_fetch(
     if not feed_url:
         print(
             f"error: no feed URL registered for {source_id!r}; pass one in the source config",
-            file=sys.stderr,
-        )
-        return EXIT_CONFIG
-    if not row.usable:
-        print(
-            f"error: source {source_id!r} is blocked by the T0 rights gate "
-            f"(rights={row.rights_status}, access={row.access_mode})",
             file=sys.stderr,
         )
         return EXIT_CONFIG
@@ -96,7 +97,14 @@ def _do_fetch(
         limit=limit,
     )
 
-    adapter = build_adapter(row, replay=False, topic_pack=pack)
+    source_cfg = _load_source_configs(settings).get(source_id)
+    adapter = build_adapter(
+        row,
+        replay=False,
+        topic_pack=pack,
+        extraction_fallback=settings.extraction_fallback,
+        source_config=source_cfg,
+    )
     articles: list[dict[str, Any]] = []
     for article in downloaded:
         if article.error:

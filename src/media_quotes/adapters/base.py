@@ -42,12 +42,14 @@ class SourceAdapter:
         replay: bool = False,
         topic_pack: TopicPack | None = None,
         source_config: SourceConfig | None = None,
+        extraction_fallback: str | None = None,
     ) -> None:
         self.row = row
         self.fixture_source = fixture_source or FixtureSource()
         self.replay = replay
         self.topic_pack = topic_pack
         self.source_config = source_config
+        self.extraction_fallback = extraction_fallback
 
     @property
     def extractor_hints(self) -> ExtractorHints | None:
@@ -82,7 +84,10 @@ class SourceAdapter:
             published = metadata.get("publication_date", "")
             if not published:
                 continue
-            day = date.fromisoformat(str(published)[:10])
+            try:
+                day = date.fromisoformat(str(published)[:10])
+            except ValueError:
+                continue
             if start <= day <= end:
                 refs.append(ref)
         return refs
@@ -115,8 +120,8 @@ class SourceAdapter:
     def policy_flags(self) -> dict[str, Any]:  # pragma: no cover
         return self.row.policy_flags
 
-    @staticmethod
     def _parse(
+        self,
         raw: bytes,
         *,
         use_trafilatura: bool = False,
@@ -132,9 +137,22 @@ class SourceAdapter:
             from ..config import get_settings
             from ..extraction import static_html_fallback
 
-            fallback = (
-                static_html_fallback if get_settings().extraction_fallback == "static" else None
-            )
+            mode = self.extraction_fallback
+            if mode is None:
+                mode = get_settings().extraction_fallback
+            fallback: Any = None
+            if mode == "static":
+                fallback = static_html_fallback
+            elif (
+                mode == "rendered"
+                and extractor_hints is not None
+                and extractor_hints.render_js
+                and self.row.usable
+            ):
+                # Rights gate and per-source opt-in both apply before a browser is used.
+                from ..extraction import rendered_html_fallback
+
+                fallback = rendered_html_fallback
             return parse_newspaper_html(
                 decoded,
                 source_url=source_url,

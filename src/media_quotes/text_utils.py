@@ -26,6 +26,14 @@ _SMART_MAP = str.maketrans(
 )
 
 _WS = re.compile(r"\s+")
+_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+
+
+def require_safe_id(value: str, name: str) -> str:
+    """Accept only simple ids: these values are used as filenames in artifact paths."""
+    if not _SAFE_ID.fullmatch(value):
+        raise ValueError(f"invalid {name}: {value!r}")
+    return value
 
 
 def normalise_text(value: str) -> str:

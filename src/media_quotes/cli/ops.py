@@ -13,7 +13,7 @@ from typing import Any, cast
 from ..config import DEFAULT_TOPIC_ID, Settings
 from ..digest import write_digest
 from ..exceptions import ConfigError
-from ..export import local_store_path, read_jsonl, write_jsonl
+from ..export import atomic_write_text, local_store_path, read_jsonl, write_jsonl
 from ..llm import make_provider
 from ..risk_controls import budget_gate, estimate_backfill
 from ..source_configs import scaffold_source_config, sync_sources_to_csv
@@ -26,6 +26,7 @@ from .common import (
     _NOTICE,
     _PRICE_PER_CALL,
     EXIT_FAILURE,
+    EXIT_GAPS,
     EXIT_OK,
     _digest_path,
     _load_registry,
@@ -42,6 +43,9 @@ def _do_backfill(  # pragma: no cover
     end: date,
     dry_run: bool,
     max_cost: float | None,
+    execute: bool = False,
+    topic_id: str | None = None,
+    source_mode: str = "fixtures",
 ) -> int:
     if end < start:
         raise ConfigError("--to must not precede --from")
@@ -55,7 +59,7 @@ def _do_backfill(  # pragma: no cover
         price_per_call=_PRICE_PER_CALL,
         articles_per_hour=_ARTICLES_PER_HOUR,
     )
-    cached_hashes: set[str] = set()
+    cached_hashes = 0
     for day in range(span):
         current = start + timedelta(days=day)
         path = local_store_path(settings.export_dir, current)
@@ -71,8 +75,8 @@ def _do_backfill(  # pragma: no cover
                 except json.JSONDecodeError:
                     continue
                 if isinstance(payload, dict) and isinstance(payload.get("content_hash"), str):
-                    cached_hashes.add(payload["content_hash"])
-    cache_rate = min(0.9, len(cached_hashes) / max(1, base.calls))
+                    cached_hashes += 1
+    cache_rate = min(0.9, cached_hashes / max(1, base.calls))
     estimate = estimate_backfill(
         articles_per_source_day=_ARTICLES_PER_SOURCE_DAY,
         sources=max(1, len(rows)),
@@ -91,12 +95,38 @@ def _do_backfill(  # pragma: no cover
         f"${estimate.cost:.2f}, ~{estimate.duration_hours}h."
     )
     print(
-        f"Cache-hit summary: {len(cached_hashes)} stored content hash(es), "
+        f"Cache-hit summary: {cached_hashes} stored content hash(es), "
         f"assumed hit rate {cache_rate:.2%}."
     )
-    print(f"Budget: {note}; live backfill disabled in blocked/degraded mode.")
+    if execute and not dry_run:
+        from ..pipeline import run_daily_pipeline
+
+        print(f"Budget: {note}; executing bounded historical backfill ({source_mode}).")
+        total_quotes = 0
+        total_gaps = 0
+        persisted_quotes = 0
+        for day_offset in range(span):
+            current = start + timedelta(days=day_offset)
+            result = run_daily_pipeline(
+                settings,
+                report_date=current,
+                dry_run=False,
+                pipeline="mq-backfill",
+                topic_id=topic_id,
+                source_mode=source_mode,
+            )
+            total_quotes += len(result.records)
+            total_gaps += len(result.gaps)
+            persisted_quotes += int(result.persistence.get("stored_quotes", 0))
+        print(
+            f"Backfill executed: {span} day(s), {total_quotes} verified quote(s), "
+            f"{total_gaps} coverage gap(s), {persisted_quotes} Postgres quote row(s) persisted."
+        )
+        return EXIT_GAPS if total_gaps else EXIT_OK
+
+    print(f"Budget: {note}; pass --execute to run daily partitions for this period.")
     if not dry_run:
-        print("No source contact or write performed: fixture-only offline replay is the only path.")
+        print("Estimate only (no --execute flag): no pipeline partitions were executed.")
 
     if settings.persist_to_postgres:
         from ..db.repository import finish_pipeline_run, start_pipeline_run
@@ -108,7 +138,7 @@ def _do_backfill(  # pragma: no cover
             "max_cost": max_cost,
             "budget_note": note,
             "span_days": span,
-            "cached_hashes": len(cached_hashes),
+            "cached_hashes": cached_hashes,
         }
         with _default_session_context(settings) as session:
             start_pipeline_run(
@@ -260,6 +290,19 @@ def _do_digest(
             file=sys.stderr,
         )
         return EXIT_FAILURE
+    from datetime import UTC, datetime, time
+
+    from ..curation import review_badge
+    from .common import load_review_flags
+
+    review_flags = load_review_flags(settings)
+    now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
+    review_badges: dict[str, str] = {}
+    for flag in review_flags:
+        badge = review_badge(flag, now=now)
+        if badge:
+            review_badges[flag.evidence.old_quote_id] = badge
+
     path = write_digest(
         records,
         report_date=report_date,
@@ -271,6 +314,8 @@ def _do_digest(
         sections_csv=settings.sections_csv,
         topic_pack=topic_pack,
         provider=make_provider(settings, topic_pack=topic_pack),
+        obsolescence_flags=review_flags,
+        review_badges=review_badges,
         notice=_NOTICE,
     )
     print(f"Digest {len(records)} quote(s): {path}")
@@ -284,6 +329,8 @@ def _do_export(
     out: str | None,
     topic_id: str | None = None,
     from_db: bool = False,
+    context: str | None = None,
+    max_tokens: int = 4000,
 ) -> int:  # pragma: no cover
     active_topic_id = str(
         topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
@@ -317,6 +364,17 @@ def _do_export(
     path = Path(out) if out else default_export
     count = write_jsonl(records, path)
     print(f"Exported {count} schema-valid quote(s) to {path}")
+    if context:
+        from ..context_pack import build_context_pack
+
+        pack = build_context_pack(records, max_tokens=max_tokens, topic_id=active_topic_id)
+        context_path = Path(context)
+        context_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(context_path, json.dumps(pack, ensure_ascii=False, indent=2) + "\n")
+        print(
+            f"Context pack {pack['manifest']['quote_count']} quote(s), "
+            f"{pack['manifest']['token_estimate']}/{max_tokens} tokens: {context_path}"
+        )
     return EXIT_OK
 
 

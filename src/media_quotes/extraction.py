@@ -15,6 +15,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from .exceptions import ConfigError
 from .text_utils import normalise_text
 
 _JUNK_RE = re.compile(
@@ -90,6 +91,29 @@ def static_html_fallback(raw_html: str, *, source_url: str) -> str:
     return str(_as_mapping(document).get("text") or "") if document is not None else ""
 
 
+def rendered_html_fallback(raw_html: str, *, source_url: str) -> str:
+    """Browser-backed second pass for JS-only article bodies.
+
+    Playwright is optional and imported only here, so normal runs never load a browser.
+    The caller must already have cleared the source rights gate before selecting this path.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - depends on the optional extra
+        raise ConfigError(
+            "rendered extraction requires 'uv sync --group render' and an installed browser"
+        ) from exc
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(raw_html, wait_until="load")
+            rendered = page.content()
+        finally:
+            browser.close()
+    return static_html_fallback(rendered, source_url=source_url)
+
+
 def quality_gate(
     text: str, *, min_chars: int = 400, max_junk_hits: int = 2
 ) -> tuple[bool, tuple[str, ...]]:
@@ -112,8 +136,9 @@ def quality_gate(
 def _as_mapping(document: object) -> Mapping[str, Any]:
     if isinstance(document, Mapping):
         return document
-    if hasattr(document, "as_dict") and callable(document.as_dict):
-        result = document.as_dict()
+    as_dict = getattr(document, "as_dict", None)
+    if callable(as_dict):
+        result = as_dict()
         if isinstance(result, Mapping):
             return result
     names = ("text", "title", "author", "date", "sitename", "url")
@@ -126,6 +151,7 @@ def extract_article(
     params: ExtractionParams,
     source_url: str,
     fallback: RenderingFallback | None = None,
+    min_chars: int = 400,
 ) -> ExtractedArticle:
     """Extract text + metadata, gate quality, then try the fallback before LLM use."""
     # trafilatura pulls in urllib3 SOCKS support; PySocks is optional and unused for
@@ -146,10 +172,10 @@ def extract_article(
         "publication_name": str(data.get("sitename") or ""),
         "canonical_url": str(data.get("url") or source_url),
     }
-    ok, reasons = quality_gate(text)
+    ok, reasons = quality_gate(text, min_chars=min_chars)
     if not ok and fallback is not None:
         fallback_text = fallback(raw_html, source_url=source_url)
-        fallback_ok, fallback_reasons = quality_gate(fallback_text)
+        fallback_ok, fallback_reasons = quality_gate(fallback_text, min_chars=min_chars)
         if fallback_ok:
             return ExtractedArticle(
                 text=fallback_text,
@@ -167,9 +193,9 @@ def extract_article(
     )
 
 
-def find_span(extracted_text: str, quote_text: str) -> tuple[int, int] | None:
+def find_span(extracted_text: str, quote_text: str, start_from: int = 0) -> tuple[int, int] | None:
     """Exact offset of a verified quote in extracted text; no normalisation guessing."""
-    start = extracted_text.find(quote_text)
+    start = extracted_text.find(quote_text, max(0, start_from))
     if start < 0:
         return None
     return start, start + len(quote_text)

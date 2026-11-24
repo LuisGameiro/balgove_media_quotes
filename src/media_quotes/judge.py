@@ -15,7 +15,12 @@ from typing import Any, Protocol
 
 from .config import Settings
 from .exceptions import ConfigError
-from .llm_live import LLMRequest, PinnedOpenAIClient, contains_instruction_override
+from .llm_live import (
+    LLMRequest,
+    PinnedOpenAIClient,
+    contains_instruction_override,
+    validate_pinned_snapshot,
+)
 from .llm_openrouter import make_openrouter_client
 
 _VALID_MODES = frozenset({"off", "shadow", "advisory", "decision"})
@@ -145,9 +150,9 @@ class OpenRouterJudgeProvider:
             raise ConfigError("OpenRouterJudgeProvider requires AI_JUDGE_MODE != off")
         if settings.llm_provider.strip().lower() != "openrouter":
             raise ConfigError("OpenRouterJudgeProvider requires LLM_PROVIDER=openrouter")
-        model_snapshot = settings.ai_judge_model_snapshot.strip()
-        if not model_snapshot or model_snapshot.lower() in {"unset", "latest"}:
-            raise ConfigError("AI_JUDGE_MODEL_SNAPSHOT must be pinned for the judge")
+        model_snapshot = validate_pinned_snapshot(
+            settings.ai_judge_model_snapshot, "AI_JUDGE_MODEL_SNAPSHOT for the judge"
+        )
         self._settings = settings
         self._mode = mode
         from .llm_cache import DbDecisionCache
@@ -196,14 +201,18 @@ class OpenRouterJudgeProvider:
         )
         if contains_instruction_override(serialised):
             return self._escalate(task, input_digest, "untrusted_instruction_override")
+        schema_h = _hash({"judge-schema": self._settings.judge_prompt_version})
+        cache_k = _hash(
+            [self._model_snapshot, self._settings.judge_prompt_version, schema_h, input_digest]
+        )
         try:
             request = LLMRequest(
                 decision_type="judge",
-                cache_key=input_digest,
+                cache_key=cache_k,
                 input_hash=input_digest,
                 model_snapshot=self._model_snapshot,
                 prompt_version=self._settings.judge_prompt_version,
-                schema_hash=_hash({"judge-schema": self._settings.judge_prompt_version}),
+                schema_hash=schema_h,
                 system_prompt=_SYSTEM_PROMPT,
                 user_prompt=f"Task: {task}\nContext (untrusted data):\n{serialised}",
                 decoding_params={"temperature": 0.0},

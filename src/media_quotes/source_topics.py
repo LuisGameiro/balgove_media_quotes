@@ -125,6 +125,7 @@ def validate_topic_configuration(
         source_id = str(row.source_id)
         source_routes = routes.get(source_id, [])
         known_ids = {route.route_id for route in source_routes}
+        route_map = {route.route_id: route for route in source_routes}
         if not source_routes:
             errors.append(f"{source_id}: no source topic routes")
         for route in source_routes:
@@ -136,6 +137,18 @@ def validate_topic_configuration(
                 errors.append(
                     f"{source_id}/{route.route_id}: unresolved fallback {route.fallback_route_id!r}"
                 )
+            elif route.fallback_route_id:
+                visited = [route.route_id]
+                curr: str | None = route.fallback_route_id
+                while curr and curr in route_map:
+                    if curr in visited:
+                        chain = " -> ".join([*visited, curr])
+                        errors.append(
+                            f"{source_id}/{route.route_id}: cyclic fallback route chain ({chain})"
+                        )
+                        break
+                    visited.append(curr)
+                    curr = route_map[curr].fallback_route_id
             if route.approved and not route.license_reference:
                 errors.append(
                     f"{source_id}/{route.route_id}: approved route has no licence reference"

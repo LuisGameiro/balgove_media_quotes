@@ -71,11 +71,15 @@ def evaluate_metrics(
 ) -> dict[str, Any]:
     """Return a copy of `metrics` with `thresholds`, `pass` and failing check names."""
     minimums = thresholds.as_dict()
-    values = {
-        name: float(metrics.get(name, 0.0))
-        for name in minimums
-        if name not in NEW_METRICS or name in metrics
-    }
+    values: dict[str, float] = {}
+    for name in minimums:
+        if name in NEW_METRICS and name not in metrics:
+            continue
+        if name == "false_quote_rate" and "false_quote_rate" not in metrics:
+            # Missing false_quote_rate must fail closed (threshold is 0.0 maximum)
+            values[name] = 1.0
+        else:
+            values[name] = float(metrics.get(name, 0.0))
     passed = {
         name: (value <= minimums[name] if name in MAXIMUM_METRICS else value >= minimums[name])
         for name, value in values.items()

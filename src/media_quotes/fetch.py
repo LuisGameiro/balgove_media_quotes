@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
+import socket
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -27,10 +29,10 @@ if TYPE_CHECKING:
 POLITE_USER_AGENT = "MediaQuotesBot/0.1 (+internal research; rights-gated)"
 
 
-def allowed_hosts_for(row: SourceRegistryRow) -> frozenset[str]:
+def allowed_hosts_for(row: SourceRegistryRow, extra_urls: Iterable[str] = ()) -> frozenset[str]:
     """Hosts explicitly registered for this source; never inferred from arbitrary URLs."""
     hosts: set[str] = set()
-    for value in (row.homepage_url, row.feed_url):
+    for value in (row.homepage_url, row.feed_url, *extra_urls):
         host = urlparse(value).hostname
         if host:
             hosts.add(host.lower())
@@ -38,15 +40,45 @@ def allowed_hosts_for(row: SourceRegistryRow) -> frozenset[str]:
 
 
 def assert_url_permitted(
-    url: str, row: SourceRegistryRow, *, extra_hosts: frozenset[str] = frozenset()
+    url: str,
+    row: SourceRegistryRow,
+    *,
+    extra_hosts: frozenset[str] = frozenset(),
+    check_dns: bool = False,
 ) -> None:
     """HTTPS-only host allowlist; blocks using one source's rights for another's host."""
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ValueError("article URL must be absolute https")
+    if parsed.port is not None and parsed.port != 443:
+        raise ValueError(f"URL port {parsed.port} is not permitted; standard HTTPS (443) only")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL must not contain embedded user credentials")
     host = (parsed.hostname or "").lower()
     if not host or host not in (allowed_hosts_for(row) | extra_hosts):
         raise ValueError(f"URL host {host!r} is not registered for source {row.source_id!r}")
+    try:
+        ip = ipaddress.ip_address(host)
+        if not ip.is_global:
+            raise ValueError(f"URL host {host!r} is a non-global IP address")
+    except ValueError as exc:
+        if "is a non-global IP address" in str(exc):
+            raise
+        # Host is a domain name: resolve DNS and verify resolved IPs are global if requested
+        if check_dns:
+            try:
+                addr_info = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+                for item in addr_info:
+                    resolved_ip_str = item[4][0]
+                    resolved_ip = ipaddress.ip_address(resolved_ip_str)
+                    if resolved_ip.version == 6 and resolved_ip.ipv4_mapped:
+                        resolved_ip = resolved_ip.ipv4_mapped
+                    if not resolved_ip.is_global:
+                        raise ValueError(
+                            f"URL host {host!r} resolves to non-global IP {resolved_ip_str}"
+                        )
+            except socket.gaierror as dns_err:
+                raise ValueError(f"Failed to resolve host {host!r}: {dns_err}") from dns_err
 
 
 class FetchPolicy(BaseModel):
@@ -118,8 +150,13 @@ async def _read_response(response: httpx.Response, max_bytes: int) -> bytes:
     """Stream a response under a hard byte cap, before and during download."""
     response.raise_for_status()
     declared = response.headers.get("content-length")
-    if declared and int(declared) > max_bytes:
-        raise ValueError(f"response too large: {declared} > {max_bytes}")
+    if declared:
+        try:
+            if int(declared) > max_bytes:
+                raise ValueError(f"response too large: {declared} > {max_bytes}")
+        except (ValueError, TypeError) as exc:
+            if "response too large" in str(exc):
+                raise
     chunks: list[bytes] = []
     total = 0
     async for chunk in response.aiter_bytes():
@@ -141,10 +178,11 @@ async def fetch_bytes(
     clock: Callable[[], float] | float | None = None,
     allowed_hosts: frozenset[str] = frozenset(),
     client: httpx.AsyncClient | None = None,
+    check_dns: bool = False,
 ) -> tuple[bytes, str]:
     """Fetch raw article bytes and return (bytes, sha256). Never used without approval."""
     assert_fetch_permitted(row, track_a_approved=track_a_approved)
-    assert_url_permitted(url, row, extra_hosts=allowed_hosts)
+    assert_url_permitted(url, row, extra_hosts=allowed_hosts, check_dns=check_dns)
     token_bucket = bucket or TokenBucket(policy.requests_per_second)
 
     if callable(clock):
@@ -167,7 +205,12 @@ async def fetch_bytes(
             raise RateLimitExceededError("rate limit exceeded")
 
     if client is not None:
-        async with client.stream("GET", url) as response:
+        async with client.stream(
+            "GET",
+            url,
+            follow_redirects=False,
+            timeout=httpx.Timeout(policy.timeout_seconds),
+        ) as response:
             content = await _read_response(response, policy.max_bytes)
     else:
         async with (

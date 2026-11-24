@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import contextlib
-import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
+
+import defusedxml.ElementTree as ET
 
 from .quote_extractor import is_topic_relevant
 
@@ -43,18 +44,26 @@ def parse_rss_feed(
     require_ukraine_topic: bool = False,
     topic_pack: TopicPack | None = None,
     require_topic: bool = False,
+    max_bytes: int = 10_000_000,
+    max_items: int | None = None,
 ) -> list[dict[str, str]]:
     """Parse RSS 2.0 (``<item>``) or Atom (``<entry>``) XML and return discovered article entries.
 
     Each entry contains ``url``, ``title``, and ``publication_date`` (ISO ``YYYY-MM-DD``).
     When ``start`` / ``end`` are provided, only articles within ``[start, end]`` are returned.
     """
+    raw_len = len(raw_xml) if isinstance(raw_xml, bytes) else len(raw_xml.encode("utf-8"))
+    if raw_len > max_bytes:
+        raise ValueError(f"RSS XML payload exceeds size limit ({raw_len} > {max_bytes} bytes)")
+
     enforce_topic = require_topic or require_ukraine_topic
     xml_text = raw_xml.decode("utf-8") if isinstance(raw_xml, bytes) else raw_xml
-    root = ET.fromstring(xml_text)  # noqa: S314
+    root = ET.fromstring(xml_text)
     items: list[dict[str, str]] = []
 
     for elem in root.iter():
+        if max_items is not None and len(items) >= max_items:
+            break
         tag = _local_tag(elem.tag).lower()
         if tag not in {"item", "entry"}:
             continue

@@ -16,21 +16,33 @@ Includes:
 """
 
 import json
+import re
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import dagster as dg
 
-from .config import Settings, get_settings
+from .config import DEFAULT_TOPIC_ID, Settings, get_settings
 from .db.resources import DatabaseResourceHandle
-from .observability import redact_sensitive
+from .observability import configure_observability, redact_sensitive
 from .pipeline import DailyPipelineResult, run_daily_pipeline
 
 PARTITION_START = "2026-10-01"
 CODE_VERSION = "c4-daily-pipeline-v2"
 SCHEDULE_CRON = "0 6 * * *"
+TIER1_SCHEDULE_CRON = "0 */6 * * *"
 SCHEDULE_TIMEZONE = "UTC"
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _clean_slug(val: str | None, default: str) -> str:
+    candidate = str(val or default).strip()
+    if not _SLUG_RE.match(candidate):
+        raise ValueError(f"Invalid topic/gold-set slug: {candidate!r}")
+    return candidate
 
 
 class DailyPipelineConfig(dg.Config):
@@ -39,6 +51,8 @@ class DailyPipelineConfig(dg.Config):
     dry_run: bool = False
     persist_to_postgres: bool | None = None
     topic_id: str | None = None
+    source_mode: str = "fixtures"
+    tier: int | None = None
 
 
 class CheckConfig(dg.Config):
@@ -82,27 +96,69 @@ def database_resource(_: dg.InitResourceContext) -> DatabaseResourceHandle:
 def _load_audit_report(
     settings: Settings, report_date: date, topic_id: str | None = None
 ) -> dict[str, Any]:
+    safe_topic = _clean_slug(topic_id, settings.active_topic)
     name = f"audit-{report_date.isoformat()}.json"
     from .cli.audit import _audit_target_dir
 
-    target = _audit_target_dir(settings, str(topic_id or settings.active_topic)) / name
+    target = _audit_target_dir(settings, safe_topic) / name
     if target.is_file():
         return cast(dict[str, Any], json.loads(target.read_text(encoding="utf-8")))
     return {}
 
 
-def _store_path(settings: Settings, report_date: date, topic_id: str | None = None) -> Any:
+def _store_path(settings: Settings, report_date: date, topic_id: str | None = None) -> Path:
     """Resolve the export path for the topic the partition actually ran with."""
     from .export import local_store_path
 
-    return local_store_path(
-        settings.export_dir, report_date, topic_id=topic_id or settings.active_topic
-    )
+    safe_topic = _clean_slug(topic_id, settings.active_topic)
+    return local_store_path(settings.export_dir, report_date, topic_id=safe_topic)
 
 
-def _check_date(context: dg.AssetCheckExecutionContext, settings: Settings) -> date:
-    partition_key = getattr(context, "asset_partition_key", None)
-    return date.fromisoformat(partition_key) if partition_key else settings.report_date
+def _check_topic(settings: Settings, report_date: date, requested: str | None) -> str:
+    """Pick the topic of the newest audit report when a check has no explicit topic."""
+    if requested:
+        return _clean_slug(requested, settings.active_topic)
+    from .cli.audit import _audit_target_dir
+
+    name = f"audit-{report_date.isoformat()}.json"
+    candidates = [(_audit_target_dir(settings, DEFAULT_TOPIC_ID) / name, DEFAULT_TOPIC_ID)]
+    if settings.audit_dir.is_dir():
+        candidates.extend(
+            (sub / name, sub.name) for sub in sorted(settings.audit_dir.iterdir()) if sub.is_dir()
+        )
+    found = [(path.stat().st_mtime, topic) for path, topic in candidates if path.is_file()]
+    return max(found)[1] if found else settings.active_topic
+
+
+def _context_partition_key(context: dg.AssetCheckExecutionContext) -> str | None:
+    """Read the partition from any AssetCheckContext variant Dagster may expose."""
+    for attribute in ("asset_partition_key", "partition_key"):
+        try:
+            value = getattr(context, attribute, None)
+            if isinstance(value, str) and value:
+                return value
+        except (AttributeError, KeyError, IndexError, TypeError):
+            continue
+    try:
+        keys = getattr(context, "asset_partition_keys", None)
+        if keys:
+            return next(iter(keys), None)
+    except (AttributeError, KeyError, IndexError, TypeError):
+        pass
+    return None
+
+
+def _check_date(
+    context: dg.AssetCheckExecutionContext, settings: Settings, topic_id: str | None = None
+) -> date:
+    del topic_id
+    partition_key = _context_partition_key(context)
+    if partition_key:
+        try:
+            return date.fromisoformat(partition_key)
+        except ValueError:
+            pass
+    return settings.report_date
 
 
 def _build_coverage_table(coverage: Sequence[dict[str, Any]]) -> dg.TableMetadataValue:
@@ -165,7 +221,9 @@ def _log_pipeline_events(context: dg.AssetExecutionContext, result: DailyPipelin
 
 def build_definitions() -> dg.Definitions:
     """Build Dagster definitions lazily so importing this module never starts a daemon."""
-    partitions_def = dg.DailyPartitionsDefinition(start_date=PARTITION_START)
+    partitions_def = dg.DailyPartitionsDefinition(
+        start_date=PARTITION_START, end_offset=1, timezone=SCHEDULE_TIMEZONE
+    )
     job_resource_defs = {"settings": settings_resource, "database": database_resource}
 
     @dg.asset(
@@ -189,20 +247,23 @@ def build_definitions() -> dg.Definitions:
     ) -> dict[str, Any]:
         app_settings = settings
         report_date = date.fromisoformat(context.partition_key)
-        active_topic = config.topic_id or app_settings.active_topic
+        active_topic = _clean_slug(config.topic_id, app_settings.active_topic)
         context.log.info(
             f"Starting daily_quotes_digest for partition {report_date.isoformat()} "
             f"(topic={active_topic}, dry_run={config.dry_run})"
         )
+        tier_suffix = f"-t{config.tier}" if config.tier is not None else ""
         result: DailyPipelineResult = run_daily_pipeline(
             app_settings,
             report_date=report_date,
-            run_id=f"dagster-{report_date.isoformat()}-{active_topic}",
+            run_id=f"dagster-{report_date.isoformat()}-{active_topic}{tier_suffix}",
             dry_run=config.dry_run,
-            pipeline="dagster-daily",
+            pipeline="dagster-tier1" if config.tier == 1 else "dagster-daily",
             topic_id=config.topic_id,
             persist_to_postgres=config.persist_to_postgres,
             session_context=database.context(),
+            source_mode=config.source_mode,
+            tier=config.tier,
         )
         _log_pipeline_events(context, result)
         if result.dry_run:
@@ -218,9 +279,8 @@ def build_definitions() -> dg.Definitions:
             context.add_output_metadata(summary)
             return summary
 
-        checks: dict[str, Any] = dict(result.checks)
-        checks.update(result.persistence)
-
+        audit_report = _load_audit_report(app_settings, report_date, result.topic_id)
+        checks: dict[str, Any] = audit_report.get("checks", {})
         digest_md = (
             result.digest_path.read_text(encoding="utf-8")
             if result.digest_path and result.digest_path.is_file()
@@ -254,6 +314,19 @@ def build_definitions() -> dg.Definitions:
             metadata["digest_preview"] = dg.MetadataValue.md(digest_md)
         if audit_md:
             metadata["audit_report_preview"] = dg.MetadataValue.md(audit_md)
+
+        if app_settings.sync_to_neo4j and not config.dry_run and result.records:
+            try:
+                from .graph import get_driver, graph_session, init_schema, project_records_to_graph
+
+                g_driver = get_driver(app_settings)
+                with graph_session(g_driver, app_settings.neo4j_database) as g_sess:
+                    init_schema(g_sess)
+                    g_stats = project_records_to_graph(result.records, g_sess)
+                metadata["neo4j_quotes_projected"] = g_stats.quotes_projected
+            except Exception as g_err:
+                context.log.warning(f"Neo4j sync failed: {g_err}")
+                metadata["neo4j_sync_error"] = str(g_err)
 
         context.add_output_metadata(metadata)
         return {
@@ -296,8 +369,9 @@ def build_definitions() -> dg.Definitions:
             if config.report_date
             else app_settings.report_date
         )
+        safe_gold_set = _clean_slug(config.gold_set, "synthetic-v1")
         metrics = evaluate_gold_set_report(
-            app_settings, gold_set=config.gold_set, report_date=eval_date
+            app_settings, gold_set=safe_gold_set, report_date=eval_date
         )
         splits = metrics.get("splits", {})
         version_str = metrics["gold_set_version"]
@@ -319,7 +393,7 @@ def build_definitions() -> dg.Definitions:
             f"- **False Quote Rate:** `{metrics['false_quote_rate']}`",
         ]
         context.log.info(
-            f"Gold set {config.gold_set} evaluated: pass={metrics['pass']}, "
+            f"Gold set {safe_gold_set} evaluated: pass={metrics['pass']}, "
             f"quote_recall={metrics['quote_recall']}, "
             f"false_quote_rate={metrics['false_quote_rate']}"
         )
@@ -335,7 +409,7 @@ def build_definitions() -> dg.Definitions:
                 "section_accuracy": float(metrics["section_accuracy"]),
                 "false_quote_rate": float(metrics["false_quote_rate"]),
                 "eval_report_path": dg.MetadataValue.path(
-                    str(app_settings.audit_dir / f"eval-{config.gold_set}.json")
+                    str(app_settings.audit_dir / f"eval-{safe_gold_set}.json")
                 ),
                 "summary_preview": dg.MetadataValue.md("\n".join(md_lines)),
             }
@@ -395,8 +469,9 @@ def build_definitions() -> dg.Definitions:
         from .export import read_jsonl
 
         app_settings = settings
-        report_date = _check_date(context, app_settings)
-        records = read_jsonl(_store_path(app_settings, report_date, config.topic_id))
+        report_date = _check_date(context, app_settings, config.topic_id)
+        topic = _check_topic(app_settings, report_date, config.topic_id)
+        records = read_jsonl(_store_path(app_settings, report_date, topic))
         return dg.AssetCheckResult(
             passed=bool(records),
             severity=dg.AssetCheckSeverity.ERROR,
@@ -417,9 +492,9 @@ def build_definitions() -> dg.Definitions:
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         app_settings = settings
-        report = _load_audit_report(
-            app_settings, _check_date(context, app_settings), config.topic_id
-        )
+        report_date = _check_date(context, app_settings, config.topic_id)
+        topic = _check_topic(app_settings, report_date, config.topic_id)
+        report = _load_audit_report(app_settings, report_date, topic)
         gates_pass = bool(report.get("checks", {}).get("gates_pass", False))
         return dg.AssetCheckResult(
             passed=gates_pass,
@@ -439,12 +514,18 @@ def build_definitions() -> dg.Definitions:
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         app_settings = settings
-        report = _load_audit_report(
-            app_settings, _check_date(context, app_settings), config.topic_id
-        )
+        report_date = _check_date(context, app_settings, config.topic_id)
+        topic = _check_topic(app_settings, report_date, config.topic_id)
+        report = _load_audit_report(app_settings, report_date, topic)
+        if not report:
+            return dg.AssetCheckResult(
+                passed=False,
+                severity=dg.AssetCheckSeverity.ERROR,
+                description="Audit report is missing; cannot verify coverage disclosures",
+            )
         gaps = report.get("coverage_gaps", [])
-        disclosed = bool(report) and bool(report.get("checks", {}).get("coverage_gaps_disclosed"))
-        passed = not gaps or disclosed
+        disclosed = bool(report.get("checks", {}).get("coverage_gaps_disclosed"))
+        passed = (not gaps) or disclosed
         return dg.AssetCheckResult(
             passed=passed,
             severity=dg.AssetCheckSeverity.ERROR,
@@ -469,8 +550,22 @@ def build_definitions() -> dg.Definitions:
         from .export import read_jsonl
 
         app_settings = settings
-        report_date = _check_date(context, app_settings)
-        records = read_jsonl(_store_path(app_settings, report_date, config.topic_id))
+        report_date = _check_date(context, app_settings, config.topic_id)
+        topic = _check_topic(app_settings, report_date, config.topic_id)
+        path = _store_path(app_settings, report_date, topic)
+        if not path.is_file():
+            return dg.AssetCheckResult(
+                passed=False,
+                severity=dg.AssetCheckSeverity.ERROR,
+                description=f"Store file missing: {path}",
+            )
+        records = read_jsonl(path)
+        if not records:
+            return dg.AssetCheckResult(
+                passed=False,
+                severity=dg.AssetCheckSeverity.ERROR,
+                description="Store file contains zero records",
+            )
         registry = {row.source_id: row for row in _load_registry(app_settings)}
         violations: list[str] = []
         for record in records:
@@ -510,8 +605,22 @@ def build_definitions() -> dg.Definitions:
         from .rights_guard import apply_rights_limits
 
         app_settings = settings
-        report_date = _check_date(context, app_settings)
-        records = read_jsonl(_store_path(app_settings, report_date, config.topic_id))
+        report_date = _check_date(context, app_settings, config.topic_id)
+        topic = _check_topic(app_settings, report_date, config.topic_id)
+        path = _store_path(app_settings, report_date, topic)
+        if not path.is_file():
+            return dg.AssetCheckResult(
+                passed=False,
+                severity=dg.AssetCheckSeverity.ERROR,
+                description=f"Store file missing: {path}",
+            )
+        records = read_jsonl(path)
+        if not records:
+            return dg.AssetCheckResult(
+                passed=False,
+                severity=dg.AssetCheckSeverity.ERROR,
+                description="Store file contains zero records",
+            )
         decision = apply_rights_limits(records, max_quote_words=app_settings.max_quote_words)
         passed = len(decision.rejected) == 0
         return dg.AssetCheckResult(
@@ -540,7 +649,8 @@ def build_definitions() -> dg.Definitions:
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         del context
-        path = settings.audit_dir / f"eval-{config.gold_set}.json"
+        safe_gold_set = _clean_slug(config.gold_set, "synthetic-v1")
+        path = settings.audit_dir / f"eval-{safe_gold_set}.json"
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,
@@ -565,11 +675,13 @@ def build_definitions() -> dg.Definitions:
     job = dg.define_asset_job(
         name="daily_quotes_digest_job",
         selection=[daily_quotes_digest],
+        tags={"domain": "media_quotes"},
     )
 
     governance_job = dg.define_asset_job(
         name="governance_audit_job",
         selection=[gold_set_evaluation, retention_readiness_report],
+        tags={"domain": "media_quotes"},
     )
 
     @dg.schedule(
@@ -580,13 +692,31 @@ def build_definitions() -> dg.Definitions:
         default_status=dg.DefaultScheduleStatus.STOPPED,
     )
     def daily_digest_schedule(context: dg.ScheduleEvaluationContext) -> dg.RunRequest:
-        scheduled = context.scheduled_execution_time
+        scheduled = getattr(context, "scheduled_execution_time", None)
         partition = (
             scheduled.date().isoformat()
             if scheduled is not None
-            else context.execution_time.date().isoformat()
+            else datetime.now(UTC).date().isoformat()
         )
         return dg.RunRequest(run_key=partition, partition_key=partition)
+
+    @dg.schedule(
+        name="tier1_six_hourly_schedule",
+        job=job,
+        cron_schedule=TIER1_SCHEDULE_CRON,
+        execution_timezone=SCHEDULE_TIMEZONE,
+        default_status=dg.DefaultScheduleStatus.STOPPED,
+    )
+    def tier1_six_hourly_schedule(context: dg.ScheduleEvaluationContext) -> dg.RunRequest:
+        scheduled = getattr(context, "scheduled_execution_time", None)
+        now_dt = scheduled if scheduled is not None else datetime.now(UTC)
+        partition = now_dt.date().isoformat()
+        run_key = f"{partition}-tier1-{now_dt.hour:02d}"
+        return dg.RunRequest(
+            run_key=run_key,
+            partition_key=partition,
+            run_config=dg.RunConfig(ops={"daily_quotes_digest": DailyPipelineConfig(tier=1)}),
+        )
 
     @dg.sensor(
         name="review_queue_sla_sensor",
@@ -606,6 +736,12 @@ def build_definitions() -> dg.Definitions:
         queue = ReviewQueue(flags)
         now = datetime.now(UTC)
         overdue_ids = queue.overdue(now=now, sla_days=1)
+        previous_overdue: set[str] = set()
+        if context.cursor:
+            try:
+                previous_overdue = set(json.loads(context.cursor).get("overdue_quote_ids", []))
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                previous_overdue = set()
         pending_ids = sorted(
             flag.evidence.old_quote_id
             for flag in flags
@@ -618,7 +754,7 @@ def build_definitions() -> dg.Definitions:
             "overdue_quote_ids": overdue_ids,
         }
         context.update_cursor(json.dumps(cursor_payload, sort_keys=True))
-        if overdue_ids:
+        if overdue_ids and set(overdue_ids) != previous_overdue:
             context.log.warning(
                 f"RSK-07 SLA breach: {len(overdue_ids)} obsolescence review flag(s) overdue >24h: "
                 f"{', '.join(overdue_ids)}"
@@ -628,6 +764,8 @@ def build_definitions() -> dg.Definitions:
                     f"ALERT: {len(overdue_ids)} overdue review item(s): {', '.join(overdue_ids)}"
                 )
             )
+        if overdue_ids:
+            return dg.SensorResult(skip_reason=dg.SkipReason("Review SLA alert already sent."))
         return dg.SensorResult(
             skip_reason=dg.SkipReason(
                 f"Review queue healthy ({len(pending_ids)} pending, 0 overdue)."
@@ -645,10 +783,12 @@ def build_definitions() -> dg.Definitions:
             gold_set_thresholds_met,
         ],
         jobs=[job, governance_job],
-        schedules=[daily_digest_schedule],
+        schedules=[daily_digest_schedule, tier1_six_hourly_schedule],
         sensors=[review_queue_sla_sensor],
         resources=job_resource_defs,
     )
 
+
+configure_observability(get_settings())  # once per process, not once per asset run
 
 defs: dg.Definitions = build_definitions()

@@ -9,16 +9,24 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import FixtureSource, build_adapter
-from ..config import Settings
+from ..config import Settings, require_safe_id
 from ..enums import SECTION_IDS
-from ..evaluation import AcceptanceThresholds, evaluate_metrics
+from ..evaluation import AcceptanceThresholds, evaluate_metrics, obsolete_precision
 from ..gold_set import load_gold_set, split_articles, split_for
 from ..models import QuoteCandidate
 from ..pipeline import detect_language, normalise_language_decision
 from ..relevance import evaluate_topic, load_topic_rules
+from ..risk_controls.obsolescence import obsoletion_allowed
 from ..text_utils import normalise_text
 from ..verification import verify_quote
-from .common import EXIT_FAILURE, EXIT_OK, _load_registry, _window, _write_json
+from .common import (
+    EXIT_FAILURE,
+    EXIT_OK,
+    _load_registry,
+    _window,
+    _write_json,
+    load_review_flags,
+)
 from .run import _gate_article, _select_topic_route, _topic_gate
 
 
@@ -32,8 +40,10 @@ def evaluate_gold_set_report(
     gold_set: str = "synthetic-v1",
     report_date: date | None = None,
     split: str | None = None,
+    full: bool = False,
 ) -> dict[str, Any]:
     """Run deterministic gold-set evaluation and write the JSON report (shared by CLI & Dagster)."""
+    require_safe_id(gold_set, "gold_set")
     effective_date = report_date or settings.report_date
     selected_split = (split or "all").strip().lower()
     if selected_split not in {"all", "train", "dev", "test"}:
@@ -43,6 +53,32 @@ def evaluate_gold_set_report(
     if not path.is_file():
         raise FileNotFoundError(f"unknown gold set: {gold_set} (looked in {settings.gold_set_dir})")
     gold_data = load_gold_set(path)
+    labelled_obsolete = set(gold_data.obsolete_quote_ids)
+    confirmed_obsolete = [
+        flag.evidence.old_quote_id
+        for flag in load_review_flags(settings)
+        if flag.state == "confirmed"
+    ]
+    if labelled_obsolete:
+        relevant = [quote_id for quote_id in confirmed_obsolete if quote_id in labelled_obsolete]
+        held_out_precision = obsolete_precision(relevant, sorted(labelled_obsolete))
+        obsolete_note = "held-out human labels"
+    elif full:
+        held_out_precision = 0.0
+        obsolete_note = "full mode requires obsolete_quote_ids in the gold set"
+    else:
+        held_out_precision = 1.0
+        obsolete_note = "synthetic stand-in: no obsolete labels in this gold set"
+    consecutive_failures = 0
+    if settings.persist_to_postgres:
+        from ..db.repository import eval_recent_failures
+        from ..pipeline import _default_session_context
+
+        with _default_session_context(settings) as session:
+            consecutive_failures = eval_recent_failures(session, gold_set)
+    drift_guard_ok = obsoletion_allowed(
+        obsolete_precision=held_out_precision, consecutive_failures=consecutive_failures
+    )
     splits = split_articles(gold_data)
     rows = {row.source_id: row for row in _load_registry(settings)}
     window_start, _ = _window(effective_date, settings)
@@ -84,7 +120,12 @@ def evaluate_gold_set_report(
         row = rows.get(source_id)
         ref = str(article.article_ref or "")
         adapter = (
-            build_adapter(row, FixtureSource(settings.fixtures_dir), replay=True)
+            build_adapter(
+                row,
+                FixtureSource(settings.fixtures_dir),
+                replay=True,
+                extraction_fallback=settings.extraction_fallback,
+            )
             if (row is not None and ref.startswith("fixture://"))
             else None
         )
@@ -287,7 +328,10 @@ def evaluate_gold_set_report(
         "section_accuracy": _ratio(sections_ok, sections_checked),
         "section_mismatch_controls": section_mismatch_controls,
         "false_quote_rate": _ratio(false_quotes, max(1, len(negatives))),
-        "obsolete_precision": 1.0,
+        "obsolete_precision": held_out_precision,
+        "obsolete_eval_note": obsolete_note,
+        "consecutive_failures": consecutive_failures,
+        "obsoletion_allowed": drift_guard_ok,
         "judge_kappa": 1.0,
         "judge_note": "deterministic stand-in: all synthetic labels agree; no judge model called",
         "relevant_articles": relevant_articles,
@@ -321,25 +365,22 @@ def evaluate_gold_set_report(
         ),
     }
     metrics = evaluate_metrics(metrics, AcceptanceThresholds())
-    _write_json(settings.audit_dir / f"eval-{gold_set}.json", metrics)
+    suffix = "" if selected_split == "all" else f"-{selected_split}"
+    _write_json(settings.audit_dir / f"eval-{gold_set}{suffix}.json", metrics)
     if settings.persist_to_postgres:
-        from ..db.engine import create_db_engine, make_session_factory
         from ..db.repository import record_eval_run, sync_gold_set_labels
+        from ..pipeline import _default_session_context
 
-        engine = create_db_engine(settings)
-        try:
-            with make_session_factory(engine)() as session:
-                sync_gold_set_labels(session, gold_data)
-                record_eval_run(
-                    session,
-                    gold_set_version=gold_set,
-                    report_date=effective_date,
-                    metrics=metrics,
-                    thresholds=metrics["thresholds"],
-                    passed=bool(metrics["pass"]),
-                )
-        finally:
-            engine.dispose()
+        with _default_session_context(settings) as session:
+            sync_gold_set_labels(session, gold_data)
+            record_eval_run(
+                session,
+                gold_set_version=gold_set,
+                report_date=effective_date,
+                metrics=metrics,
+                thresholds=metrics["thresholds"],
+                passed=bool(metrics["pass"]),
+            )
     return metrics
 
 
@@ -349,10 +390,11 @@ def _do_eval(
     gold_set: str,
     report_date: date,
     split: str | None = None,
+    full: bool = False,
 ) -> int:  # pragma: no cover
     try:
         metrics = evaluate_gold_set_report(
-            settings, gold_set=gold_set, report_date=report_date, split=split
+            settings, gold_set=gold_set, report_date=report_date, split=split, full=full
         )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
