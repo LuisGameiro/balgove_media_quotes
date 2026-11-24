@@ -43,11 +43,7 @@ sources_table = Table(
     Column("discovery_method", String, nullable=False),
     Column("archive_start_date", Date, nullable=False),
     Column("enabled", Boolean, nullable=False, default=False),
-    Column("tier_block", Boolean, nullable=False, default=False),
-    Column("blocker_reason", String, nullable=False, default=""),
-    Column("availability_status", String, nullable=False, default="live"),
     Column("notes", String, nullable=False, default=""),
-    Column("created_at", DateTime(timezone=True), nullable=True),
     Column("updated_at", DateTime(timezone=True), nullable=True),
 )
 
@@ -67,7 +63,6 @@ articles_table = Table(
     Column("content_hash", String, nullable=False),
     Column("status", String, nullable=False),
     Column("article_metadata", JSON, nullable=False, default=dict),
-    Column("created_at", DateTime(timezone=True), nullable=True),
 )
 
 quotes_table = Table(
@@ -100,7 +95,6 @@ quotes_table = Table(
     Column("translation_prompt_version", String, nullable=False, default=""),
     Column("translation_hash", String, nullable=False, default=""),
     Column("translation_status", String, nullable=False, default=""),
-    Column("created_at", DateTime(timezone=True), nullable=True),
 )
 
 quote_classifications_table = Table(
@@ -111,7 +105,6 @@ quote_classifications_table = Table(
     Column("section", String, nullable=False),
     Column("rationale", String, nullable=True),
     Column("assigned_by", String, nullable=False, default="rule"),
-    Column("created_at", DateTime(timezone=True), nullable=True),
 )
 
 obsolescence_flags_table = Table(
@@ -122,7 +115,6 @@ obsolescence_flags_table = Table(
     Column("is_obsolete", Boolean, nullable=False),
     Column("reason", String, nullable=True),
     Column("superseded_by", ARRAY(Uuid(as_uuid=True)), nullable=False, default=list),
-    Column("created_at", DateTime(timezone=True), nullable=True),
 )
 
 digests_table = Table(
@@ -135,7 +127,6 @@ digests_table = Table(
     Column("md_path", String, nullable=False),
     Column("manifest", JSON, nullable=False, default=dict),
     Column("topic_id", String, nullable=False, default="ukraine-war"),
-    Column("created_at", DateTime(timezone=True), nullable=True),
 )
 
 eval_runs_table = Table(
@@ -174,7 +165,7 @@ audit_events_table = Table(
     Column("entity_id", String, nullable=True),
     Column("status", String, nullable=False),
     Column("details", JSON, nullable=False, default=dict),
-    Column("created_at", DateTime(timezone=True), primary_key=True, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 decision_cache_table = Table(

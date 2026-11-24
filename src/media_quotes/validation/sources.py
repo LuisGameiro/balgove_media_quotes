@@ -77,20 +77,16 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
             errors.append(f"{where}: T0 gate - enabled sources need approved rights_status")
         if row["enabled"] == "true" and row["discovery_method"] == "web":
             errors.append(f"{where}: T0 gate - enabled sources cannot use web discovery")
-        # check_columns already reports absent columns; never raise on legacy CSV rows.
-        availability = row.get("availability_status", "live")
-        tier_block = row.get("tier_block", "false")
-        blocker_reason = row.get("blocker_reason", "")
-        if availability not in AVAILABILITY_STATUSES:
-            errors.append(f"{where}: unknown availability_status {availability!r}")
-        if tier_block == "true" and not blocker_reason.strip():
+        if row["availability_status"] not in AVAILABILITY_STATUSES:
+            errors.append(f"{where}: unknown availability_status {row['availability_status']!r}")
+        if row["tier_block"] == "true" and not row["blocker_reason"].strip():
             errors.append(f"{where}: tier_block sources need a blocker_reason")
         if row["rights_status"] in APPROVED_RIGHTS and not row["license_reference"]:
             errors.append(f"{where}: approved rights need a license_reference")
         if row["source_type"] == "state-controlled" and row["claim_only"] != "true":
             errors.append(f"{where}: state-controlled sources must be claim_only")
         for flag in ("claim_only", "requires_translation", "enabled", "tier_block"):
-            if row.get(flag, "") not in BOOLEANS:
+            if row[flag] not in BOOLEANS:
                 errors.append(f"{where}: {flag} must be true or false")
         if row["paywalled"] not in {"true", "false", "unknown"}:
             errors.append(f"{where}: paywalled must be true, false or unknown")

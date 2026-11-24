@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -59,7 +60,7 @@ def test_queue_lock_reclaims_stale_lock(tmp_path: Path) -> None:
     path = tmp_path / "review-queue.json"
     lock = path.with_name(".review-queue.json.lock")
     lock.write_text("old\n", encoding="utf-8")
-    stale_time = 1_000_000  # fixed past epoch, well beyond the 60s stale threshold
+    stale_time = time.time() - 120.0
     os.utime(lock, (stale_time, stale_time))
     with _queue_lock(path):
         assert lock.is_file()

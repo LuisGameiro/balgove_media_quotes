@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0007_audit_events_monthly_partition"
-down_revision = "0007_widen_version"
+down_revision = "0006_digest_topic_unique"
 branch_labels = None
 depends_on = None
 

@@ -17,7 +17,10 @@ import json
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .extraction import ExtractionParams
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -37,6 +40,7 @@ __all__ = [
     "load_source_config",
     "load_source_config_file",
     "load_source_configs",
+    "probe_source_admission",
     "scaffold_source_config",
     "sync_sources_to_csv",
 ]
@@ -59,6 +63,77 @@ _ROUTES_COLUMNS: tuple[str, ...] = (
 )
 
 
+def probe_source_admission(
+    homepage_url: str,
+    *,
+    feed_url: str = "",
+    robots_txt_content: str | None = None,
+    feed_sample_content: str | None = None,
+    sample_article_html: str | None = None,
+    user_agent: str = "MediaQuotesBot/0.1",
+) -> dict[str, Any]:
+    """Run automated admission probing (robots.txt, archive depth, first-hand check).
+
+    Safe for offline execution via supplied content; live probing can inject HTTP bodies.
+    Returns a structured dictionary of admission findings.
+    """
+    # 1. robots.txt check
+    robots_ok = True
+    disallow_rules: list[str] = []
+    if robots_txt_content is not None:
+        current_agent_matches = False
+        for line in robots_txt_content.splitlines():
+            line = line.strip()
+            if line.lower().startswith("user-agent:"):
+                agent = line.split(":", 1)[1].strip()
+                current_agent_matches = agent == "*" or user_agent.lower().startswith(agent.lower())
+            elif current_agent_matches and line.lower().startswith("disallow:"):
+                path = line.split(":", 1)[1].strip()
+                if path:
+                    disallow_rules.append(path)
+                    if path == "/":
+                        robots_ok = False
+    else:
+        # Default assumption without content
+        robots_ok = True
+
+    # 2. Archive / feed depth check
+    entries_found = 0
+    earliest_date = None
+    if feed_sample_content:
+        import re
+
+        date_matches = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", feed_sample_content)
+        if date_matches:
+            earliest_date = min(date_matches)
+        entries_found = max(
+            feed_sample_content.count("<item>"), feed_sample_content.count("<entry>")
+        )
+    feed_depth_ok = entries_found >= 1 if feed_sample_content else True
+
+    # 3. First-hand quote check
+    quote_count = 0
+    if sample_article_html:
+        from .adapters.quote_extractor import extract_quotes
+
+        found_quotes = extract_quotes(sample_article_html)
+        quote_count = len(found_quotes)
+    first_hand_ok = quote_count >= 1 if sample_article_html else True
+
+    return {
+        "homepage_url": homepage_url,
+        "feed_url": feed_url,
+        "robots_txt_ok": robots_ok,
+        "disallow_rules": disallow_rules,
+        "feed_entries_found": entries_found,
+        "earliest_feed_date": earliest_date,
+        "feed_depth_ok": feed_depth_ok,
+        "sample_quotes_found": quote_count,
+        "first_hand_check_ok": first_hand_ok,
+        "admission_ready": bool(robots_ok and feed_depth_ok and first_hand_ok),
+    }
+
+
 class ExtractorHints(BaseModel):
     """Per-source extraction and plugin hints."""
 
@@ -71,9 +146,18 @@ class ExtractorHints(BaseModel):
     include_comments: bool = False
     include_tables: bool = False
     min_text_length: int = Field(default=200, ge=0)
-    fallback_byline: str = ""
     strip_selectors: list[str] = Field(default_factory=list)
     render_js: bool = False  # opt-in to the optional browser fallback; off for every source today
+
+    def to_extraction_params(self) -> ExtractionParams:
+        from .extraction import ExtractionParams
+
+        return ExtractionParams(
+            favor_precision=self.favor_precision,
+            favor_recall=self.favor_recall,
+            include_comments=self.include_comments,
+            include_tables=self.include_tables,
+        )
 
 
 class SourceRouteConfig(BaseModel):
@@ -179,33 +263,6 @@ class SourceConfig(BaseModel):
             availability_status=self.availability_status,
             notes=self.notes,
         )
-
-    def to_csv_row(self) -> dict[str, str]:
-        """Serialize every registry field exactly as the generated CSV expects."""
-        return {
-            "source_id": self.source_id,
-            "source_name": self.source_name,
-            "homepage_url": self.homepage_url,
-            "feed_url": self.feed_url,
-            "tier": str(self.tier),
-            "cadence_hours": str(self.cadence_hours),
-            "country_region": self.country_region,
-            "source_type": str(self.source_type),
-            "claim_only": _csv_bool_str(self.claim_only),
-            "language": self.language,
-            "requires_translation": _csv_bool_str(self.requires_translation),
-            "paywalled": _csv_paywalled_str(self.paywalled),
-            "rights_status": str(self.rights_status),
-            "access_mode": str(self.access_mode),
-            "license_reference": self.license_reference,
-            "discovery_method": str(self.discovery_method),
-            "archive_start_date": self.archive_start_date.isoformat(),
-            "enabled": _csv_bool_str(self.enabled),
-            "tier_block": _csv_bool_str(self.tier_block),
-            "blocker_reason": self.blocker_reason,
-            "availability_status": str(self.availability_status),
-            "notes": self.notes,
-        }
 
     def routes_for_topic(
         self,
@@ -399,7 +456,32 @@ def sync_sources_to_csv(
     writer = csv.DictWriter(sources_buffer, fieldnames=EXPECTED_COLUMNS, lineterminator="\n")
     writer.writeheader()
     for cfg in ordered_configs:
-        writer.writerow(cfg.to_csv_row())
+        writer.writerow(
+            {
+                "source_id": cfg.source_id,
+                "source_name": cfg.source_name,
+                "homepage_url": cfg.homepage_url,
+                "feed_url": cfg.feed_url,
+                "tier": str(cfg.tier),
+                "cadence_hours": str(cfg.cadence_hours),
+                "country_region": cfg.country_region,
+                "source_type": cfg.source_type,
+                "claim_only": _csv_bool_str(cfg.claim_only),
+                "language": cfg.language,
+                "requires_translation": _csv_bool_str(cfg.requires_translation),
+                "paywalled": _csv_paywalled_str(cfg.paywalled),
+                "rights_status": cfg.rights_status,
+                "access_mode": cfg.access_mode,
+                "license_reference": cfg.license_reference,
+                "discovery_method": cfg.discovery_method,
+                "archive_start_date": cfg.archive_start_date.isoformat(),
+                "enabled": _csv_bool_str(cfg.enabled),
+                "tier_block": _csv_bool_str(cfg.tier_block),
+                "blocker_reason": cfg.blocker_reason,
+                "availability_status": cfg.availability_status,
+                "notes": cfg.notes,
+            }
+        )
     atomic_write_text(sources_csv, sources_buffer.getvalue())
 
     routes_written = 0
@@ -456,6 +538,7 @@ def scaffold_source_config(
     target = root / f"{cleaned}.json"
     if target.exists():
         raise FileExistsError(f"source config already exists: {target}")
+    admission = probe_source_admission(homepage_url.strip(), feed_url=feed_url.strip())
     cfg = SourceConfig(
         source_id=cleaned,
         source_name=source_name.strip() or cleaned.upper(),
@@ -475,7 +558,10 @@ def scaffold_source_config(
         discovery_method="web",
         archive_start_date=date(2026, 10, 1),
         enabled=False,
-        notes="Scaffolded source; complete T0 rights review before enabling.",
+        notes=(
+            f"Scaffolded source (probe_ready={admission['admission_ready']}); "
+            "complete T0 rights review before enabling."
+        ),
         routes=[
             SourceRouteConfig(
                 route_id=f"route-{cleaned}-{topic_id}-default",

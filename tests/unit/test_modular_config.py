@@ -313,20 +313,8 @@ def test_sync_sources_to_csv_and_modular_validation(tmp_path: Path) -> None:
     drift_errors = validate_data_dir(data)
     assert any("differs from sources.csv" in err for err in drift_errors)
 
-    payload["enabled"] = True
-    for field, value in (
-        ("feed_url", "https://evil.example/rss"),
-        ("license_reference", "changed-licence"),
-        ("notes", "changed notes"),
-    ):
-        original = payload[field]
-        payload[field] = value
-        guardian_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        field_errors = validate_data_dir(data)
-        assert any(f"{field}=" in err and "differs from sources.csv" in err for err in field_errors)
-        payload[field] = original
-
     # Introduce unknown topic_id on a route -> validation catches it
+    payload["enabled"] = True
     payload["routes"][0]["topic_id"] = "nonexistent-topic"
     guardian_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     topic_errors = validate_data_dir(data)

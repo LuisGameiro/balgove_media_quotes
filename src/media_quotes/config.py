@@ -7,6 +7,7 @@ relative to PROJECT_ROOT so the CLI, bootstrap and scripts share one convention.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from datetime import date
 from difflib import get_close_matches
@@ -30,6 +31,16 @@ DEFAULT_TOPIC_ID: Final = "ukraine-war"
 MAX_QUOTE_WORDS: Final = 30
 ATTRIBUTION_FORMAT: Final = "Outlet — Named person (role), Article, YYYY-MM-DD, URL"
 LICENCE_TERRITORY: Final = "internal worldwide"
+
+_SAFE_ID_RE: Final = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def require_safe_id(value: str, name: str = "id") -> str:
+    """Validate that an identifier matches safe slug requirements (preventing path traversal)."""
+    cleaned = value.strip()
+    if not _SAFE_ID_RE.fullmatch(cleaned):
+        raise ValueError(f"invalid {name} {value!r}; expected lowercase alphanumeric, '-' or '_'")
+    return cleaned
 
 
 class Settings(BaseSettings):
@@ -122,25 +133,6 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("password123")
     neo4j_database: str = "neo4j"
-
-    def for_source_mode(self, source_mode: str) -> Settings:
-        """Return settings with fixture artifacts isolated from operational output."""
-        if source_mode != "fixtures":
-            return self
-        root = self.output_dir.parent
-        if self.audit_dir != self.output_dir / "audit":
-            root = self.audit_dir.parent
-        test_output = root / "test-output"
-        return self.model_copy(
-            update={
-                "output_dir": test_output,
-                "digest_dir": test_output / "digests",
-                "blob_dir": test_output / "raw",
-                "audit_dir": test_output / "audit",
-                "export_dir": test_output / "quotes",
-                "logs_dir": test_output / "logs",
-            }
-        )
 
     @model_validator(mode="before")
     @classmethod

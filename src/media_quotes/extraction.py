@@ -110,18 +110,9 @@ def rendered_html_fallback(raw_html: str, *, source_url: str) -> str:
             page = browser.new_page()
             parsed_src = urlparse(source_url)
             allowed_host = (parsed_src.hostname or "").lower()
-            main_document_served = False
 
             def _route_handler(route: Route) -> None:
-                nonlocal main_document_served
                 req_url = route.request.url
-                if not main_document_served and (
-                    route.request.resource_type == "document" or req_url == source_url
-                ):
-                    # Serve the vetted fetch, never re-request the main document.
-                    main_document_served = True
-                    route.fulfill(status=200, content_type="text/html", body=raw_html)
-                    return
                 req_parsed = urlparse(req_url)
                 if req_parsed.scheme != "https":
                     route.abort()

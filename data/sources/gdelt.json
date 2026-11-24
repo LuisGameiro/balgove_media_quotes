@@ -43,7 +43,7 @@
     "min_text_length": 200,
     "strip_selectors": []
   },
-  "tier_block": true,
-  "blocker_reason": "Discovery-only aggregator: provides article metadata and URLs, not publisher full text or quotable article bodies.",
+  "tier_block": false,
+  "blocker_reason": "",
   "availability_status": "discovery_only"
 }

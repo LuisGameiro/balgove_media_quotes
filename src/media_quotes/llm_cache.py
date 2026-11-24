@@ -32,6 +32,13 @@ class DbDecisionCache:
             row = get_decision_cache(session, request.cache_key)
         if not row:
             return None
+        if (
+            row.get("model_snapshot") != request.model_snapshot
+            or row.get("prompt_version") != request.prompt_version
+            or row.get("schema_hash") != request.schema_hash
+            or row.get("input_hash") != request.input_hash
+        ):
+            return None
         output = row.get("output") or {}
         if isinstance(output, dict) and output.get(_ENVELOPE):
             inner = output[_ENVELOPE]

@@ -38,11 +38,8 @@ def _audit_report(  # pragma: no cover
     rejected: int,
     review_queue: Sequence[dict[str, Any]] = (),
     topic_id: str = DEFAULT_TOPIC_ID,
-    source_mode: str = "live",
-    should_persist: bool | None = None,
 ) -> dict[str, Any]:
     window_start, window_end = _window(report_date, settings)
-    persist = settings.persist_to_postgres if should_persist is None else should_persist
     checks = {
         "config_valid": settings.sources_csv.is_file() and settings.sections_csv.is_file(),
         "registry_t0_gate_approved": all(
@@ -58,7 +55,7 @@ def _audit_report(  # pragma: no cover
         ),
         "trace_complete": all(bool(event.get("trace_id")) for event in events),
         "license_reference_logged": all("license_reference" in event for event in events),
-        "no_database_writes": not persist,
+        "no_database_writes": not settings.persist_to_postgres,
         "no_llm_api_calls": settings.llm_provider.strip().lower() == "local",
     }
     # Coverage gaps are expected while sources are T0-blocked. Database writes are
@@ -67,7 +64,7 @@ def _audit_report(  # pragma: no cover
     # Similarly, when live LLM provider is explicitly enabled (e.g. OpenRouter),
     # `no_llm_api_calls` stays informational rather than failing gates_pass.
     informational = {"coverage_gaps_disclosed"}
-    if persist:
+    if settings.persist_to_postgres:
         informational.add("no_database_writes")
     if settings.llm_provider.strip().lower() == "openrouter":
         informational.add("no_llm_api_calls")
@@ -79,13 +76,11 @@ def _audit_report(  # pragma: no cover
         "window_end": window_end.isoformat(),
         "run_id": run_id,
         "mode": (
-            "synthetic fixture replay (test output)"
-            if source_mode == "fixtures"
-            else "live Postgres + OpenRouter"
-            if persist and settings.llm_provider == "openrouter"
+            "live Postgres + OpenRouter"
+            if settings.persist_to_postgres and settings.llm_provider == "openrouter"
             else "Postgres persistent"
-            if persist
-            else "live/blob file output"
+            if settings.persist_to_postgres
+            else "blocked/degraded (synthetic fixture replay)"
         ),
         "verified_quotes": len(records),
         "rejected_candidates": rejected,
@@ -93,9 +88,7 @@ def _audit_report(  # pragma: no cover
         "coverage_gaps": list(gaps),
         "review_queue": list(review_queue),
         "checks": checks,
-        "version_manifest": _version_manifest(
-            settings, topic_id=topic_id, fixture_replay=source_mode == "fixtures"
-        ),
+        "version_manifest": _version_manifest(settings, topic_id=topic_id),
         "artifacts": {
             "digest": str(_digest_path(settings, report_date, topic_id=topic_id)),
             "quotes": str(local_store_path(settings.export_dir, report_date, topic_id=topic_id)),
@@ -172,7 +165,6 @@ def _do_audit(  # pragma: no cover
     run_id: str | None,
     out: str | None,
     topic_id: str | None = None,
-    source_mode: str = "live",
 ) -> int:
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
     require_safe_id(active_topic, "topic_id")
@@ -203,7 +195,7 @@ def _do_audit(  # pragma: no cover
             return EXIT_FAILURE
         report: dict[str, Any] = stored
     else:
-        if settings.persist_to_postgres and source_mode != "fixtures":
+        if settings.persist_to_postgres:
             from ..db.repository import read_export_records
             from ..pipeline import _default_session_context
 
@@ -232,8 +224,6 @@ def _do_audit(  # pragma: no cover
             rejected=0,
             review_queue=[flag.model_dump(mode="json") for flag in load_review_flags(settings)],
             topic_id=active_topic,
-            source_mode=source_mode,
-            should_persist=source_mode != "fixtures" and settings.persist_to_postgres,
         )
     out_dir = Path(out) if out else None
     json_path, md_path = _write_audit(settings, report, out_dir)

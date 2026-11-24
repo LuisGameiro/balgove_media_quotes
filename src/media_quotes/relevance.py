@@ -173,7 +173,6 @@ def evaluate_topic(rule: Mapping[str, Any], article: Mapping[str, Any]) -> Topic
     anchors = _term_strings(rule.get("anchors", ()))
     supporting = _term_strings(rule.get("supporting_terms", rule.get("support", ())))
     exclusions = _term_strings(rule.get("exclusions", ()))
-    hard_exclusions = _term_strings(rule.get("hard_exclusions", ()))
     weights = rule.get("weights")
     weight_map: Mapping[str, Any] = weights if isinstance(weights, Mapping) else {}
     anchor_weight = _weight(weight_map, ("anchor", "anchors"), 2.0)
@@ -191,26 +190,6 @@ def evaluate_topic(rule: Mapping[str, Any], article: Mapping[str, Any]) -> Topic
     uncertain_low = min(uncertain_low, accept_threshold)
 
     text_fields, folded_fields = _fields(article)
-
-    # Hard exclusions veto before scoring, even when anchors are present.
-    hard_matches: list[str] = []
-    for field in _FIELD_ORDER:
-        for term in hard_exclusions:
-            if (
-                _matches(term, text_fields[field], folded_fields[field])
-                and term not in hard_matches
-            ):
-                hard_matches.append(term)
-    if hard_matches:
-        return TopicDecision(
-            status="rejected",
-            score=0.0,
-            matched_terms=tuple(hard_matches),
-            rule_id=str(rule.get("rule_id", "")),
-            rule_version=str(rule.get("version", rule.get("rule_version", ""))),
-            reasons=("hard_exclusion",),
-        )
-
     score = 0.0
     anchor_hits = 0
     support_hits = 0

@@ -8,7 +8,6 @@ No network, no DB.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from typing import Any
@@ -21,39 +20,6 @@ from .text_utils import exact_span_match, normalise_text
 from .verification import verify_quote
 
 STRICT = ConfigDict(strict=True, extra="forbid")
-_CONTINUATION_WORDS = frozenset(
-    {
-        "and",
-        "as",
-        "at",
-        "because",
-        "but",
-        "by",
-        "for",
-        "from",
-        "in",
-        "not",
-        "of",
-        "on",
-        "or",
-        "that",
-        "to",
-        "which",
-        "with",
-    }
-)
-
-
-def _continues_into_lowercase(text: str, candidate: QuoteCandidate) -> bool:
-    """Detect only clear mid-sentence truncations, never stylistic interruptions."""
-    following = text[candidate.char_end :].lstrip()[:1]
-    if not following or not following.islower():
-        return False
-    stripped = candidate.quote_text.rstrip()
-    if stripped.endswith((",", ";", ":")):
-        return True
-    last_word = re.search(r"[^\W\d_]+$", stripped, flags=re.UNICODE)
-    return bool(last_word and last_word.group().casefold() in _CONTINUATION_WORDS)
 
 
 class PreFilterResult(BaseModel):
@@ -110,13 +76,10 @@ def pre_llm_filter(
         if len(norm) < 20:
             drop("empty_after_normalisation")
             continue
-        if _continues_into_lowercase(text, candidate):
-            drop("incomplete_quote")
-            continue
         if norm in seen:
             drop("duplicate")
             continue
-        if policy_flags.get("original_reporting_flag", "unknown") != "first-hand":
+        if policy_flags.get("original_reporting_flag", "first-hand") != "first-hand":
             drop("not_first_hand")
             continue
         seen.add(norm)

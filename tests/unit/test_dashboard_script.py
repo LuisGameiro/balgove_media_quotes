@@ -33,9 +33,6 @@ def test_dashboard_refuses_to_render_without_password(monkeypatch) -> None:
         def __init__(self) -> None:
             self.messages: list[str] = []
 
-        def set_page_config(self, **kwargs: object) -> None:
-            pass
-
         def error(self, msg: str) -> None:
             self.messages.append(str(msg))
 
@@ -64,9 +61,6 @@ def test_dashboard_script_starts_main_when_run_directly(monkeypatch) -> None:
         pass
 
     class FakeSt:
-        def set_page_config(self, **kwargs: object) -> None:
-            pass
-
         def error(self, msg: str) -> None:
             raise Stop
 

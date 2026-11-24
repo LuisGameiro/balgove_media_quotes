@@ -53,29 +53,6 @@ def group_by_section(
     return groups
 
 
-def rank_within_section(
-    records: Sequence[ExportQuoteRecord],
-    *,
-    topic_pack: TopicPack | None = None,
-) -> list[ExportQuoteRecord]:
-    """Return one section's records in a deterministic total order.
-
-    First-hand before relayed, non-claim before claim-only, higher topic score first,
-    earlier publication first, then quote id. ``topic_pack`` is accepted for signature
-    parity with ``group_by_section``; ranking itself is topic-agnostic.
-    """
-    return sorted(
-        records,
-        key=lambda item: (
-            item.original_reporting_flag != "first-hand",
-            item.claim_only,
-            -item.topic_score,
-            item.publication_date,
-            item.quote_id,
-        ),
-    )
-
-
 def dedupe_quotes(
     records: Sequence[ExportQuoteRecord], *, window_days: int = 14
 ) -> list[ExportQuoteRecord]:

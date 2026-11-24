@@ -53,7 +53,7 @@ def latest_digests(
     target_dir = digest_dir
     if topic_id and (digest_dir / topic_id).is_dir():
         target_dir = digest_dir / topic_id
-    elif topic_id and topic_id != config_module.DEFAULT_TOPIC_ID:
+    elif topic_id:
         return []
     if not target_dir.is_dir():
         return []
@@ -159,7 +159,7 @@ def coverage_by_day_matrix(records: list[dict[str, Any]]) -> list[dict[str, Any]
 def recent_logs(logs_dir: Path, limit: int = 50) -> list[str]:  # pragma: no cover
     if not logs_dir.is_dir():
         return []
-    files = sorted(logs_dir.glob("*.jsonl"), reverse=True)
+    files = sorted(logs_dir.glob("run*.jsonl"), reverse=True)
     lines: list[str] = []
     for path in files:
         with path.open(encoding="utf-8") as handle:
@@ -222,45 +222,28 @@ def graph_projection_summary(cfg: Settings) -> dict[str, Any]:
             "status": "disabled",
             "notes": "Set SYNC_TO_NEO4J=true to enable graph projection.",
         }
-    driver = None
     try:
         if __package__:
-            from .graph import (
-                check_graph_connectivity,
-                fetch_sync_metadata,
-                get_driver,
-                graph_session,
-            )
+            from .graph import check_graph_connectivity, get_driver, graph_session
         else:
-            from media_quotes.graph import (
-                check_graph_connectivity,
-                fetch_sync_metadata,
-                get_driver,
-                graph_session,
-            )
+            from media_quotes.graph import check_graph_connectivity, get_driver, graph_session
 
         driver = get_driver(cfg)
         if not check_graph_connectivity(driver):
             return {"status": "unreachable", "uri": cfg.neo4j_uri}
         with graph_session(driver, cfg.neo4j_database) as session:
-            node_rows = session.run(
-                "MATCH (n) WHERE NOT n:ProjectionMetadata RETURN count(n) AS node_count"
-            ).data()
+            node_rows = session.run("MATCH (n) RETURN count(n) AS node_count").data()
             edge_rows = session.run("MATCH ()-[r]->() RETURN count(r) AS rel_count").data()
-            metadata = fetch_sync_metadata(session)
+            node_count = node_rows[0]["node_count"] if node_rows else 0
+            rel_count = edge_rows[0]["rel_count"] if edge_rows else 0
         return {
             "status": "connected",
-            "node_count": node_rows[0]["node_count"] if node_rows else 0,
-            "relationship_count": edge_rows[0]["rel_count"] if edge_rows else 0,
+            "node_count": node_count,
+            "relationship_count": rel_count,
             "uri": cfg.neo4j_uri,
-            "last_synced_at": metadata.get("last_synced_at"),
-            "quotes_projected": metadata.get("quotes_projected", 0),
         }
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def main(settings: Settings | None = None) -> None:  # pragma: no cover
@@ -364,111 +347,82 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
         mode_desc = "Postgres persistent"
     else:
         mode_desc = "blocked/degraded (synthetic fixture replay)"
-    st.title("Media quotes — operational dashboard")
-    st.badge(mode_desc)
-    st.caption(f"Active topic: **{selected_topic}**")
+    st.title("Media Quotes — Operational Dashboard")
+    st.info(f"Mode: **{mode_desc}** | Active Topic: **{selected_topic}**")
 
+    st.subheader("Latest digests")
     digests = latest_digests(cfg.digest_dir, topic_id=selected_topic)
+    if digests:
+        for day, markdown in digests:
+            with st.expander(day):
+                st.markdown(markdown)
+    else:
+        st.write("No digests generated yet for this topic.")
+
     latest_audit = _latest_audit(cfg.audit_dir, topic_id=selected_topic)
+    report_topic = str(latest_audit.get("topic_id", selected_topic))
+    report_date = str(latest_audit.get("report_date", "none"))
+    st.caption(f"Latest audit report: topic {report_topic} | date {report_date}")
+
+    st.subheader("Per-source coverage")
     cov = coverage_summary(cfg.audit_dir, topic_id=selected_topic)
+    if cov:
+        st.dataframe(cov)
+    else:
+        st.write("No coverage data found in latest audit.")
+
+    st.subheader("Per-source coverage by day")
+    daily_cov = daily_source_coverage(cfg.audit_dir, topic_id=selected_topic)
+    if daily_cov:
+        st.dataframe(coverage_by_day_matrix(daily_cov))
+    else:
+        st.write("No multi-day coverage data found.")
+
+    st.subheader("Coverage gaps")
     gaps = coverage_gaps(cfg.audit_dir, topic_id=selected_topic)
-    review = review_queue_view(cfg.audit_dir, topic_id=selected_topic)
+    if gaps:
+        st.dataframe(gaps)
+    else:
+        st.write("No gap report yet; run `mq run --date …`.")
+
+    st.subheader("Recent logs")
     logs = recent_logs(cfg.logs_dir)
+    if logs:
+        for line in logs:
+            st.code(line, language="json")
+    else:
+        st.write("No log files found.")
+
+    st.subheader("Sources (registry and T0 gate)")
     sources = registered_sources(cfg.sources_csv)
+    if sources:
+        st.dataframe(sources)
 
-    st.metric("Active topic", selected_topic)
-    st.metric("Sources", len(sources))
-    st.metric("Coverage gaps", len(gaps))
-    st.metric("Pending review", len(review))
-    st.metric("Digests", len(digests))
-
-    quotes_by_source = {
-        str(row.get("source_id", "unknown")): int(
-            row.get("quotes", row.get("quotes_found", 0)) or 0
-        )
-        for row in cov
-    }
-    if quotes_by_source:
-        st.bar_chart(quotes_by_source)
-
-    tab_names = ["Overview", "Coverage", "Digests and logs", "Data"]
-    tabs = st.tabs(tab_names)
-    overview_tab, coverage_tab, digests_tab, data_tab = tabs[:4]
-
-    with overview_tab:
-        report_topic = str(latest_audit.get("topic_id", selected_topic))
-        report_date = str(latest_audit.get("report_date", "none"))
-        st.caption(f"Latest audit report: topic {report_topic} | date {report_date}")
-        st.subheader("Review queue (pending)")
-        if review:
-            st.dataframe(review)
+    st.subheader("Database schema summary")
+    schema_sql = Path(__file__).resolve().parent / "db" / "schema.sql"
+    st.write(schema_summary(schema_sql))
+    if cfg.persist_to_postgres:
+        counts = database_summary(cfg)
+        if "error" in counts:
+            st.write(f"Postgres query failed: {counts['error']}")
+        elif counts:
+            st.subheader("Database row counts (read-only)")
+            st.dataframe([{"table": name, "rows": rows} for name, rows in counts.items()])
         else:
-            st.write("No pending review items in the latest audit.")
+            st.write("Postgres is enabled but no counts were returned.")
 
-    with coverage_tab:
-        st.subheader("Per-source coverage")
-        if cov:
-            st.dataframe(cov)
+    if cfg.sync_to_neo4j:
+        st.subheader("Graph projection summary (Neo4j)")
+        g_info = graph_projection_summary(cfg)
+        if g_info.get("status") == "connected":
+            st.dataframe(
+                [
+                    {"metric": "Nodes", "count": g_info.get("node_count", 0)},
+                    {"metric": "Relationships", "count": g_info.get("relationship_count", 0)},
+                ]
+            )
         else:
-            st.write("No coverage data found in latest audit.")
-        st.subheader("Coverage gaps")
-        if gaps:
-            st.dataframe(gaps)
-        else:
-            st.write("No gap report yet; run `mq run --date …`.")
-        st.subheader("Per-source coverage by day")
-        daily_cov = daily_source_coverage(cfg.audit_dir, topic_id=selected_topic)
-        if daily_cov:
-            st.dataframe(coverage_by_day_matrix(daily_cov))
-        else:
-            st.write("No multi-day coverage data found.")
-
-    with digests_tab:
-        st.subheader("Latest digests")
-        if digests:
-            for day, markdown in digests:
-                with st.expander(day):
-                    st.markdown(markdown)
-        else:
-            st.write("No digests generated yet for this topic.")
-        st.subheader("Recent logs")
-        if logs:
-            for line in logs:
-                st.code(line, language="json")
-        else:
-            st.write("No log files found.")
-
-    with data_tab:
-        st.subheader("Sources (registry and T0 gate)")
-        if sources:
-            st.dataframe(sources)
-        st.subheader("Database schema summary")
-        schema_sql = Path(__file__).resolve().parent / "db" / "schema.sql"
-        st.write(schema_summary(schema_sql))
-        if cfg.persist_to_postgres:
-            counts = database_summary(cfg)
-            if "error" in counts:
-                st.write(f"Postgres query failed: {counts['error']}")
-            elif counts:
-                st.subheader("Database row counts (read-only)")
-                st.dataframe([{"table": name, "rows": rows} for name, rows in counts.items()])
-            else:
-                st.write("Postgres is enabled but no counts were returned.")
-        if cfg.sync_to_neo4j:
-            st.subheader("Graph projection summary (Neo4j)")
-            g_info = graph_projection_summary(cfg)
-            if g_info.get("status") == "connected":
-                st.dataframe(
-                    [
-                        {"metric": "Nodes", "count": g_info.get("node_count", 0)},
-                        {
-                            "metric": "Relationships",
-                            "count": g_info.get("relationship_count", 0),
-                        },
-                    ]
-                )
-            else:
-                st.write(f"Neo4j status: {g_info.get('status')} ({g_info.get('uri', '')})")
+            st.write(f"Neo4j status: {g_info.get('status')} ({g_info.get('uri', '')})")
 
 
 __all__ = [

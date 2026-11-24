@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +21,7 @@ class MockSt:
         has_session_state: bool = True,
     ) -> None:
         if has_session_state:
-            self.session_state: dict[str, Any] = {
-                "authenticated": authenticated,
-                "auth_time": time.monotonic() if authenticated else 0.0,
-            }
+            self.session_state: dict[str, Any] = {"authenticated": authenticated}
         self.sidebar = self
         self._entered = entered_password
         self._button_clicks = button_clicks or {}
@@ -38,10 +34,6 @@ class MockSt:
         self.codes: list[str] = []
         self.errors: list[str] = []
         self.warnings: list[str] = []
-        self.metrics: list[tuple[str, Any]] = []
-        self.badges: list[str] = []
-        self.charts: list[Any] = []
-        self.tabs_created: list[str] = []
 
     def __enter__(self) -> MockSt:
         return self
@@ -67,27 +59,11 @@ class MockSt:
     def write(self, *a: Any) -> None:
         self.writes.extend(a)
 
-    def dataframe(self, data: Any, **kwargs: Any) -> None:
+    def dataframe(self, data: Any) -> None:
         self.dataframes.append(data)
 
-    def code(self, text: str, language: str = "", **kwargs: Any) -> None:
+    def code(self, text: str, language: str = "") -> None:
         self.codes.append(text)
-
-    def container(self, **kwargs: Any) -> MockSt:
-        return self
-
-    def metric(self, label: str, value: Any, delta: Any = None, **kwargs: Any) -> None:
-        self.metrics.append((label, value))
-
-    def badge(self, label: str, **kwargs: Any) -> None:
-        self.badges.append(label)
-
-    def bar_chart(self, data: Any, **kwargs: Any) -> None:
-        self.charts.append(data)
-
-    def tabs(self, names: list[str], **kwargs: Any) -> list[MockTab]:
-        self.tabs_created = list(names)
-        return [MockTab() for _ in names]
 
     def error(self, text: str) -> None:
         self.errors.append(text)
@@ -95,19 +71,19 @@ class MockSt:
     def warning(self, text: str) -> None:
         self.warnings.append(text)
 
-    def expander(self, name: str, **kwargs: Any) -> MockSt:
+    def expander(self, name: str) -> MockSt:
         return self
 
     def markdown(self, text: str) -> None:
         pass
 
-    def button(self, label: str, **kwargs: Any) -> bool:
+    def button(self, label: str) -> bool:
         return self._button_clicks.get(label, False)
 
-    def selectbox(self, label: str, options: list[str], index: int = 0, **kwargs: Any) -> str:
+    def selectbox(self, label: str, options: list[str], index: int = 0) -> str:
         return options[index] if options else ""
 
-    def text_input(self, label: str, type: str = "", **kwargs: Any) -> str:
+    def text_input(self, label: str, type: str = "") -> str:
         return self._entered
 
     def form(self, name: str) -> MockSt:
@@ -121,14 +97,6 @@ class MockSt:
 
     def rerun(self) -> None:
         pass
-
-
-class MockTab(MockSt):
-    """Tab container; all tabs render so every branch stays covered."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.open = True
 
 
 def test_dashboard_full_authenticated_flow(tmp_path: Path, monkeypatch: Any) -> None:
@@ -185,15 +153,10 @@ def test_dashboard_full_authenticated_flow(tmp_path: Path, monkeypatch: Any) -> 
 
     dashboard.main(settings=settings)
 
-    assert "Media quotes — operational dashboard" in mock_st.titles
-    assert any("ukraine-war" in caption for caption in mock_st.captions)
+    assert "Media Quotes — Operational Dashboard" in mock_st.titles
+    assert any("ukraine-war" in info for info in mock_st.infos)
     assert any(len(df) > 0 for df in mock_st.dataframes)
     assert len(mock_st.codes) > 0
-    assert len(mock_st.metrics) == 5
-    assert ("Digests", 1) in mock_st.metrics
-    assert mock_st.tabs_created == ["Overview", "Coverage", "Digests and logs", "Data"]
-    assert mock_st.charts  # quotes-by-source bar chart
-    assert any("pending" in str(label).lower() for label, _ in mock_st.metrics)
     assert mock_st.session_state["authenticated"] is False
 
 
@@ -259,7 +222,7 @@ def test_dashboard_no_session_state_fallback(tmp_path: Path, monkeypatch: Any) -
     mock_st2 = MockSt(entered_password="supersecretpassword123", has_session_state=False)  # noqa: S106
     monkeypatch.setattr(dashboard, "st", mock_st2)
     dashboard.main(settings=settings)
-    assert "Media quotes — operational dashboard" in mock_st2.titles
+    assert "Media Quotes — Operational Dashboard" in mock_st2.titles
 
 
 def test_dashboard_helpers(tmp_path: Path) -> None:
@@ -283,14 +246,6 @@ def test_dashboard_helpers(tmp_path: Path) -> None:
 
     # Empty recent logs
     assert dashboard.recent_logs(tmp_path / "no_logs") == []
-    # Any *.jsonl is a log, including agent-shaped run ids (not just run*.jsonl).
-    logs_dir = tmp_path / "logs_all"
-    logs_dir.mkdir()
-    (logs_dir / "agent-123.jsonl").write_text('{"event": "agent"}\n', encoding="utf-8")
-    (logs_dir / "run-1.jsonl").write_text('{"event": "run"}\n', encoding="utf-8")
-    lines = dashboard.recent_logs(logs_dir)
-    assert any("agent" in line for line in lines)
-    assert any("run" in line for line in lines)
     # Empty digests
     assert dashboard.latest_digests(tmp_path / "no_digests") == []
     # Empty sources
@@ -336,7 +291,7 @@ def test_dashboard_modes_and_postgres(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(dashboard, "st", mock_st1)
     monkeypatch.setattr(dashboard, "database_summary", lambda s: {"sources": 10, "quotes": 50})
     dashboard.main(settings=cfg_live)
-    assert any("live Postgres + OpenRouter" in badge for badge in mock_st1.badges)
+    assert any("live Postgres + OpenRouter" in info for info in mock_st1.infos)
 
     # 2. Test Postgres persistent mode description with DB error
     cfg_pg = Settings(
@@ -354,7 +309,7 @@ def test_dashboard_modes_and_postgres(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(dashboard, "st", mock_st2)
     monkeypatch.setattr(dashboard, "database_summary", lambda s: {"error": "ConnectionRefused"})
     dashboard.main(settings=cfg_pg)
-    assert any("Postgres persistent" in badge for badge in mock_st2.badges)
+    assert any("Postgres persistent" in info for info in mock_st2.infos)
     assert any("ConnectionRefused" in str(w) for w in mock_st2.writes)
 
     # 3. Test Postgres persistent with empty counts

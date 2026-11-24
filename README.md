@@ -1,492 +1,317 @@
 # Media Quotes Collection System
 
-A rights-gated Python CLI that collects quotes from registered media sources, verifies them
-against deterministic rules, and writes a daily digest, JSONL export, audit report and logs.
-`mq run` collects live by default; synthetic fixtures are an explicit `--fixtures` test mode.
-Paid inference remains opt-in. The original brief is immutable in
-[`docs/Test_News.md`](docs/Test_News.md).
+Implementation of the media-quotes system. The source brief is
+[`Test_News.md`](docs/Test_News.md). Six clean documents explain the code and the remaining
+work; see the [documentation index](docs/README.md).
 
-## Documentation
+## Implemented today vs planned
 
-Start with the [documentation index](docs/README.md); it lists all seven explanatory documents
-and the immutable brief.
+| Area | Implemented today | Planned |
+|---|---|---|
+| Postgres schema + T0 gate | `src/media_quotes/db/schema.sql`, config, strict models, 12 tables; migration 0007 adds monthly `audit_events` partitions | Rehearse the migration rollback and detach cold partitions |
+| Bootstrap | `python -m media_quotes bootstrap` (Alembic `upgrade head` + source sync) | Production migration rollback drills |
+| CLI | 21 `mq` subcommands: offline fixture replay plus explicit, rights-gated `mq fetch`, `mq batch` and `mq blob-prune` | Cut commands over to live Postgres/Dagster backends |
+| Export | `src/media_quotes/export.py`; `mq export --from-db` rebuilds the export from Postgres | Context packs from live Postgres with token budgets |
+| Logs / traces | JSON logging, structlog redaction, OTLP/HTTP tracing configured once for CLI and Dagster runs | Deploy a production OTLP collector |
+| Tests | 722 pytest tests, injected transports, fake LLMs, ~86% branch coverage (85% gate) | Real backfill cost validation and live load tests |
+| Quality tooling | Alembic migrations, committed `uv.lock`, `Makefile` (`make check`), GitHub Actions CI, ruff/mypy/pytest, `mq doctor` | Asset bloat monitoring in Dagster asset checks |
 
-## Requirements
+All 28 sources are licensed (attested 2026-11-23) for machine retrieval, storage,
+LLM grounding, verbatim quotes and the historical backfill. Reuters and BBC stay mandatory and
+`license_held`. The T0 gate remains in code as a fail-closed guard: a `sources` row cannot be
+enabled unless `rights_status` ∈ {`license_held`, `api_permitted`} and a `license_reference`
+is recorded. Tier-4 state-controlled outlets stay disabled and `claim_only`. Offline
+runs still use synthetic fixtures for deterministic replay; audits no longer report rights
+gaps. The digest stays internal-only. Per-source detail: [`docs/03`](docs/03-sources.md).
 
-- **OS:** Windows 11, macOS 13+, or a modern Linux distribution. No single OS is required.
-- **Internet:** needed once to install tools and dependencies. Live collection, Dagster and
-  OpenRouter need network access later.
-- **Git:** to clone the repository.
-- **uv:** installs and manages Python 3.12 for you. You do not need a system Python.
+## Layout
 
-The repository contains the source registry (`data/sources.csv`, `data/sources/*.json`) and
-synthetic fixtures for explicit tests. Cloning is enough for `mq run --fixtures`; a normal live
-run needs network access. “Backfill” means historical ingestion of real articles from live
-sources, which is a separate, rights-gated task.
+```
+src/media_quotes/
+  config.py          # Pydantic settings (env/.env only; REPORT_DATE, BACKFILL_START, …)
+  models.py          # Strict boundary schemas
+  enums.py           # Canonical enums (rights_status, access_mode, source_type, …)
+  text_utils.py      # NFC + smart-quote + whitespace normalisation, exact-span check
+  observability.py   # JSON logging, optional OTel traces
+  adapters/          # Permission-gated adapters package: base, blob cache, RSS/Sitemap, HTML, quotes, registry
+  topics.py          # Topic packs: sections, keywords, relevance rules, scaffold/load helpers
+  relevance.py       # Deterministic, versioned topic relevance rule engine
+  source_configs.py  # File-per-source JSON config, registry projection and CSV sync
+  source_topics.py   # Strict CSV route loader and topic-route validation
+  language.py        # Offline en/uk/ru/und quote-language detection
+  translation.py     # Optional pinned-boundary translation with deterministic validation
+  judge.py           # Unified AI-judge contract; off/shadow/advisory/decision modes
+  live.py            # Shared live feed + article fetch loop used by mq fetch and the diagnostic script
+  export.py          # Derived JSONL export with strict schema validation
+  verification.py    # Deterministic quote verification
+  verification_stages.py # Two-stage verification: pre-LLM filter + deterministic gate
+  curation.py        # Section assignment, cross-outlet dedup and review badges
+  gold_set.py        # Versioned gold set loading and deterministic 60/20/20 splits
+  evaluation.py      # Pure evaluation thresholds contract
+  fetch.py           # Rate-limited, rights-gated HTTP client policy
+  extraction.py      # Trafilatura DOM-aware extraction and quality gate
+  llm.py             # Inference provider protocol and local stand-in
+  llm_live.py        # Pinned OpenAI client with structured outputs and decision caching
+  llm_cache.py       # Postgres-backed decision cache hooks for the pinned LLM boundary
+  llm_openrouter.py  # OpenRouter provider built on the same pinned boundary
+  batch.py           # OpenRouter batch request builder wired to mq batch (dry-run default)
+  batch_runner.py    # OpenRouter batch submission, polling and response retrieval
+  rights_guard.py    # Word limits and attribution policy guard
+  restore_drill.py   # Export integrity verification and retention readiness
+  digest.py          # Deterministic Markdown renderer
+  dashboard.py       # Streamlit read-only dashboard
+  exceptions.py      # Domain exception hierarchy
+  pipeline.py        # Shared daily collection/audit service used by CLI and Dagster
+  orchestration.py   # Dagster assets, jobs, 6 checks, resources, schedule and SLA sensor
+  __main__.py        # python -m media_quotes (CLI entry point, UTF-8 console fix)
+  bootstrap.py       # Alembic upgrade head + source registry sync
+  blob_prune.py      # Manifest-driven blob pruning (age + tombstone required)
+  cli/               # mq command-line interface package (21 subcommands)
+  risk_controls/     # Policy package: review queue, budget gate, retention
+  validation/        # Data-asset validation package: sources, sections, quotes, modular configs
+  db/                # schema.sql (DDL source), engine.py, tables.py, repository.py
+docs/                # Requirements, architecture, sources, repo structure, command reference, remaining work
+data/                # Registry, frozen schema, derived JSONL export, templates (no Python)
+tests/               # pytest suite incl. tests/contract/test_docs_qa.py; network paths use injected transports
+scripts/             # docs_qa.py, validate_data.py, check.ps1, run_dagster.ps1, run_dashboard.ps1, manual_validate.ps1, test_scraper.py
+alembic.ini          # Alembic config; database URL comes from Settings, not this file
+otelcol-config.yaml  # Local OTLP/HTTP collector pipeline
+migrations/          # Alembic env.py, script.py.mako and versions/
+  versions/0001_initial.py        # initial schema
+  versions/0002_gold_set.py       # no-op (schema.sql is the single DDL source)
+  versions/0003_decision_cache.py # no-op (schema.sql is the single DDL source)
+  versions/0004_topic_language_judge.py # no-op (schema.sql is the single DDL source)
+  versions/0005_topic_packs.py    # no-op (schema.sql is the single DDL source)
+  versions/0006_digest_topic_unique.py # no-op (schema.sql is the single DDL source)
+  versions/0007_audit_events_monthly_partition.py # monthly partitioning (all DDL in this file)
+var/output/          # Generated artifacts under one root (gitignored)
+  digests/           # YYYY-MM-DD.md (human-readable digest)
+  quotes/            # quotes-YYYY-MM-DD.jsonl (schema-validated export)
+  audit/             # audit-YYYY-MM-DD.json and .md
+  logs/              # <run-id>.jsonl
+  raw/               # <source-id>/<sha>.html (immutable raw snapshots)
+```
 
-## Fresh install — Windows, macOS or Linux
+All generated files live under `OUTPUT_DIR` (`var/output/` by default). The individual `*_DIR`
+settings still override individual folders if needed. Daily MD files use the canonical
+name `digests/YYYY-MM-DD.md` inside the digest root. `data/reports/` is a legacy compatibility
+directory only.
 
-### 1. Install Git and uv
+## Quick start
 
-**Windows (PowerShell):**
+**PowerShell / Windows (recommended commands):**
 
 ```powershell
-winget install --id Git.Git -e --source winget
-winget install --id Astral-Sh.uv -e --source winget
+Copy-Item .env.example .env        # local dev defaults; replace secrets for real deployments
+py -m pip install uv              # only if `uv` is not on PATH; or use the official PowerShell installer
+uv sync --frozen --group dev
+docker compose up -d --wait         # local Postgres and OTLP/HTTP collector
+python -m media_quotes bootstrap   # Alembic `upgrade head`, then the registry sync
+python -m media_quotes doctor
+python -m media_quotes run --date 2026-11-23
+pytest
 ```
 
-**macOS (Homebrew):**
+Run `python -m media_quotes run --date YYYY-MM-DD` with any date. Exit code `2` means a
+coverage gap is disclosed (including tier-4 outlets disabled by policy or sources with no
+articles found); rights gaps are resolved because all sources are licensed.
 
-```bash
-brew install git uv
-```
+### Small config
 
-**Linux (Debian/Ubuntu):**
-
-```bash
-sudo apt-get update && sudo apt-get install -y git curl
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-For other Linux distributions, follow the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
-Restart your shell after installing so `git` and `uv` are on `PATH`.
-
-### 2. Get the code and Python
-
-Works the same on all three operating systems:
-
-```bash
-uv python install 3.12
-git clone https://github.com/LuisGameiro/balgove_media_quotes.git balgoveinnovations
-cd balgoveinnovations
-```
-
-### 3. Create local config
-
-**Windows:** `Copy-Item .env.example .env`
-**macOS/Linux:** `cp .env.example .env`
-
-Open `.env` and set a dashboard password:
+For an offline local demo, only these `.env` values matter:
 
 ```dotenv
+OUTPUT_DIR=var/output
+PERSIST_TO_POSTGRES=true
+LLM_PROVIDER=local
 DASHBOARD_PASSWORD=choose-a-local-password
 ```
 
-Keep `LLM_PROVIDER=local` and `PERSIST_TO_POSTGRES=false` for a free live run without database
-writes. Use `mq run --fixtures` for a network-free synthetic test. Never commit `.env`.
+Leave `OPENROUTER_API_KEY` empty and keep `LLM_PROVIDER=local`; that makes the run free and
+offline. Individual `DIGEST_DIR`, `BLOB_DIR`, `AUDIT_DIR`, `EXPORT_DIR` and `LOGS_DIR` values
+still override the shared root if you need them.
 
-### 4. Install dependencies and run
+### How to see the data
 
-```bash
-uv sync --frozen --all-extras --group dev
-uv run python -m media_quotes doctor
-uv run python -m media_quotes run --date 2026-11-23
-```
+Everything is under one root:
 
-For `EXTRACTION_FALLBACK=rendered`, also install the optional Playwright group:
-`uv sync --group render`.
-
-Exit code `2` is normal while sources disclose coverage gaps. Plain `mq run` fetches enabled
-sources live and writes operational artifacts under `var/output/`. Use `--from-blobs` for
-cached live HTML or `--fixtures` for isolated synthetic output under `var/test-output/`.
-
-## See the data
-
-```bash
-# Windows
+```powershell
 Get-ChildItem var/output
-Get-Content var/output/quotes/quotes-2026-11-23.jsonl -First 5
-
-# macOS/Linux
-ls -R var/output
-head -n 5 var/output/quotes/quotes-2026-11-23.jsonl
 ```
 
-| Path | What it is |
+| File | What it is |
 |---|---|
-| `var/output/digests/YYYY-MM-DD.md` | Human-readable digest |
-| `var/output/quotes/quotes-YYYY-MM-DD.jsonl` | Verified quotes |
-| `var/output/audit/audit-YYYY-MM-DD.json` | Gates, coverage gaps and version manifest |
-| `var/output/logs/<run-id>.jsonl` | Correlated run logs |
+| `var/output/digests/YYYY-MM-DD.md` | Daily digest (human-readable) |
+| `var/output/quotes/quotes-YYYY-MM-DD.jsonl` | Verified quotes (machine-readable) |
+| `var/output/audit/audit-YYYY-MM-DD.json` / `.md` | Audit report and coverage gaps |
+| `var/output/logs/<run-id>.jsonl` | Run logs |
 | `var/output/raw/<source-id>/<sha>.html` | Immutable raw pages |
 
-To inspect the registry: `uv run python -m media_quotes sources`.
-
-## Dashboard
-
-**Windows:**
+Useful commands:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/run_dashboard.ps1
+Get-Content var/output/quotes/quotes-2026-11-23.jsonl -First 5   # first verified quotes
+python -m media_quotes audit --date 2026-11-23                 # gate summary
+python -m media_quotes sources                                  # registry / T0 state
+python -m media_quotes logs --run-id <run-id>                  # one correlated run
+docker compose exec postgres psql -U news -d news              # query sources, articles, quotes
 ```
 
-**macOS/Linux:**
-
-```bash
-uv run streamlit run src/media_quotes/dashboard.py --server.address 127.0.0.1
-```
-
-Open `http://localhost:8501` and enter the `DASHBOARD_PASSWORD` from `.env`.
-
-## Article collection driver
-
-`mq run` is the main driver for collecting and verifying articles. A plain run fetches every
-enabled, non-blocked source live, stores the raw pages, verifies quotes and writes the digest,
-JSONL export, audit report and logs under `var/output/`.
-
-```bash
-# Live collection for one report date
-uv run python -m media_quotes run --date YYYY-MM-DD
-
-# Process pages you already downloaded; no network calls
-uv run python -m media_quotes run --date YYYY-MM-DD --from-blobs
-
-# Synthetic test replay only; writes under var/test-output/
-uv run python -m media_quotes run --date YYYY-MM-DD --fixtures
-
-# Optional: download one source separately
-uv run python -m media_quotes fetch --source-id bbc --live
-```
-
-Live mode never falls back to fixtures. A failed source becomes a coverage gap. To collect only
-BBC and Guardian, set `enabled=false` in every other `data/sources/*.json`, then run
-`uv run python -m media_quotes sources --action sync-csv` and
-`uv run python -m media_quotes validate`. Fixture test mode still replays every source that has
-fixtures; use a restricted `FIXTURES_DIR` when a test must cover only BBC and Guardian.
-
-## Full collection runbook
-
-This is the complete sequence for the brief's period: **2026-10-01 through the current date**.
-Change `--to` when you run this later. Exit code `2` is expected when gaps are disclosed.
-
-### 1. Prepare
-
-```bash
-# Windows: Copy-Item .env.example .env
-# macOS/Linux:
-cp .env.example .env
-```
-
-Set these in `.env`:
-
-```dotenv
-PERSIST_TO_POSTGRES=true
-DASHBOARD_PASSWORD=choose-a-local-password
-LLM_PROVIDER=local
-OUTPUT_DIR=var/output
-```
-
-Keep `LLM_PROVIDER=local` for free, deterministic section summaries. An OpenRouter key is only
-needed for paid model calls.
-
-```bash
-uv sync --frozen --all-extras --group dev
-docker compose up -d --wait
-uv run python -m media_quotes doctor
-uv run python -m media_quotes bootstrap
-uv run python -m media_quotes sources
-uv run python -m media_quotes topics --action list
-```
-
-### 2. Collect the requirement period
-
-Free offline replay from the brief's start date:
-
-```bash
-uv run python -m media_quotes backfill \
-  --from 2026-10-01 --to 2026-11-24 --max-cost 400 --execute
-```
-
-Bounded live archive discovery from approved RSS/sitemap routes, then replay the stored blobs:
-
-```bash
-uv run python -m media_quotes backfill \
-  --from 2026-10-01 --to 2026-11-24 --max-cost 400 --execute \
-  --fetch-archive --max-archive-articles 500
-```
-
-`--max-cost` checks a flat estimate; it is not a provider-side spend cap. Tier-4 sources are
-excluded. The archive stage will not discover more than the source feed/sitemap exposes and the
-article cap allows.
-
-### 3. Refresh the current day from live routes
-
-```bash
-uv run python -m media_quotes run --date 2026-11-24
-uv run python -m media_quotes audit --date 2026-11-24
-```
-
-`mq fetch --source-id <id> --live` remains available when you want to download one source
-separately; `mq run --from-blobs` then processes those cached pages without network access.
-
-### 4. Add another source or topic
-
-```bash
-uv run python -m media_quotes sources --action add \
-  --source-id <id> --name "<name>" --homepage-url <url> --feed-url <rss-or-sitemap-url>
-# Complete rights/access/licence fields in data/sources/<id>.json and the route CSV, then:
-uv run python -m media_quotes sources --action sync-csv
-uv run python -m media_quotes doctor
-
-uv run python -m media_quotes topics --action list
-uv run python -m media_quotes topics --action init \
-  --topic ai-policy --name "AI policy" --description "AI policy quotes"
-uv run python -m media_quotes topics --action show --topic ai-policy
-uv run python -m media_quotes run --date 2026-11-24 --topic ai-policy
-```
-
-A new source is not collectable until its rights and route are approved. Use `--topic ID` or
-`ACTIVE_TOPIC` in `.env` to switch topics.
-
-### 5. Verify and inspect
-
-```bash
-uv run python -m media_quotes audit --date 2026-11-24
-uv run python -m media_quotes eval --gold-set synthetic-v1
-uv run python -m media_quotes restore-drill --date 2026-11-24
-uv run python -m scripts.source_proof --offline
-uv run python -m scripts.source_proof --live --limit 5
-```
-
-Results are in `var/output/digests/`, `var/output/quotes/`, `var/output/audit/` and
-`var/output/logs/`. To review missed quotes with AI, use the `audit-quotes` commands below.
-
-### 6. Optional paid missed-quote audit
-
-```bash
-uv run python -m media_quotes audit-quotes --date 2026-11-24 --limit 20
-uv run python -m media_quotes audit-quotes --date 2026-11-24 --limit 20 --max-cost 1 --execute
-```
-
-Execution requires `LLM_PROVIDER=openrouter`, a pinned `LLM_MODEL_SNAPSHOT`, `OPENROUTER_API_KEY`
-and `PERSIST_TO_POSTGRES=true` with Postgres running; `--max-cost` is required with `--execute` and
-is a local estimate gate, not a provider-side cap.
-
-### 7. Dashboard and scheduler
-
-```bash
-# Windows
-powershell -ExecutionPolicy Bypass -File scripts/run_dashboard.ps1
-# macOS/Linux
-uv run streamlit run src/media_quotes/dashboard.py --server.address 127.0.0.1
-
-# Dagster: PowerShell users can run scripts/run_dagster.ps1 instead.
-export DAGSTER_HOME=var/dagster
-uv run dagster dev -m media_quotes.orchestration
-```
-
-Enable `daily_digest_schedule` and, after tier-1 rights review, `tier1_six_hourly_schedule`
-(every six hours, tier 1) in the Dagster UI. Both are stopped by default and pass
-`source_mode=live` explicitly for operational live collection; fixture replay is only an explicit
-materialization config and writes under `var/test-output/`, never to the live graph.
-
-For manual historical backfill, use the Dagster partition-range command in
-[Backfill a date range](#backfill-a-date-range). It runs as one Dagster run and marks every
-selected daily partition as materialised.
-
-## Collecting new days
-
-The normal flow is one command per day. Change the date to any day in your window:
-
-```bash
-uv run python -m media_quotes run --date YYYY-MM-DD
-uv run python -m media_quotes audit --date YYYY-MM-DD
-```
-
-### Store results in Postgres
-
-Docker is only needed if you want database rows. It is not needed for the file-only live run above.
-
-```bash
-docker compose up -d --wait
-```
-
-Set `PERSIST_TO_POSTGRES=true` in `.env`, then:
-
-```bash
-uv run python -m media_quotes bootstrap
-uv run python -m media_quotes run --date YYYY-MM-DD
-```
-
-`mq bootstrap` applies the schema and syncs the committed source configs into Postgres. It is only
-needed when you use the database; it does not download sources. Inspect rows with
-`docker compose exec postgres psql -U news -d news`.
-
-### Gather live articles
-
-Live fetching is rights-gated and writes HTML blobs locally; it does not write quote rows.
-BBC, Guardian and other configured public feeds are available. Reuters remains enabled but
-`tier_block=true` because its public sitemap and direct pages return HTTP 401. Start with a plan,
-then use `--live`:
-
-```bash
-uv run python -m media_quotes fetch --source-id guardian
-uv run python -m media_quotes fetch --source-id guardian --live
-uv run python -m media_quotes run --date YYYY-MM-DD --from-blobs
-```
-
-`--from-blobs` makes the pipeline use the downloaded pages instead of synthetic fixtures. See
-[Sources](docs/03-sources.md) for the registry and T0 gate.
-
-### Backfill a date range
-
-A CLI backfill replays one partition per day. The first command estimates cost; `--execute` runs
-it. `--max-cost` checks a flat estimate, not a provider-side spend cap. Tier-4 sources are
-excluded. Plain `backfill --execute` remains fixture replay; use `--fetch-archive` or
-`--from-blobs` for real articles.
-
-```bash
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute --from-blobs
-# Discover dated articles from approved live RSS/sitemap routes, then replay those blobs:
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute --fetch-archive --max-archive-articles 200
-```
-
-The maximum window is 365 days; archive discovery defaults to at most 200 articles.
-
-Run the same historical operation through Dagster as one manual range backfill:
-
-```bash
-uv run dagster asset materialize -m media_quotes.orchestration --select daily_quotes_digest --partition-range 2026-10-01...2026-11-24 --config-json '{"ops":{"daily_quotes_digest":{"config":{"source_mode":"blobs","max_cost":400,"fetch_archive":true,"max_archive_articles":200,"persist_to_postgres":true}}}}'
-```
-
-Use `"fetch_archive": false` to replay existing blobs without network access. A range failure
-retries the whole range. See the [command reference](docs/05-command-reference.md) for all flags.
-
-### Change sources and topics
-
-The source registry and topic packs are files in the repository. Edit them, then sync the CSV
-contracts:
-
-```bash
-uv run python -m media_quotes sources --action list
-uv run python -m media_quotes sources --action add --source-id <id> --name "<name>" --homepage-url <url>
-uv run python -m media_quotes sources --action sync-csv
-uv run python -m media_quotes topics --action list
-uv run python -m media_quotes topics --action show --topic ukraine-war
-uv run python -m media_quotes topics --action init --topic ai-policy --name ai-policy --description "AI policy"
-```
-
-Edit `data/sources/*.json`, `data/source_topic_routes.csv`, `data/topics/*.json`,
-`data/topic_rules.json` and `data/sections.csv` as needed. Select a topic per command with
-`--topic ID`, or set `ACTIVE_TOPIC` in `.env`. Details are in
-[Sources](docs/03-sources.md) and the [command reference](docs/05-command-reference.md).
-
-### Run on a schedule with Dagster
-
-Extras are already installed by the fresh-install command above. Set `DAGSTER_HOME` so Dagster
-loads `var/dagster/dagster.yaml`, then start the UI:
-
-```bash
-export DAGSTER_HOME=var/dagster
-uv run python -m media_quotes dagster
-uv run dagster dev -m media_quotes.orchestration
-```
-
-On Windows set `$env:DAGSTER_HOME = "var/dagster"` (or run `scripts/run_dagster.ps1`, which sets it
-for you). Schedules and the review SLA sensor are stopped by default; enable
-`daily_digest_schedule` in the Dagster UI after rights review. Set `PERSIST_TO_POSTGRES=true` to
-write run rows and audit events. Concurrency limits live in `var/dagster/dagster.yaml`.
-
-### Optional Neo4j projection
-
-Start the local graph database and load the verified Postgres quotes:
-
-```bash
-# .env
-SYNC_TO_NEO4J=true
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=choose-a-local-password
-
-docker compose --profile graph up -d --wait
-uv run python -m media_quotes graph init
-uv run python -m media_quotes graph sync --from-db
-uv run python -m media_quotes graph status
-uv run python -m media_quotes graph divergence
-uv run python -m media_quotes graph context --max-tokens 4000
-```
-
-`graph status` reports connectivity plus node and relationship counts. In Dagster,
-`neo4j_quote_projection` is a separate daily-partitioned asset downstream of
-`daily_quotes_digest`. It retries independently and has three checks:
-`neo4j_projection_no_errors` (no per-record errors), `neo4j_export_quotes_present` (export
-membership by content hash) and `neo4j_projection_metadata_current` (freshness). It raises on a
-missing or empty export or projection errors, never projects fixture replays or dry runs, and its
-checks skip green for fixture or disabled partitions. Schedules explicitly use
-`source_mode="live"`; an explicit fixture run safely skips the graph.
-
-### Model-backed section summaries
-
-Live model calls cost money. Keep `LLM_PROVIDER=local` for deterministic, free summaries. To use
-OpenRouter, set a pinned model, a key and Postgres caching:
-
-```dotenv
-LLM_PROVIDER=openrouter
-LLM_MODEL_SNAPSHOT=openai/gpt-4o-mini-2024-07-18
-OPENROUTER_API_KEY=your-key
-PERSIST_TO_POSTGRES=true
-```
-
-The model writes only 1–2 sentence section summaries. It does not change quote selection,
-verification or the T0 source gate. Live fetching remains rights-gated and never bypasses the
-registry check.
-
-### Audit missed quotes with AI
-
-An opt-in shadow command asks the model to find quotes the rules may have missed. It is free to
-plan and paid only with `--execute`:
-
-```bash
-uv run python -m media_quotes audit-quotes --date YYYY-MM-DD --limit 20
-uv run python -m media_quotes audit-quotes --date YYYY-MM-DD --limit 20 --max-cost 1 --execute
-```
-
-Every AI candidate is verified by the same deterministic rules. Plan mode prints JSON to stdout;
-`--execute` also writes `var/output/audit/missed-quotes-YYYY-MM-DD.json`. The digest and export
-are never changed. `--execute` needs `LLM_PROVIDER=openrouter`, a pinned `LLM_MODEL_SNAPSHOT`,
-`OPENROUTER_API_KEY` and `PERSIST_TO_POSTGRES=true` with Postgres running (the client caches
-decisions there), plus a positive `--max-cost`.
-
-For every setting, see [`.env.example`](.env.example) and the
-[command reference](docs/05-command-reference.md).
-
-## Troubleshooting
-
-- `docker compose up` fails: start Docker Desktop (Windows/macOS) or Docker Engine (Linux).
-- Dashboard refuses to render: set `DASHBOARD_PASSWORD` in `.env` and restart the dashboard.
-- Exit code `2` from `mq run`: disclosed coverage gaps, not a failure.
-- `python: command not found`: use `uv run python ...` or install Python through `uv python install 3.12`.
-
-## Quality gate
-
-**Windows:**
+Start the dashboard with `powershell -ExecutionPolicy Bypass -File scripts/run_dashboard.ps1`,
+open `http://localhost:8501`, and enter the `DASHBOARD_PASSWORD` from `.env`.
+
+If `uv` is not installed and the project virtualenv is already active, skip the `uv` line and
+use `python` directly. For an env-var-only flag in PowerShell, use `$env:NAME="value"`, for
+example:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+$env:PERSIST_TO_POSTGRES = "true"
+python -m media_quotes run --date 2026-11-19
 ```
 
-**macOS/Linux:**
+Equivalent Bash/macOS form for the same flag: `PERSIST_TO_POSTGRES=true python -m media_quotes run --date 2026-11-19`.
 
-```bash
-uv run make check
+## OpenRouter inference
+
+Inference provider selection is environment-driven; there is no CLI flag. The default is
+`LLM_PROVIDER=local`, which is deterministic and makes no network call. Set
+`LLM_PROVIDER=openrouter` to generate section summaries through OpenRouter's
+OpenAI-compatible Chat Completions API. Real keys belong only in `.env`, never in source code.
+
+```powershell
+$env:LLM_PROVIDER = "openrouter"
+$env:LLM_MODEL_SNAPSHOT = "openai/gpt-4o-mini-2024-07-18"
+$env:OPENROUTER_API_KEY = "your-key"
+python -m media_quotes run --date 2026-11-19
 ```
 
-This runs docs QA, format, lint, strict typing, tests with the 85% coverage floor, packaging and
-CLI smoke checks. Engineering standards are in [docs/02](docs/02-architecture.md).
+`LLM_MODEL_SNAPSHOT` must be an explicit OpenRouter model id, not `unset` or `latest`.
+`OPENROUTER_BASE_URL`, `OPENROUTER_APP_URL`, `OPENROUTER_APP_TITLE`,
+`OPENROUTER_TIMEOUT_SECONDS`, and `OPENROUTER_MAX_RETRIES` are also configurable.
+OpenRouter never changes quote selection, deterministic verification, or the T0 source gate.
 
-## Source proof report
+Extras: `dashboard` (Streamlit), `orchestration` (Dagster), `extraction`
+(trafilatura; `httpx` is in core), `llm` (OpenAI). Dev/test tooling is in the `dev`, `test` and
+`lint` dependency groups. Markdown rendering is built into `digest.py` — no template engine.
+`uv.lock` is committed; CI/prod use `uv sync --frozen --all-extras`. Engineering standards (ruff, `mypy --strict`, 85%
+coverage, Alembic, secrets redaction) are specified in
+[`docs/02`](docs/02-architecture.md).
 
-```bash
-uv run python -m scripts.source_proof --offline
-uv run python -m scripts.source_proof --live --limit 5
+## Command interface
+
+The implemented entry point is `mq` (`python -m media_quotes` / `python -m media_quotes.cli`).
+All subcommands below use deterministic offline fixture replay, except `mq fetch --live` and
+`mq batch --execute`, which make network calls. Live fetching is rights-gated and writes no
+database rows. Full command examples live in
+[`docs/05`](docs/05-command-reference.md).
+
+| Command | Purpose |
+|---|---|
+| `mq doctor` | Audit config, T0 registry, schema, versions, templates, DB; no network |
+| `mq validate` | Validate `sources.csv`, frozen JSON Schema and derived JSONL paths |
+| `mq run --date YYYY-MM-DD` | Full pipeline **plus** audit report and log summary in one command |
+| `mq audit [--date …] [--run-id …]` | T0/coverage/schema/false-quote/exact-match/first-hand checks → JSON + MD in `var/output/audit/` |
+| `mq logs --run-id ID [--trace-id ID]` | Correlated structured logs with `trace_id` |
+| `mq eval --gold-set <version> [--split …]` | Deterministic metrics + κ-calibrated judge (optional `all|train|dev|test` filter) |
+| `mq sources`, `mq topics`, `mq version` | Registry + rights status, topic-pack management, version manifest |
+| `mq fetch --source-id <id> [--live]` | Plan a rights-cleared fetch; add `--live` to actually contact the source |
+| `mq backfill`, `mq batch`, `mq digest`, `mq export`, `mq dashboard` | Backfill estimate, OpenRouter batch with estimated-cost check, regenerate MD, derived JSONL, Streamlit UI |
+| `mq dagster` | Show Dagster asset, partition, schedule and persistence guidance |
+| `mq review`, `mq retention`, `mq restore-drill` | Review queue (`list|seed|decide`), retention plan, derived-export integrity |
+| `mq blob-prune --tombstones PATH [--execute]` | Delete old blobs only when their digest is in the manifest; dry-run by default |
+
+Shared flags: `--topic`, `--dry-run`, `--date`, `--run-id`/`--trace-id`, `--out`, `--verbose`.
+`--offline` is deprecated and accepted only for compatibility: every `mq` command is offline
+unless you explicitly run a live command. Exit codes: `0` pass · `1`
+validation/threshold failure · `2` partial success with coverage gaps · `3` config/T0-gate error.
+Re-runs are idempotent.
+
+`make docs-qa`, `make format`, `make lint`, `make typecheck`, `make test`, `make coverage`,
+`make build`, `make smoke` and `make check` (the full gate, using `coverage`) wrap the local
+quality workflow; the architecture and quality standards are specified in
+[`docs/02`](docs/02-architecture.md).
+
+**Windows / PowerShell:** `make` is not available by default. Run the same gate with
+`powershell -ExecutionPolicy Bypass -File scripts/check.ps1`, or install the one-time `check`
+function with `powershell -ExecutionPolicy Bypass -File scripts/install_check_profile.ps1`
+(adds it to both Windows PowerShell and PowerShell 7 profiles) and then just run `check` from
+the project root (or `check C:\path\to\balgoveinnovations` from anywhere).
+
+**Manual quote validation without Dagster:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/manual_validate.ps1 -Date 2026-11-19
 ```
 
-Live proof reports are written to `var/output/proof/source-proof-YYYY-MM-DD.json` and `.md`.
-Offline fixture proof defaults to `var/test-output/proof/`. The report distinguishes collected
-live/sample data from fixture-only evidence, records `tier_block`
-and blockers, and never counts fixture quotes as acquired source data. The 2026-11-24 run
-collected data from 15 sources and verified 76 live quotes after blocked-source enforcement.
-Seventeen sources are not blocked; 15 yielded verified quotes, Suspilne was quote-free in the
-sample, and Anadolu had a route failure. GDELT and Guardian API remain discovery-only.
-.
+This runs the same `_collect` pipeline as the Dagster asset and prints the audit result.
+Use `-DryRun` for planning only or `-Persist` to write Postgres rows.
+
+## Streamlit Community Cloud deployment
+
+The app is a Streamlit dashboard at `src/media_quotes/dashboard.py`. Streamlit Community Cloud
+requires the code to live in a published GitHub repository. The repository already has an `origin`
+remote; deployment requires:
+
+1. Commit and push the current `main` branch.
+2. In Streamlit Cloud, choose that repository, branch `main`, and main file path
+   `src/media_quotes/dashboard.py`.
+3. Use the root `requirements.txt`, which installs the project with all extras.
+4. Set the `DASHBOARD_PASSWORD` secret in Streamlit Cloud. The dashboard refuses to render
+   internal digests, audit reports or licence metadata without it.
+
+The dashboard reads local replay artifacts and does not require a database or API key.
+
+## Dates
+
+`BACKFILL_START=2026-10-01`; `REPORT_DATE` defaults to today; `REPORT_WINDOW_DAYS=14`.
+For example, on `2026-11-23` the rolling 14-day window covers `10–23 Nov 2026`.
+
+## Source registry and adapters
+
+The authoritative source definitions are the JSON files in `data/sources/<source_id>.json`
+(explained in [`docs/03-sources.md`](docs/03-sources.md)), mirrored to `data/sources.csv` and
+`data/source_topic_routes.csv`. At bootstrap they are validated into `SourceRegistryRow` objects
+and synced into the Postgres `sources` table. The schema enforces the T0 rights gate: a source
+cannot be enabled unless rights are approved, a licence reference exists, access mode is
+permitted and discovery is enumerable.
+
+Per-source behaviour lives in the `src/media_quotes/adapters/` package — permission-gated
+adapters selected by `discovery_method` (`sitemap`, `rss`, `api`, `gdelt`, `licensed_database`,
+`web`) with optional per-source plugins. All 28 sources are licensed and 23 pass the T0 gate;
+the 5 tier-4 state-controlled outlets stay disabled as `claim_only`. `mq fetch` rejects any
+unlicensed row with exit code 3 (via the internal `SourceNotPermitted` guard).
+Per-source discovered/quotes counts are written to coverage rows in the audit report and to
+`audit_events`; `pipeline_runs.stats` holds run-level totals.
+
+## Validation commands
+
+| Goal | Command | State |
+|---|---|---|
+| Documentation consistency  | `python scripts/docs_qa.py` or `pytest tests/contract/test_docs_qa.py` | works today |
+| Unit/full test suite | `python -m pytest -q` | works today; targeted and full runs stay fast |
+| Full gate with 85% coverage | `make coverage` or `make check` | coverage is enforced only in these full-gate commands |
+| Lint/format | `python -m ruff check .` / `ruff format --check .` | works today |
+| Registry/schema/data checks | `python scripts/validate_data.py` or `mq doctor` | works today |
+
+`pytest` does not enable coverage by default. Running a targeted test file will not trigger
+the global 85% threshold. `make coverage` runs the full suite with coverage and enforces the
+floor defined once in `[tool.coverage.report]`. `make check` is the canonical CI gate.
+See [docs/02-architecture.md](docs/02-architecture.md) for the engineering standard.
+
+## Design invariants
+
+1. **Quotes are never trusted from an LLM** — the deterministic span verifier must pass.
+2. **Decisions are cached by content hash + model/prompt/schema versions**, not by `temperature=0`.
+3. **Postgres is the system of record**; JSONL is a derived export.
+4. **No source is contacted until its rights record permits the exact use case** — all sources
+   are licensed now; the T0 gate still refuses any future unlicensed row.
+5. **Validation is strict at every boundary**; schemas and prompts are frozen with snapshots.
+6. **One OTel trace per article** with `trace_id` propagated to logs and the dashboard.
+7. **Eval is built early** against a labelled gold set: 60/20/20 split, recall ≥ 0.90,
+   exact-match 100%, false-quote 0, judge κ ≥ 0.70.
+8. **Every action is reachable through one easy command** (`mq`) for audits and logs.
+
+## Glossary
+
+The documentation index is [`docs/README.md`](docs/README.md). Key notation: "T0 gate" means
+the rights gate in the brief; task `T0` is the first task in that brief.

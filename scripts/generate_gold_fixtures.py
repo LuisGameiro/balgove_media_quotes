@@ -1,6 +1,5 @@
 """Script to generate rich synthetic fixtures and gold set."""
 
-import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -205,9 +204,8 @@ RUSSIAN_QUOTES = [
 ]
 
 
-def build_outputs() -> tuple[dict[Path, str], dict[str, int]]:
-    """Compute every generated file in memory; no filesystem writes."""
-    outputs: dict[Path, str] = {}
+def main() -> None:
+    print("Generating synthetic fixtures and gold set...")
     articles: list[dict[str, Any]] = []
     source_names = list(SOURCES_INFO.keys())
 
@@ -281,10 +279,12 @@ def build_outputs() -> tuple[dict[Path, str], dict[str, int]]:
             "quote_spans": quote_spans,
         }
 
-        fix_file = (
-            FIXTURES_DIR / source_id / f"synthetic-{source_id}-2026-11-{day:02d}-art{i:03d}.json"
+        fix_folder = FIXTURES_DIR / source_id
+        fix_folder.mkdir(parents=True, exist_ok=True)
+        fix_file = fix_folder / f"synthetic-{source_id}-2026-11-{day:02d}-art{i:03d}.json"
+        fix_file.write_text(
+            json.dumps(fixture_payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        outputs[fix_file] = json.dumps(fixture_payload, ensure_ascii=False, indent=2)
 
         gold_quotes = [
             {
@@ -386,50 +386,16 @@ def build_outputs() -> tuple[dict[Path, str], dict[str, int]]:
     for art in articles:
         s = split_for(str(art["article_ref"]), "synthetic-v1")
         splits_count[s] += 1
-    outputs[GOLD_SET_FILE] = json.dumps(gold_data, ensure_ascii=False, indent=2)
-    stats = {
-        "articles": len(articles),
-        "quotes": sum(len(list(a["quotes"])) for a in articles),
-        "negatives": len(negatives),
-        "train": splits_count["train"],
-        "dev": splits_count["dev"],
-        "test": splits_count["test"],
-    }
-    return outputs, stats
 
+    print(f"Total articles: {len(articles)}")
+    print(f"Splits distribution: {splits_count}")
+    total_quotes = sum(len(list(a["quotes"])) for a in articles)
+    print(f"Total quotes: {total_quotes}")
+    print(f"Total negative candidates: {len(negatives)}")
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="compare expected files to disk and exit nonzero on drift; write nothing",
-    )
-    args = parser.parse_args(argv)
-    outputs, stats = build_outputs()
-    print(f"Total articles: {stats['articles']}")
-    print(
-        f"Splits distribution: {{'train': {stats['train']}, 'dev': {stats['dev']}, 'test': {stats['test']}}}"
-    )
-    print(f"Total quotes: {stats['quotes']}")
-    print(f"Total negative candidates: {stats['negatives']}")
-    if args.check:
-        drift = sorted(
-            str(path.relative_to(ROOT))
-            for path, expected in outputs.items()
-            if not path.is_file() or path.read_text(encoding="utf-8") != expected
-        )
-        if drift:
-            print(f"DRIFT ({len(drift)} files): " + ", ".join(drift[:10]))
-            return 1
-        print(f"OK: {len(outputs)} generated files match")
-        return 0
-    for path, expected in outputs.items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(expected, encoding="utf-8")
+    GOLD_SET_FILE.write_text(json.dumps(gold_data, ensure_ascii=False, indent=2), encoding="utf-8")
     print("Gold set saved successfully.")
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

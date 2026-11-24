@@ -31,7 +31,6 @@ class ObsolescenceEvidence(BaseModel):
     superseding_span: str = Field(min_length=1)
     decision_id: str
     rationale: str = Field(min_length=1)
-    new_quote_id: str = ""
 
     @property
     def is_primary_evidence(self) -> bool:

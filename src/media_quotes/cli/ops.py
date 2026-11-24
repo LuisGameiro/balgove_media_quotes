@@ -5,7 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import date
+from dataclasses import asdict
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,10 +15,16 @@ from ..digest import write_digest
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, local_store_path, read_jsonl, write_jsonl
 from ..llm import make_provider
+from ..risk_controls import budget_gate, estimate_backfill
 from ..source_configs import scaffold_source_config, sync_sources_to_csv
 from ..topics import list_topic_packs, load_topic_pack, scaffold_topic_pack
 from .common import (
+    _ARTICLES_PER_HOUR,
+    _ARTICLES_PER_SOURCE_DAY,
+    _CALLS_PER_ARTICLE,
+    _MAX_BACKFILL_DAYS,
     _NOTICE,
+    _PRICE_PER_CALL,
     EXIT_FAILURE,
     EXIT_GAPS,
     EXIT_OK,
@@ -25,7 +32,6 @@ from .common import (
     _load_registry,
     _load_topic_pack,
     _read_json,
-    _version_manifest,
     _window,
 )
 
@@ -40,91 +46,113 @@ def _do_backfill(  # pragma: no cover
     execute: bool = False,
     topic_id: str | None = None,
     source_mode: str = "fixtures",
-    fetch_archive: bool = False,
-    max_archive_articles: int = 200,
 ) -> int:
-    from ..backfill import BackfillRequest, execute_backfill, plan_backfill
-
-    request = BackfillRequest(
-        start=start,
-        end=end,
-        max_cost=max_cost,
-        execute=execute,
-        dry_run=dry_run,
-        topic_id=topic_id,
-        source_mode=source_mode,
-        fetch_archive=fetch_archive,
-        max_archive_articles=max_archive_articles,
+    if end < start:
+        raise ConfigError("--to must not precede --from")
+    span = min((end - start).days + 1, _MAX_BACKFILL_DAYS)
+    rows = [row for row in _load_registry(settings) if row.tier < 4]
+    base = estimate_backfill(
+        articles_per_source_day=_ARTICLES_PER_SOURCE_DAY,
+        sources=max(1, len(rows)),
+        days=span,
+        calls_per_article=_CALLS_PER_ARTICLE,
+        price_per_call=_PRICE_PER_CALL,
+        articles_per_hour=_ARTICLES_PER_HOUR,
     )
-    plan = plan_backfill(settings, request)
+    cached_hashes = 0
+    for day in range(span):
+        current = start + timedelta(days=day)
+        path = local_store_path(settings.export_dir, current)
+        if not path.is_file():
+            continue
+        # Only hashes are needed: never parse hundreds of full records into memory.
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict) and isinstance(payload.get("content_hash"), str):
+                    cached_hashes += 1
+    cache_rate = min(0.9, cached_hashes / max(1, base.calls))
+    estimate = estimate_backfill(
+        articles_per_source_day=_ARTICLES_PER_SOURCE_DAY,
+        sources=max(1, len(rows)),
+        days=span,
+        calls_per_article=_CALLS_PER_ARTICLE,
+        price_per_call=_PRICE_PER_CALL,
+        articles_per_hour=_ARTICLES_PER_HOUR,
+        expected_cache_hit_rate=cache_rate,
+    )
+    note = "budget not capped"
+    if max_cost is not None:
+        note = budget_gate(estimate, max_cost)
     print(
-        f"Backfill {start}..{plan.effective_end} ({plan.span_days} day(s)): "
-        f"~{plan.estimate.articles} articles, {plan.estimate.calls} billed calls, "
-        f"${plan.estimate.cost:.2f}, ~{plan.estimate.duration_hours}h."
+        f"Backfill {start}..{start + timedelta(days=span - 1)} ({span} day(s)): "
+        f"~{estimate.articles} articles, {estimate.calls} billed calls, "
+        f"${estimate.cost:.2f}, ~{estimate.duration_hours}h."
     )
     print(
-        f"Cache-hit summary: {plan.cached_hashes} stored content hash(es), "
-        f"assumed hit rate {plan.cache_rate:.2%}."
+        f"Cache-hit summary: {cached_hashes} stored content hash(es), "
+        f"assumed hit rate {cache_rate:.2%}."
     )
-
-    effective_mode = "blobs" if fetch_archive else source_mode
     if execute and not dry_run:
-        print(
-            f"Budget: {plan.budget_note}; executing bounded historical backfill ({effective_mode})."
-        )
-    result = execute_backfill(settings, request, plan=plan)
-    if execute and not dry_run:
-        for archive in result.archives:
-            print(
-                f"Archive {archive.source_id}: {archive.stored_articles} article(s) stored, "
-                f"{len(archive.errors)} error(s)."
-            )
-        if fetch_archive:
-            print(
-                f"Archive stage: {result.archive_stored_articles} article(s) stored, "
-                f"{result.archive_errors} error(s)."
-            )
-        print(
-            f"Backfill executed: {plan.span_days} day(s), {result.total_quotes} verified quote(s), "
-            f"{result.total_gaps} coverage gap(s), "
-            f"{result.persisted_quotes} Postgres quote row(s) persisted."
-        )
-        return EXIT_GAPS if result.total_gaps else EXIT_OK
+        from ..pipeline import run_daily_pipeline
 
-    print(f"Budget: {plan.budget_note}; pass --execute to run daily partitions for this period.")
+        print(f"Budget: {note}; executing bounded historical backfill ({source_mode}).")
+        total_quotes = 0
+        total_gaps = 0
+        persisted_quotes = 0
+        for day_offset in range(span):
+            current = start + timedelta(days=day_offset)
+            result = run_daily_pipeline(
+                settings,
+                report_date=current,
+                dry_run=False,
+                pipeline="mq-backfill",
+                topic_id=topic_id,
+                source_mode=source_mode,
+            )
+            total_quotes += len(result.records)
+            total_gaps += len(result.gaps)
+            persisted_quotes += int(result.persistence.get("stored_quotes", 0))
+        print(
+            f"Backfill executed: {span} day(s), {total_quotes} verified quote(s), "
+            f"{total_gaps} coverage gap(s), {persisted_quotes} Postgres quote row(s) persisted."
+        )
+        return EXIT_GAPS if total_gaps else EXIT_OK
+
+    print(f"Budget: {note}; pass --execute to run daily partitions for this period.")
     if not dry_run:
         print("Estimate only (no --execute flag): no pipeline partitions were executed.")
-    if result.estimate_run_id:
-        print(f"Backfill estimate persisted to Postgres as run {result.estimate_run_id}.")
-    return EXIT_OK
 
+    if settings.persist_to_postgres:
+        from ..db.repository import finish_pipeline_run, start_pipeline_run
+        from ..pipeline import _default_session_context
 
-def _do_audit_quotes(
-    settings: Settings,
-    *,
-    report_date: date,
-    topic_id: str | None,
-    limit: int,
-    max_cost: float | None,
-    execute: bool,
-) -> int:  # pragma: no cover
-    import json
-
-    from ..quote_audit import audit_missed_quotes, write_report
-
-    report, path = audit_missed_quotes(
-        settings,
-        report_date=report_date,
-        topic_id=topic_id,
-        limit=limit,
-        max_cost=max_cost,
-        execute=execute,
-    )
-    if execute:
-        write_report(report, path)
-    print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
-    if execute:
-        print(f"Missed-quote report: {path}")
+        run_id = f"backfill-{start.isoformat()}-{end.isoformat()}"
+        stats = {
+            **asdict(estimate),
+            "max_cost": max_cost,
+            "budget_note": note,
+            "span_days": span,
+            "cached_hashes": cached_hashes,
+        }
+        with _default_session_context(settings) as session:
+            start_pipeline_run(
+                session,
+                run_id=run_id,
+                pipeline="mq-backfill",
+                partition_date=start,
+                commit=False,
+            )
+            finish_pipeline_run(
+                session, run_id=run_id, status="succeeded", stats=stats, commit=False
+            )
+            session.commit()
+        print(f"Backfill estimate persisted to Postgres as run {run_id}.")
     return EXIT_OK
 
 
@@ -157,10 +185,6 @@ def _do_sources(
             out_dir=settings.sources_dir,
         )
         print(f"Created source config: {created}")
-        print(
-            "Admission probe requires fetched robots.txt/feed/article content; "
-            "not run in offline mode (no network calls)."
-        )
         print("Next: complete T0 rights review, then run `mq sources --action sync-csv`.")
         return EXIT_OK
 
@@ -279,13 +303,6 @@ def _do_digest(
         if badge:
             review_badges[flag.evidence.old_quote_id] = badge
 
-    fixture_replay = all(record.notes == "synthetic fixture replay" for record in records)
-    provider = make_provider(settings, topic_pack=topic_pack)
-    provenance = {
-        **_version_manifest(settings, topic_id=active_topic_id, fixture_replay=fixture_replay),
-        "source_mode": "fixtures" if fixture_replay else "stored-export",
-        "provider_label": settings.llm_provider,
-    }
     path = write_digest(
         records,
         report_date=report_date,
@@ -296,12 +313,10 @@ def _do_digest(
         else _digest_path(settings, report_date, topic_id=active_topic_id),
         sections_csv=settings.sections_csv,
         topic_pack=topic_pack,
-        provider=provider,
+        provider=make_provider(settings, topic_pack=topic_pack),
         obsolescence_flags=review_flags,
         review_badges=review_badges,
-        notice=_NOTICE if fixture_replay else "",
-        provenance=provenance,
-        now=now,
+        notice=_NOTICE,
     )
     print(f"Digest {len(records)} quote(s): {path}")
     return EXIT_OK

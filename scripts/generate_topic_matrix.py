@@ -10,7 +10,6 @@ Run with: python scripts/generate_topic_matrix.py
 
 from __future__ import annotations
 
-import argparse
 import csv
 import hashlib
 import html
@@ -446,32 +445,14 @@ def split_bucket(article_ref: str) -> str:
     return "test"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="compare expected files to disk and exit nonzero on drift; write nothing",
-    )
-    args = parser.parse_args(argv)
-    written = 0
-    drift: list[str] = []
-
-    def emit(path: Path, text: str) -> None:
-        nonlocal written
-        if args.check:
-            if not path.is_file() or path.read_bytes() != text.encode("utf-8"):
-                drift.append(str(path.relative_to(ROOT)))
-            return
-        if write_if_changed(path, text):
-            written += 1
-
+def main() -> None:
     source_rows = read_rows("sources.csv")
     section_rows = read_rows("sections.csv")
     section_ids = tuple(row["section_id"] for row in section_rows)
     section_names = {row["section_id"]: row["section_name"] for row in section_rows}
 
     articles: list[dict[str, Any]] = []
+    written = 0
     mislabelled = 0
 
     for source_index, source in enumerate(source_rows):
@@ -496,7 +477,8 @@ def main(argv: list[str] | None = None) -> int:
                 context_text=WAR_CONTEXT[language],
             )
             path = FIXTURES_DIR / source_id / fixture_name(source_id, section_id)
-            emit(path, html_text)
+            if write_if_changed(path, html_text):
+                written += 1
 
             gold_section = section_id
             if section_id == wrong_section:
@@ -536,10 +518,11 @@ def main(argv: list[str] | None = None) -> int:
             publication=publication,
             language=language,
             quote_text=spec["quote_text"],
-            speaker=SPEAKERS[language][0],
+            speaker=ROLE[language][0],
             file_name=source_ref,
         )
-        emit(FIXTURES_DIR / source_id / source_ref, off_topic_html)
+        if write_if_changed(FIXTURES_DIR / source_id / source_ref, off_topic_html):
+            written += 1
         articles.append(
             {
                 "article_ref": f"fixture://{source_id}/{source_ref}",
@@ -572,7 +555,8 @@ def main(argv: list[str] | None = None) -> int:
         ],
     }
     gold_text = json.dumps(gold_data, ensure_ascii=False, indent=2) + "\n"
-    emit(GOLD_PATH, gold_text)
+    if write_if_changed(GOLD_PATH, gold_text):
+        written += 1
 
     splits = {"train": 0, "dev": 0, "test": 0}
     for article in articles:
@@ -583,14 +567,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Gold articles: {len(articles)} (off-topic: {off_topic_count})")
     print(f"Deliberately wrong section labels: {mislabelled}")
     print(f"Deterministic splits: {splits}")
-    if args.check:
-        if drift:
-            print(f"DRIFT ({len(drift)} files): " + ", ".join(drift[:10]))
-            return 1
-        print("OK: generated matrix and gold set match")
-        return 0
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

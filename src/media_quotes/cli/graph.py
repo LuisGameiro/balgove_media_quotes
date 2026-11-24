@@ -36,7 +36,6 @@ def _json_dump(payload: Any) -> str:
 
 def _do_graph_init(settings: Settings) -> int:
     """Apply graph constraints and indexes."""
-    driver = None
     try:
         driver = get_driver(settings)
         with graph_session(driver, settings.neo4j_database) as session:
@@ -46,14 +45,10 @@ def _do_graph_init(settings: Settings) -> int:
     except Exception as exc:
         print(f"error initializing graph schema: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def _do_graph_status(settings: Settings) -> int:
     """Check connectivity and count nodes/edges in the graph."""
-    driver = None
     try:
         driver = get_driver(settings)
         if not check_graph_connectivity(driver):
@@ -61,9 +56,7 @@ def _do_graph_status(settings: Settings) -> int:
             return EXIT_FAILURE
 
         with graph_session(driver, settings.neo4j_database) as session:
-            node_rows = session.run(
-                "MATCH (n) WHERE NOT n:ProjectionMetadata RETURN count(n) AS node_count"
-            ).data()
+            node_rows = session.run("MATCH (n) RETURN count(n) AS node_count").data()
             edge_rows = session.run("MATCH ()-[r]->() RETURN count(r) AS rel_count").data()
             node_count = node_rows[0]["node_count"] if node_rows else 0
             rel_count = edge_rows[0]["rel_count"] if edge_rows else 0
@@ -83,9 +76,6 @@ def _do_graph_status(settings: Settings) -> int:
     except Exception as exc:
         print(f"error checking graph status: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def _do_graph_sync(
@@ -97,8 +87,6 @@ def _do_graph_sync(
 ) -> int:
     """Sync quotes from Postgres or JSONL exports into Neo4j."""
     topic = topic_id or settings.active_topic
-    driver = None
-    engine = None
     try:
         driver = get_driver(settings)
         with graph_session(driver, settings.neo4j_database) as session:
@@ -140,16 +128,10 @@ def _do_graph_sync(
     except Exception as exc:
         print(f"error syncing to graph: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()
-        if engine is not None:
-            engine.dispose()
 
 
 def _do_graph_lineage(settings: Settings, *, quote_id: str) -> int:
     """Retrieve supersession lineage chain for a quote."""
-    driver = None
     try:
         driver = get_driver(settings)
         with graph_session(driver, settings.neo4j_database) as session:
@@ -162,15 +144,11 @@ def _do_graph_lineage(settings: Settings, *, quote_id: str) -> int:
     except Exception as exc:
         print(f"error fetching lineage: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def _do_graph_speaker(settings: Settings, *, speaker: str, topic_id: str | None = None) -> int:
     """Retrieve chronological statements by a speaker."""
     topic = topic_id or settings.active_topic
-    driver = None
     try:
         driver = get_driver(settings)
         with graph_session(driver, settings.neo4j_database) as session:
@@ -180,9 +158,6 @@ def _do_graph_speaker(settings: Settings, *, speaker: str, topic_id: str | None 
     except Exception as exc:
         print(f"error fetching speaker timeline: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def _do_graph_divergence(
@@ -190,7 +165,6 @@ def _do_graph_divergence(
 ) -> int:
     """Retrieve cross-tier and regional distribution breakdown."""
     topic = topic_id or settings.active_topic
-    driver = None
     try:
         driver = get_driver(settings)
         with graph_session(driver, settings.neo4j_database) as session:
@@ -200,9 +174,6 @@ def _do_graph_divergence(
     except Exception as exc:
         print(f"error fetching divergence: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()
 
 
 def _do_graph_context(
@@ -215,7 +186,6 @@ def _do_graph_context(
 ) -> int:
     """Generate a bounded GraphRAG context pack enriched with graph metadata."""
     topic = topic_id or settings.active_topic
-    driver = None
     try:
         driver = get_driver(settings)
         with graph_session(driver, settings.neo4j_database) as session:
@@ -228,6 +198,3 @@ def _do_graph_context(
     except Exception as exc:
         print(f"error generating graph context pack: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    finally:
-        if driver is not None:
-            driver.close()

@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
-from media_quotes.validation import check_topic_rule_fallback, validate_data_dir
+from media_quotes.validation import validate_data_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -30,49 +30,6 @@ def _copy_data(tmp_path: Path) -> Path:
 
 def test_current_data_is_valid(tmp_path: Path) -> None:
     assert validate_data_dir(_copy_data(tmp_path)) == []
-
-
-def test_topic_rule_fallback_drift_is_detected(tmp_path: Path) -> None:
-    data = _copy_data(tmp_path)
-    path = data / "topic_rules.json"
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["accept_threshold"] = 99
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-    errors = validate_data_dir(data)
-
-    assert any("differs from topics/ukraine-war.json" in message for message in errors)
-
-
-def _fallback_check_dir(tmp_path: Path) -> tuple[Path, Path]:
-    """A real topic pack plus a fallback path that does not exist yet."""
-    topics = tmp_path / "topics"
-    topics.mkdir()
-    shutil.copyfile(DATA_DIR / "topics" / "ukraine-war.json", topics / "ukraine-war.json")
-    return topics, tmp_path / "topic_rules.json"
-
-
-def test_fallback_rule_missing_file_is_tolerated(tmp_path: Path) -> None:
-    topics, fallback = _fallback_check_dir(tmp_path)
-    errors: list[str] = []
-    check_topic_rule_fallback(topics, fallback, errors)
-    assert errors == []
-
-
-def test_fallback_rule_invalid_json_reports_error(tmp_path: Path) -> None:
-    topics, fallback = _fallback_check_dir(tmp_path)
-    fallback.write_text("{not valid json", encoding="utf-8")
-    errors: list[str] = []
-    check_topic_rule_fallback(topics, fallback, errors)
-    assert any("topic_rules.json" in message for message in errors)
-
-
-def test_fallback_rule_without_matching_rule_id_reports_error(tmp_path: Path) -> None:
-    topics, fallback = _fallback_check_dir(tmp_path)
-    fallback.write_text(json.dumps({"rule_id": "no-such-rule-v9"}), encoding="utf-8")
-    errors: list[str] = []
-    check_topic_rule_fallback(topics, fallback, errors)
-    assert any("no topic pack declares rule_id" in message for message in errors)
 
 
 def test_example_records_validate_against_store(tmp_path: Path) -> None:

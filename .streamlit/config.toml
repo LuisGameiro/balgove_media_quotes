@@ -7,18 +7,3 @@ showErrorDetails = false
 
 [browser]
 gatherUsageStats = false
-
-[theme]
-paddingTop = "2rem"
-
-[theme.light]
-primaryColor = "#1F6FEB"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F6F8"
-textColor = "#1F2328"
-
-[theme.dark]
-primaryColor = "#58A6FF"
-backgroundColor = "#0D1117"
-secondaryBackgroundColor = "#161B22"
-textColor = "#C9D1D9"

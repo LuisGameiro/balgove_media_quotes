@@ -10,8 +10,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError as PydanticValidationError
-
 from ..config import Settings, get_settings, unknown_setting_env_vars
 from ..exceptions import BudgetExceededError, ConfigError, MediaQuotesError, ValidationError
 from ..observability import configure_observability
@@ -53,7 +51,7 @@ def _do_doctor(settings: Settings) -> int:  # pragma: no cover
         return result
     rows = _load_registry(settings)
     blocked = sum(1 for row in rows if row.source_id in _MANDATORY and not row.usable)
-    dagster_home = os.environ.get("DAGSTER_HOME", str(settings.output_dir.parent / "dagster"))
+    dagster_home = os.environ.get("DAGSTER_HOME", str(settings.audit_dir.parent / "dagster"))
     print(f"T0 gate: {blocked} mandatory source(s) blocked; fixture replay available")
     print(
         f"Config: report_date={settings.report_date} window={settings.report_window_days}d "
@@ -74,7 +72,7 @@ def _add_shared(parser: argparse.ArgumentParser) -> None:  # pragma: no cover
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="deprecated compatibility flag; live collection is controlled by the command mode",
+        help="deprecated, accepted for compatibility: all mq commands are offline",
     )
     parser.add_argument("--dry-run", action="store_true", help="plan only; do not write")
     parser.add_argument("--date", dest="date", help="report date YYYY-MM-DD")
@@ -103,18 +101,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser(
         "run", help="daily collection, verification, digest and audit pipeline", **shared
     )
-    run_mode = run_parser.add_mutually_exclusive_group()
-    run_mode.add_argument(
+    run_parser.add_argument(
         "--from-blobs",
         dest="from_blobs",
         action="store_true",
-        help="ingest T0-cleared live HTML blobs from BLOB_DIR without network access",
-    )
-    run_mode.add_argument(
-        "--fixtures",
-        dest="fixtures",
-        action="store_true",
-        help="replay synthetic fixtures under var/test-output instead of collecting live data",
+        help="ingest T0-cleared live HTML blobs from BLOB_DIR instead of synthetic fixtures",
     )
     run_parser.add_argument(
         "--tier",
@@ -133,26 +124,7 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument(
         "--live", action="store_true", help="actually fetch; without it the command only plans"
     )
-    audit_parser = subparsers.add_parser(
-        "audit", help="deterministic audit report (JSON + MD)", **shared
-    )
-    audit_parser.add_argument(
-        "--fixtures", action="store_true", help="read fixture output under var/test-output"
-    )
-    missed_parser = subparsers.add_parser(
-        "audit-quotes",
-        help="AI shadow audit for quotes the deterministic rules may have missed (paid)",
-        **shared,
-    )
-    missed_parser.add_argument(
-        "--limit", dest="missed_limit", type=int, default=20, help="max articles to audit"
-    )
-    missed_parser.add_argument(
-        "--max-cost", dest="max_cost", type=float, help="required with --execute"
-    )
-    missed_parser.add_argument(
-        "--execute", action="store_true", help="make paid model calls (default: plan only)"
-    )
+    subparsers.add_parser("audit", help="deterministic audit report (JSON + MD)", **shared)
     subparsers.add_parser("logs", help="correlated JSON logs for a run", **shared)
     eval_parser = subparsers.add_parser("eval", help="metrics on a synthetic gold set", **shared)
     eval_parser.add_argument("--gold-set", dest="gold_set", help="gold set version")
@@ -211,32 +183,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="run the pipeline for each date in --from..--to after passing budget checks",
     )
     backfill.add_argument(
-        "--fetch-archive",
-        dest="fetch_archive",
-        action="store_true",
-        help="discover dated articles from approved live RSS/sitemap routes before replay",
-    )
-    backfill.add_argument(
-        "--max-archive-articles",
-        dest="max_archive_articles",
-        type=int,
-        default=200,
-        help="maximum articles to store during the archive stage",
-    )
-    backfill.add_argument(
         "--from-blobs",
         dest="from_blobs",
         action="store_true",
         help="ingest live HTML blobs from BLOB_DIR instead of synthetic fixtures during --execute",
     )
-    digest_parser = subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
-    digest_parser.add_argument(
-        "--fixtures", action="store_true", help="read fixture output under var/test-output"
-    )
+    subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
     export_parser = subparsers.add_parser("export", help="derived JSONL export", **shared)
-    export_parser.add_argument(
-        "--fixtures", action="store_true", help="read fixture output under var/test-output"
-    )
     export_parser.add_argument(
         "--from-db",
         action="store_true",
@@ -262,7 +215,9 @@ def _build_parser() -> argparse.ArgumentParser:
     drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
     drill.add_argument("--reference", dest="reference")
 
-    graph_parser = subparsers.add_parser("graph", help="manage derived Neo4j graph projection")
+    graph_parser = subparsers.add_parser(
+        "graph", help="manage derived Neo4j graph projection", **shared
+    )
     graph_sub = graph_parser.add_subparsers(dest="graph_action", required=True)
     graph_sub.add_parser("init", help="apply Neo4j schema constraints and indexes", **shared)
     graph_sub.add_parser("status", help="check Neo4j connectivity and element counts", **shared)
@@ -308,6 +263,7 @@ def _ensure_utf8_output() -> None:
 def cli_entry(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
     """CLI-only entry point: fix the console encoding, then run main()."""
     _ensure_utf8_output()
+    configure_observability(get_settings())  # once per process, not once per pipeline run
     return main(argv)
 
 
@@ -317,7 +273,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     from . import (
         _bootstrap,
         _do_audit,
-        _do_audit_quotes,
         _do_backfill,
         _do_batch,
         _do_blob_prune,
@@ -341,9 +296,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+    settings = get_settings()
     try:
-        settings = get_settings()
-        configure_observability(settings)  # once per process, inside the handled boundary
         command = str(args.command)
         topic_arg = getattr(args, "topic", None)
         if command == "batch":
@@ -441,21 +395,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_date=report_date,
                 limit=int(args.limit),
                 dry_run=not bool(args.live),
-                topic_id=topic_arg,
             )
         if command in {"run", "audit", "digest"}:
             report_date = _parse_report_date(getattr(args, "date", None), settings)
-            fixture_mode = command != "run" and bool(getattr(args, "fixtures", False))
-            active_settings = settings.for_source_mode("fixtures") if fixture_mode else settings
-            source_mode = "fixtures" if fixture_mode else "live"
             if command == "run":
-                source_mode = (
-                    "fixtures"
-                    if getattr(args, "fixtures", False)
-                    else "blobs"
-                    if getattr(args, "from_blobs", False)
-                    else "live"
-                )
+                source_mode = "blobs" if getattr(args, "from_blobs", False) else "fixtures"
                 run_tier = getattr(args, "run_tier", None)
                 run_kwargs: dict[str, Any] = {
                     "report_date": report_date,
@@ -465,39 +409,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
                 if topic_arg is not None:
                     run_kwargs["topic_id"] = topic_arg
-                run_kwargs["source_mode"] = source_mode
+                if source_mode != "fixtures":
+                    run_kwargs["source_mode"] = source_mode
                 if run_tier is not None:
                     run_kwargs["tier"] = int(run_tier)
                 return _do_run(settings, **run_kwargs)
             if command == "audit":
                 return _do_audit(
-                    active_settings,
+                    settings,
                     report_date=report_date,
                     run_id=getattr(args, "run_id", None),
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
-                    source_mode=source_mode,
                 )
             if topic_arg is not None:
                 return _do_digest(
-                    active_settings,
+                    settings,
                     report_date=report_date,
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
                 )
-            return _do_digest(
-                active_settings, report_date=report_date, out=getattr(args, "out", None)
-            )
-        if command == "audit-quotes":
-            report_date = _parse_report_date(getattr(args, "date", None), settings)
-            return _do_audit_quotes(
-                settings,
-                report_date=report_date,
-                topic_id=topic_arg,
-                limit=int(getattr(args, "missed_limit", 20)),
-                max_cost=getattr(args, "max_cost", None),
-                execute=bool(getattr(args, "execute", False)),
-            )
+            return _do_digest(settings, report_date=report_date, out=getattr(args, "out", None))
         if command == "logs":
             run_id = getattr(args, "run_id", None)
             if not run_id:
@@ -523,14 +455,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if command == "export":
             report_date = _parse_report_date(getattr(args, "date", None), settings)
-            active_settings = (
-                settings.for_source_mode("fixtures")
-                if getattr(args, "fixtures", False)
-                else settings
-            )
             if topic_arg is not None:
                 return _do_export(
-                    active_settings,
+                    settings,
                     report_date=report_date,
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
@@ -539,7 +466,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_tokens=int(getattr(args, "max_tokens", 4000)),
                 )
             return _do_export(
-                active_settings,
+                settings,
                 report_date=report_date,
                 out=getattr(args, "out", None),
                 from_db=bool(getattr(args, "from_db", False)),
@@ -569,10 +496,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 backfill_kwargs["topic_id"] = topic_arg
             if getattr(args, "from_blobs", False):
                 backfill_kwargs["source_mode"] = "blobs"
-            backfill_kwargs["fetch_archive"] = bool(getattr(args, "fetch_archive", False))
-            backfill_kwargs["max_archive_articles"] = int(
-                getattr(args, "max_archive_articles", 200)
-            )
             return _do_backfill(settings, **backfill_kwargs)
         if command == "graph":
             action = str(getattr(args, "graph_action", "") or "")
@@ -591,12 +514,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if action == "status":
                 return _do_graph_status(settings)
             if action == "sync":
-                raw_date = getattr(args, "date", None)
-                graph_report_date = _parse_report_date(raw_date, settings) if raw_date else None
+                report_date = _parse_report_date(getattr(args, "date", None), settings)
                 return _do_graph_sync(
                     settings,
                     from_db=bool(getattr(args, "from_db", False)),
-                    report_date=graph_report_date,
+                    report_date=report_date,
                     topic_id=topic_arg,
                 )
             if action == "lineage":
@@ -615,27 +537,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_tokens=int(getattr(args, "max_tokens", 4000)),
                     limit=int(getattr(args, "limit", 25)),
                 )
-    except (
-        ValidationError,
-        PydanticValidationError,
-        MediaQuotesError,
-        FileExistsError,
-        FileNotFoundError,
-        ValueError,
-    ) as exc:
+    except (ValidationError, MediaQuotesError, FileExistsError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return (
             EXIT_CONFIG
-            if isinstance(
-                exc,
-                (
-                    ConfigError,
-                    BudgetExceededError,
-                    ValueError,
-                    PydanticValidationError,
-                    FileNotFoundError,
-                ),
-            )
+            if isinstance(exc, (ConfigError, BudgetExceededError, ValueError))
             else EXIT_FAILURE
         )
     parser.error(f"unknown command: {args.command}")

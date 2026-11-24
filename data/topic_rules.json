@@ -1,11 +1,7 @@
 {
   "rule_id": "ukraine-war-v1",
-  "version": "1.1.0",
-  "locales": [
-    "en",
-    "uk",
-    "ru"
-  ],
+  "version": "1.0.0",
+  "locales": ["en", "uk", "ru"],
   "anchors": {
     "en": [
       "ukraine",
@@ -91,19 +87,7 @@
   "exclusions": {
     "en": [
       "gaza",
-      "israel hamas"
-    ],
-    "uk": [
-      "газа",
-      "ізраїль хамас"
-    ],
-    "ru": [
-      "газа",
-      "израиль хамас"
-    ]
-  },
-  "hard_exclusions": {
-    "en": [
+      "israel hamas",
       "premier league",
       "champions league",
       "super bowl",
@@ -115,6 +99,8 @@
       "reality show"
     ],
     "uk": [
+      "газа",
+      "ізраїль хамас",
       "прем'єр-ліга",
       "ліга чемпіонів",
       "футбол",
@@ -126,6 +112,8 @@
       "реальне шоу"
     ],
     "ru": [
+      "газа",
+      "израиль хамас",
       "премьер-лига",
       "лига чемпионов",
       "футбол",
@@ -138,12 +126,12 @@
     ]
   },
   "weights": {
-    "anchor": 3.0,
-    "supporting_term": 1.0,
-    "exclusion": -5.0,
-    "title_bonus": 1.0
+    "anchor": 3,
+    "supporting_term": 1,
+    "exclusion": -5,
+    "title_bonus": 1
   },
-  "accept_threshold": 2.0,
+  "accept_threshold": 2,
   "uncertain_band": {
     "lower": 0.5,
     "upper": 1.9

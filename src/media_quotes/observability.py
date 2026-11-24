@@ -1,29 +1,37 @@
-"""Structured logging and optional OpenTelemetry distributed tracing."""
+"""JSON logging with secret redaction and optional OpenTelemetry tracing.
+
+A trace_id should be propagated from orchestrator run -> fetch -> extract -> LLM ->
+verifier -> digest so every quote can be traced end to end.
+"""
 
 from __future__ import annotations
 
 import logging
 import re
 import sys
-from collections.abc import Mapping, MutableMapping, Sequence
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from structlog.typing import EventDict, WrappedLogger
 
 from .config import Settings
 
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace.export import SpanExporter
+    from opentelemetry.trace import Tracer
+
 _SENSITIVE_PATTERNS = (
-    "password",
-    "secret",
-    "token",
     "api_key",
     "apikey",
+    "token",
     "authorization",
-    "auth_token",
-    "access_token",
+    "password",
+    "secret",
     "database_url",
-    "private_key",
 )
+_SENSITIVE_KEYS = _SENSITIVE_PATTERNS
+_REDACTED = "[REDACTED]"
 
 
 def _is_sensitive_key(key: Any) -> bool:
@@ -32,12 +40,7 @@ def _is_sensitive_key(key: Any) -> bool:
 
 
 _SECRET_STRING_PATTERNS = re.compile(
-    r"("
-    r"[a-z][a-z0-9+.-]*://[^:@/\s]+:[^@/\s]+@"
-    r"|Bearer\s+[A-Za-z0-9._~+/-]+"
-    r"|Basic\s+[A-Za-z0-9+/=]+"
-    r"|sk-[A-Za-z0-9_-]{20,}"
-    r")",
+    r"(https?://[^:@/\s]+:[^@/\s]+@|Bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]{20,})",
     re.IGNORECASE,
 )
 
@@ -50,91 +53,77 @@ def _redact(value: Any) -> Any:
     """Redact sensitive mapping keys, string secrets, and collections."""
     if isinstance(value, str):
         return _scrub_string(value)
-    if isinstance(value, Mapping):
-        redacted: dict[str, Any] = {}
-        for k, v in value.items():
-            if _is_sensitive_key(k):
-                redacted[str(k)] = "[REDACTED]"
-            else:
-                redacted[str(k)] = _redact(v)
-        return redacted
-    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+    if isinstance(value, (dict, Mapping)):
+        return {
+            key: (_REDACTED if _is_sensitive_key(key) else _redact(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
         return [_redact(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact(item) for item in value)
     return value
 
 
-def redact_event_dict(
-    _logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]
-) -> dict[str, Any]:
-    """Structlog processor that redacts secrets before output formatting."""
-    return _redact(dict(event_dict))  # type: ignore[no-any-return]
-
-
-# Backwards-compatible name used by older callers and tests.
-redact_sensitive = redact_event_dict
+def redact_sensitive(logger: WrappedLogger, method_name: str, event_dict: EventDict) -> EventDict:
+    """Redact secret-like fields before rendering; `license_reference` is audit data."""
+    return cast(EventDict, _redact(event_dict))
 
 
 def configure_logging(settings: Settings) -> None:
-    """Configure stdlib and structlog logging handlers and formatters."""
-    shared_processors: list[structlog.types.Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        redact_event_dict,
-    ]
-
-    log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
-
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stderr,
-        level=log_level,
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if settings.log_json
+        else structlog.dev.ConsoleRenderer()
     )
-
-    if settings.log_json:
-        processors: list[structlog.types.Processor] = [
-            *shared_processors,
-            structlog.processors.JSONRenderer(),
-        ]
-    else:
-        processors = [*shared_processors, structlog.dev.ConsoleRenderer()]
-
     structlog.configure(
-        processors=processors,
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            redact_sensitive,
+            renderer,
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
         logger_factory=structlog.PrintLoggerFactory(sys.stderr),
-        wrapper_class=structlog.make_filtering_bound_logger(log_level),
         cache_logger_on_first_use=True,
     )
 
 
-def configure_tracing(settings: Settings) -> Any | None:
-    """Configure OpenTelemetry tracing if enabled; return the tracer when active."""
-    if not settings.otel_enabled:
-        return None
-
-    from importlib import import_module
-
-    try:
-        trace = import_module("opentelemetry.trace")
-        provider = import_module("opentelemetry.sdk.trace").TracerProvider()
-        export = import_module("opentelemetry.sdk.trace.export")
-        if settings.otel_exporter_otlp_endpoint:
-            otlp = import_module("opentelemetry.exporter.otlp.proto.http.trace_exporter")
-            exporter = otlp.OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint)
-        else:
-            exporter = export.ConsoleSpanExporter()
-        provider.add_span_processor(export.BatchSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-        return trace.get_tracer("media_quotes")
-    except ImportError:
-        # Fail closed: OTEL_ENABLED without the SDK must not crash process startup.
-        logging.getLogger(__name__).warning(
-            "OTEL_ENABLED=true but OpenTelemetry packages are unavailable; tracing disabled"
-        )
-        return None
-
-
-def configure_observability(settings: Settings) -> Any | None:
-    """Combined logging and tracing entry point."""
+def configure_observability(settings: Settings) -> Tracer | None:
+    """Single entry point used by CLI/pipeline runs: logging + tracing together (B3)."""
     configure_logging(settings)
     return configure_tracing(settings)
+
+
+def configure_tracing(settings: Settings) -> Tracer | None:
+    """Return a tracer (or None when disabled). Safe no-op without the SDK."""
+    if not settings.otel_enabled:
+        return None
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    except ImportError:  # pragma: no cover - depends on optional install
+        return None
+
+    exporter: SpanExporter
+    endpoint = settings.otel_exporter_otlp_endpoint
+    if endpoint:
+        try:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        except ImportError:  # pragma: no cover - core dependency installed
+            return None
+        exporter = OTLPSpanExporter(endpoint=endpoint)
+    else:
+        # Console is local-only: with no configured collector an OTLP exporter would
+        # drop every span and generate connection errors.
+        exporter = ConsoleSpanExporter()
+
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return trace.get_tracer("media_quotes")

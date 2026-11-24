@@ -381,7 +381,6 @@ def parse_newspaper_html(
         or dom_meta.get("publication_name")
         or str(extracted.metadata.get("publication_name") or "")
     )
-    byline = byline or (extractor_hints.fallback_byline if extractor_hints is not None else "")
     topic_relevant = is_topic_relevant(
         article_text, topic_pack=topic_pack, title=title, url=canonical_url
     )

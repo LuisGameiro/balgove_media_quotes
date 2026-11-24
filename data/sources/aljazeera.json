@@ -17,7 +17,7 @@
   "discovery_method": "sitemap",
   "archive_start_date": "2026-10-01",
   "enabled": true,
-  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Check bylines per article.",
+  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Check bylines per article; rights review required.",
   "routes": [
     {
       "route_id": "route-aljazeera-ukraine-default",

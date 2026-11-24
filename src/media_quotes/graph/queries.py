@@ -20,20 +20,8 @@ def _normalize_speaker_key(name: str) -> str:
     return re.sub(r"[-\s]+", "_", cleaned)
 
 
-def fetch_sync_metadata(session: GraphSessionProtocol) -> dict[str, Any]:
-    """Read the most recent projection sync summary."""
-    res = session.run(
-        "MATCH (m:ProjectionMetadata {key: 'media_quotes'}) "
-        "RETURN m.last_synced_at AS last_synced_at, "
-        "m.quotes_projected AS quotes_projected, "
-        "m.error_count AS error_count"
-    )
-    rows = res.data()
-    return rows[0] if rows else {}
-
-
 def fetch_supersession_lineage(session: GraphSessionProtocol, quote_id: str) -> dict[str, Any]:
-    """Retrieve the quote's immediate superseded and superseding links."""
+    """Retrieve the full evolutionary chain of a claim (superseding and superseded)."""
     query = """
     MATCH (q:Quote {canonical_quote_id: $quote_id})
     OPTIONAL MATCH (q)-[sup:SUPERSEDES]->(ancestor:Quote)
@@ -62,10 +50,7 @@ def fetch_speaker_timeline(
     topic_id: str = "ukraine-war",
 ) -> list[dict[str, Any]]:
     """Retrieve chronological statements by a speaker across all outlets and tiers."""
-    cleaned_speaker = speaker.strip()
-    if not cleaned_speaker:
-        return []
-    speaker_key = _normalize_speaker_key(cleaned_speaker)
+    speaker_key = _normalize_speaker_key(speaker)
     query = """
     MATCH (sp:Speaker)-[:SAID]->(q:Quote)-[:ON_TOPIC]->(t:Topic {topic_id: $topic_id})
     WHERE sp.speaker_key = $speaker_key OR toLower(sp.display_name) CONTAINS toLower($speaker)
@@ -86,7 +71,7 @@ def fetch_speaker_timeline(
     res = session.run(
         query,
         {
-            "speaker": cleaned_speaker,
+            "speaker": speaker.strip(),
             "speaker_key": speaker_key,
             "topic_id": topic_id,
         },
@@ -130,9 +115,6 @@ def fetch_graphrag_subgraph(
     MATCH (q)-[:IN_SECTION]->(sec:Section)
     WHERE q.is_obsolete = false
       AND ($section_id IS NULL OR sec.section_id = $section_id)
-    WITH s, a, q, sec
-    ORDER BY q.publication_date DESC, s.tier ASC
-    LIMIT $limit
     OPTIONAL MATCH (sp:Speaker)-[:SAID]->(q)
     OPTIONAL MATCH (q)-[sup:SUPERSEDES]->(old_q:Quote)
     RETURN q.canonical_quote_id AS quote_id,
@@ -150,6 +132,7 @@ def fetch_graphrag_subgraph(
            old_q.canonical_quote_id AS supersedes_quote_id,
            sup.reason AS supersession_reason
     ORDER BY q.publication_date DESC, s.tier ASC
+    LIMIT $limit
     """
     res = session.run(
         query,

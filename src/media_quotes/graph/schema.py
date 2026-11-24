@@ -23,8 +23,6 @@ CONSTRAINTS: Final[tuple[str, ...]] = (
     "FOR (sec:Section) REQUIRE sec.section_id IS UNIQUE;",
     "CREATE CONSTRAINT topic_id_unique IF NOT EXISTS FOR (t:Topic) REQUIRE t.topic_id IS UNIQUE;",
     "CREATE CONSTRAINT term_key_unique IF NOT EXISTS FOR (tm:Term) REQUIRE tm.term_key IS UNIQUE;",
-    "CREATE CONSTRAINT projection_key_unique IF NOT EXISTS "
-    "FOR (m:ProjectionMetadata) REQUIRE m.key IS UNIQUE;",
 )
 
 INDEXES: Final[tuple[str, ...]] = (

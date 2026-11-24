@@ -15,7 +15,6 @@ from .models import ObsolescenceEvidence, ObsolescenceFlag, ReviewState
 VERDICTS = frozenset({"confirmed", "rejected", "escalated"})
 TERMINAL_STATES = frozenset({"confirmed", "rejected"})
 JUDGE_CONFIDENCE_THRESHOLD = 0.80
-MAX_JUDGE_DECISIONS = 8  # bounded paid judge calls per partition, including historical replay
 JUDGE_VERDICTS = {
     "accept": "confirmed",
     "accepted": "confirmed",
@@ -26,12 +25,6 @@ JUDGE_VERDICTS = {
     "escalate": "escalated",
     "escalated": "escalated",
 }
-
-
-class JudgeProviderLike(Protocol):
-    """Callable judge provider shape: one decision per task/context pair."""
-
-    def decide(self, *, task: str, context: Mapping[str, Any]) -> Any: ...
 
 
 class JudgeDecisionLike(Protocol):
@@ -120,19 +113,6 @@ def flag_with_judge_provenance(
     return flag.model_copy(update={"evidence": evidence, "confidence": confidence})
 
 
-def _eligible_obsolescence_pair(old: ExportQuoteRecord, newer: ExportQuoteRecord) -> bool:
-    """Cheap deterministic gates that must pass before a paid judge call."""
-    return (
-        old.quote_id != newer.quote_id
-        and old.topic_id == newer.topic_id
-        and newer.publication_date >= old.publication_date
-        and normalise_text(old.quote_text_original) != normalise_text(newer.quote_text_original)
-        and newer.original_reporting_flag == "first-hand"
-        and newer.rights_status in APPROVED_RIGHTS
-        and newer.access_mode in PERMITTED_ACCESS
-    )
-
-
 def assess_obsolescence(
     old: ExportQuoteRecord,
     newer: ExportQuoteRecord,
@@ -141,7 +121,15 @@ def assess_obsolescence(
     judge: JudgeDecisionLike,
 ) -> ObsolescenceFlag | None:
     """Build a flag only when the judge confirms a newer quote supersedes an older one."""
-    if not _eligible_obsolescence_pair(old, newer):
+    if old.quote_id == newer.quote_id or old.topic_id != newer.topic_id:
+        return None
+    if newer.publication_date < old.publication_date:
+        return None
+    if normalise_text(old.quote_text_original) == normalise_text(newer.quote_text_original):
+        return None
+    if newer.original_reporting_flag != "first-hand":
+        return None
+    if newer.rights_status not in APPROVED_RIGHTS or newer.access_mode not in PERMITTED_ACCESS:
         return None
 
     confidence = float(_value(judge, "confidence", 0.0))
@@ -161,7 +149,6 @@ def assess_obsolescence(
         superseding_span=newer.quote_text_original,
         decision_id=decision_id,
         rationale=rationale or "Newer first-hand quote supersedes the earlier position.",
-        new_quote_id=newer.quote_id,
     )
     return ObsolescenceFlag(
         evidence=evidence,
@@ -172,56 +159,14 @@ def assess_obsolescence(
     )
 
 
-def _candidate_judge_context(old: ExportQuoteRecord, newer: ExportQuoteRecord) -> dict[str, Any]:
-    """Minimal, untrusted payload describing one supersession candidate pair."""
-    return {
-        "old_quote_id": old.quote_id,
-        "old_content_hash": old.content_hash,
-        "old_quote_text": old.quote_text_original,
-        "old_publication_date": _label(old, "publication_date"),
-        "newer_quote_id": newer.quote_id,
-        "newer_article_id": newer.article_url,
-        "newer_content_hash": newer.content_hash,
-        "newer_quote_text": newer.quote_text_original,
-        "newer_publication_date": _label(newer, "publication_date"),
-        "newer_is_first_hand": newer.original_reporting_flag == "first-hand",
-        "newer_rights_cleared": newer.rights_status in APPROVED_RIGHTS
-        and newer.access_mode in PERMITTED_ACCESS,
-    }
-
-
 def propose_obsolescence(
-    records: Sequence[ExportQuoteRecord],
-    *,
-    now: datetime,
-    judge: JudgeDecisionLike | JudgeProviderLike,
-    max_decisions: int = MAX_JUDGE_DECISIONS,
+    records: Sequence[ExportQuoteRecord], *, now: datetime, judge: JudgeDecisionLike
 ) -> list[ObsolescenceFlag]:
-    """Deterministic candidate flags; a human still decides before any quote is hidden.
-
-    Eligible pairs reach the paid judge at most ``max_decisions`` times per call. A
-    precomputed decision is reused as-is (offline/tests).
-    """
-    if max_decisions < 0:
-        raise ValueError("max_decisions must not be negative")
+    """Deterministic candidate flags; a human still decides before any quote is hidden."""
     proposed: list[ObsolescenceFlag] = []
-    decide = getattr(judge, "decide", None)
-    decisions = 0
     for index, old in enumerate(records):
-        if decisions >= max_decisions:
-            break
         for newer in records[index + 1 :]:
-            if not _eligible_obsolescence_pair(old, newer):
-                continue
-            if decisions >= max_decisions:
-                break
-            decision: Any = judge
-            if callable(decide):
-                decision = decide(
-                    task="obsolescence_review", context=_candidate_judge_context(old, newer)
-                )
-                decisions += 1
-            flag = assess_obsolescence(old, newer, now=now, judge=decision)
+            flag = assess_obsolescence(old, newer, now=now, judge=judge)
             if flag is not None:
                 proposed.append(flag)
                 break
@@ -312,7 +257,6 @@ def obsoletion_allowed(*, obsolete_precision: float, consecutive_failures: int) 
 
 
 __all__ = [
-    "MAX_JUDGE_DECISIONS",
     "ObsolescenceEvidence",
     "ObsolescenceFlag",
     "ReviewQueue",

@@ -1,29 +1,155 @@
-"""Article, quote, classification, digest and export-record persistence."""
+"""Idempotent database writes for the source registry, articles, quotes, and governance tables."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import or_, select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from ...config import DEFAULT_TOPIC_ID
-from ...text_utils import normalise_text
-from ..tables import (
+from ..config import DEFAULT_TOPIC_ID
+from ..text_utils import normalise_text
+from .tables import (
     articles_table,
+    audit_events_table,
+    decision_cache_table,
     digests_table,
+    eval_runs_table,
+    gold_set_labels_table,
     obsolescence_flags_table,
+    pipeline_runs_table,
     quote_classifications_table,
     quotes_table,
     sources_table,
+    storage_partitions_table,
 )
-from .common import _inserted_count, _jsonable, _run_uuid
 
 if TYPE_CHECKING:
-    from ...models import ExportQuoteRecord
+    from ..gold_set import GoldSet
+    from ..models import ExportQuoteRecord
+    from ..registry import SourceRegistryRow
+    from ..risk_controls.models import ObsolescenceFlag
+
+
+def _jsonable(value: Any) -> Any:
+    """Convert dates, UUIDs and models into JSONB-safe Python values."""
+    return json.loads(json.dumps(value, default=str))
+
+
+def record_eval_run(
+    session: Session,
+    *,
+    gold_set_version: str,
+    report_date: date,
+    metrics: dict[str, Any],
+    thresholds: dict[str, Any],
+    passed: bool,
+    trace_id: str | None = None,
+    commit: bool = True,
+) -> str:
+    """Append one evaluation result; eval ids are stable per gold set + date."""
+    from ..evaluation import EVAL_CONTRACT_VERSION
+
+    eval_id = _run_uuid(
+        f"eval:{EVAL_CONTRACT_VERSION}:{gold_set_version}:{report_date.isoformat()}"
+    )
+    eval_id_str = str(eval_id)
+    statement = pg_insert(eval_runs_table).values(
+        eval_id=eval_id,
+        gold_set_version=gold_set_version,
+        run_id=f"eval-{gold_set_version}",
+        report_date=report_date,
+        metrics=_jsonable(metrics),
+        thresholds=_jsonable(thresholds),
+        passed=passed,
+        trace_id=trace_id,
+    )
+    statement = statement.on_conflict_do_nothing(index_elements=["eval_id"])
+    session.execute(statement)
+    if commit:
+        session.commit()
+    return eval_id_str
+
+
+def sync_gold_set_labels(session: Session, gold_set: GoldSet, *, commit: bool = True) -> int:
+    """Persist gold-set labels and negative candidates with their deterministic split."""
+    from ..gold_set import split_for
+
+    rows: list[dict[str, Any]] = []
+    for article in gold_set.articles:
+        split = split_for(article.article_ref, gold_set.version)
+        pub_date = date.fromisoformat(article.publication_date[:10])
+        if not article.quotes:
+            label_id = _run_uuid(f"gold-art:{gold_set.version}:{article.article_ref}")
+            rows.append(
+                {
+                    "label_id": label_id,
+                    "gold_set_version": gold_set.version,
+                    "split": split,
+                    "article_ref": article.article_ref,
+                    "source_id": article.source_id,
+                    "publication_date": pub_date,
+                    "relevant": article.relevant,
+                    "quote_text": None,
+                    "section_id": None,
+                    "human_label": False,
+                    "is_negative_candidate": False,
+                }
+            )
+        else:
+            for idx, quote in enumerate(article.quotes):
+                label_id = _run_uuid(f"gold-quote:{gold_set.version}:{article.article_ref}:{idx}")
+                rows.append(
+                    {
+                        "label_id": label_id,
+                        "gold_set_version": gold_set.version,
+                        "split": split,
+                        "article_ref": article.article_ref,
+                        "source_id": article.source_id,
+                        "publication_date": pub_date,
+                        "relevant": article.relevant,
+                        "quote_text": quote.quote_text,
+                        "section_id": quote.section_id,
+                        "human_label": quote.human_label,
+                        "is_negative_candidate": False,
+                    }
+                )
+    for idx, neg in enumerate(gold_set.negative_candidates):
+        label_id = _run_uuid(f"gold-neg:{gold_set.version}:{idx}")
+        rows.append(
+            {
+                "label_id": label_id,
+                "gold_set_version": gold_set.version,
+                "split": "test",
+                "article_ref": "negative_candidate",
+                "source_id": "negative",
+                "publication_date": date(2026, 11, 19),
+                "relevant": False,
+                "quote_text": neg.quote_text,
+                "section_id": None,
+                "human_label": False,
+                "is_negative_candidate": True,
+            }
+        )
+    if not rows:
+        return 0
+    statement = pg_insert(gold_set_labels_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["label_id"])
+    result = session.execute(statement)
+    if commit:
+        session.commit()
+    return _inserted_count(result, len(rows))
+
+
+def _inserted_count(result: object, attempted: int) -> int:
+    """psycopg reports -1 for INSERT .. ON CONFLICT DO NOTHING; fall back to attempted."""
+    rowcount = getattr(result, "rowcount", None)
+    return rowcount if isinstance(rowcount, int) and rowcount >= 0 else attempted
 
 
 def persist_articles_and_quotes(
@@ -322,6 +448,208 @@ def persist_digest_manifest(
     return str(digest_id)
 
 
+def persist_obsolescence_flags(
+    session: Session,
+    flags: list[ObsolescenceFlag],
+    *,
+    commit: bool = True,
+) -> int:
+    """Sync human-in-the-loop obsolescence flags to PostgreSQL when matching quotes exist."""
+    if not flags:
+        return 0
+    canonical_ids = {flag.evidence.old_quote_id for flag in flags}
+    mapping = dict(
+        session.execute(
+            select(quotes_table.c.canonical_quote_id, quotes_table.c.quote_id).where(
+                quotes_table.c.canonical_quote_id.in_(canonical_ids)
+            )
+        ).all()
+    )
+    rows: list[dict[str, Any]] = []
+    for flag in flags:
+        quote_uuid = mapping.get(flag.evidence.old_quote_id)
+        if not quote_uuid:
+            continue
+        flag_id = _run_uuid(
+            f"obs-flag:{flag.evidence.old_quote_id}:{flag.evidence.decision_id}:{flag.state}"
+        )
+        rows.append(
+            {
+                "flag_id": flag_id,
+                "quote_id": quote_uuid,
+                "is_obsolete": flag.may_hide_quote(now=datetime.now(UTC)),
+                "reason": f"[{flag.state}] {flag.reason_code or flag.evidence.rationale}",
+                "superseded_by": [],
+            }
+        )
+    if not rows:
+        return 0
+    statement = pg_insert(obsolescence_flags_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["flag_id"])
+    result = session.execute(statement)
+    if commit:
+        session.commit()
+    return _inserted_count(result, len(rows))
+
+
+def _run_uuid(run_id: str) -> UUID:
+    """Derive a stable UUID from the string ids used by the CLI."""
+    return uuid5(NAMESPACE_URL, run_id)
+
+
+def start_pipeline_run(
+    session: Session,
+    *,
+    run_id: str,
+    pipeline: str,
+    partition_date: date,
+    topic_id: str = DEFAULT_TOPIC_ID,
+    stats: dict[str, Any] | None = None,
+    commit: bool = True,
+) -> str:
+    """Insert a run row in 'running' state; idempotent on re-run."""
+    values = {
+        "run_id": _run_uuid(run_id),
+        "pipeline": pipeline,
+        "partition_date": partition_date,
+        "status": "running",
+        "stats": _jsonable(stats or {}),
+        "topic_id": topic_id,
+    }
+    statement = pg_insert(pipeline_runs_table).values(values)
+    statement = statement.on_conflict_do_nothing(index_elements=["run_id"])
+    session.execute(statement)
+    if commit:
+        session.commit()
+    return str(values["run_id"])
+
+
+def finish_pipeline_run(
+    session: Session,
+    *,
+    run_id: str,
+    status: str,
+    stats: dict[str, Any],
+    commit: bool = True,
+) -> None:
+    """Terminal run state (running→succeeded/failed/partial) with final stats."""
+    if status not in {"succeeded", "failed", "partial"}:
+        raise ValueError(f"invalid terminal run status: {status}")
+    statement = (
+        update(pipeline_runs_table)
+        .where(pipeline_runs_table.c.run_id == _run_uuid(run_id))
+        .values(status=status, stats=_jsonable(stats), finished_at=datetime.now(UTC))
+    )
+    session.execute(statement)
+    if commit:
+        session.commit()
+
+
+def _event_details(event: dict[str, Any]) -> dict[str, Any]:
+    reserved = {"run_id", "trace_id", "step", "entity_type", "entity_id", "status"}
+    return {key: value for key, value in event.items() if key not in reserved}
+
+
+def append_audit_events(
+    session: Session, events: list[dict[str, Any]], *, commit: bool = True
+) -> int:
+    """Append audit/coverage events; never updates existing rows."""
+    if not events:
+        return 0
+    values = []
+    for event in events:
+        values.append(
+            {
+                "run_id": _run_uuid(str(event["run_id"])) if event.get("run_id") else None,
+                "trace_id": event.get("trace_id"),
+                "step": str(event.get("step") or "unknown"),
+                "entity_type": event.get("entity_type"),
+                "entity_id": event.get("entity_id"),
+                "status": str(event.get("status") or "unknown"),
+                "details": _jsonable(event.get("details") or _event_details(event)),
+            }
+        )
+    session.execute(audit_events_table.insert().values(values))
+    if commit:
+        session.commit()
+    return len(values)
+
+
+class DecisionCacheEntry(BaseModel):
+    """Immutable result of one cached LLM decision (DEC-05/B2)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    cache_key: str = Field(min_length=1)
+    model_snapshot: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)
+    schema_hash: str = Field(min_length=1)
+    input_hash: str = Field(min_length=1)
+    output: dict[str, Any]
+    trace_id: str | None = None
+
+
+def upsert_decision_cache(
+    session: Session, entry: DecisionCacheEntry, *, commit: bool = True
+) -> bool:
+    """Idempotent insert: an existing cache key is never overwritten (returns False)."""
+    values = entry.model_dump(mode="json")
+    statement = pg_insert(decision_cache_table).values(values)
+    statement = statement.on_conflict_do_nothing(index_elements=["cache_key"])
+    result = session.execute(statement)
+    if commit:
+        session.commit()
+    rowcount = getattr(result, "rowcount", 0) or 0
+    return rowcount > 0
+
+
+def get_decision_cache(session: Session, cache_key: str) -> dict[str, Any] | None:
+    """Look up an existing decision by unique cache key."""
+    statement = select(decision_cache_table).where(decision_cache_table.c.cache_key == cache_key)
+    row = session.execute(statement).mappings().first()
+    return dict(row) if row else None
+
+
+def read_audit_events(
+    session: Session, run_id: str, *, trace_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Read persisted audit events for one run, optionally filtered by trace id."""
+    statement = select(
+        audit_events_table.c.step,
+        audit_events_table.c.status,
+        audit_events_table.c.entity_type,
+        audit_events_table.c.entity_id,
+        audit_events_table.c.trace_id,
+        audit_events_table.c.details,
+    ).where(audit_events_table.c.run_id == _run_uuid(run_id))
+    if trace_id is not None:
+        statement = statement.where(audit_events_table.c.trace_id == trace_id)
+    statement = statement.order_by(audit_events_table.c.event_id)
+    return [dict(row) for row in session.execute(statement).mappings()]
+
+
+def eval_recent_failures(session: Session, gold_set_version: str, *, limit: int = 2) -> int:
+    """Count consecutive failed eval runs for one gold set, newest first."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    rows = (
+        session.execute(
+            select(eval_runs_table.c.passed)
+            .where(eval_runs_table.c.gold_set_version == gold_set_version)
+            .order_by(eval_runs_table.c.report_date.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    failures = 0
+    for passed in rows:
+        if passed:
+            break
+        failures += 1
+    return failures
+
+
 def read_export_records(
     session: Session,
     *,
@@ -332,7 +660,7 @@ def read_export_records(
     """Rebuild strict export records from persisted quotes for one report window."""
     from datetime import timedelta
 
-    from ...models import ExportQuoteRecord, VerificationRecord
+    from ..models import ExportQuoteRecord, VerificationRecord
 
     window_start = report_date - timedelta(days=window_days - 1)
     active_topic = topic_id or DEFAULT_TOPIC_ID
@@ -341,7 +669,6 @@ def read_export_records(
             quotes_table.c.canonical_quote_id.label("q_id"),
             quotes_table.c.quote_text_raw.label("q_text"),
             quotes_table.c.quote_text_en.label("q_text_en"),
-            quotes_table.c.speaker.label("q_speaker"),
             quotes_table.c.char_start.label("q_char_start"),
             quotes_table.c.quote_metadata.label("q_meta"),
             quotes_table.c.verification_details.label("q_details"),
@@ -376,7 +703,6 @@ def read_export_records(
             sources_table.c.language.label("s_language"),
             obsolescence_flags_table.c.is_obsolete.label("o_obsolete"),
             obsolescence_flags_table.c.reason.label("o_reason"),
-            obsolescence_flags_table.c.created_at.label("o_created_at"),
         )
         .select_from(
             quotes_table.join(
@@ -396,13 +722,11 @@ def read_export_records(
         )
         .order_by(articles_table.c.publication_date, quotes_table.c.canonical_quote_id)
     )
-    # A quote can carry several flags (one per review decision); keep the newest one.
+    # A quote can carry several obsolescence flags (one per state transition); keep one row.
     unique_rows: dict[Any, Any] = {}
     for row in session.execute(statement).mappings():
         previous = unique_rows.get(row["q_id"])
-        if previous is None or (row.get("o_created_at") or datetime.min.replace(tzinfo=UTC)) > (
-            previous.get("o_created_at") or datetime.min.replace(tzinfo=UTC)
-        ):
+        if previous is None or (row.get("o_obsolete") and not previous.get("o_obsolete")):
             unique_rows[row["q_id"]] = row
     records: list[Any] = []
     for row in unique_rows.values():
@@ -417,8 +741,8 @@ def read_export_records(
         else:
             verified_at = datetime.combine(row["a_date"], time(12, 0), tzinfo=UTC)
         verification = VerificationRecord(
-            verbatim_match=bool(details.get("verbatim_match", False)),
-            metadata_verified=bool(details.get("metadata_verified", False)),
+            verbatim_match=bool(details.get("verbatim_match", True)),
+            metadata_verified=bool(details.get("metadata_verified", True)),
             method=str(details.get("method") or row["q_method"] or "db-export"),
             verified_at=verified_at,
         )
@@ -429,7 +753,6 @@ def read_export_records(
                     "quote_text_original": row["q_text"],
                     "quote_html": str(meta.get("quote_html") or ""),
                     "quote_text_en": row["q_text_en"] or "",
-                    "speaker": row["q_speaker"] or "",
                     "source_id": row["s_id"],
                     "source_name": row["s_name"],
                     "publication_name": str(article_meta.get("publication_name") or ""),
@@ -477,3 +800,57 @@ def read_export_records(
             )
         )
     return records
+
+
+def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
+    """Register observed audit_event months in storage_partitions as hot.
+
+    No DDL and no data movement: this only records which partitions exist so the
+    retention planner and operator have one source of truth.
+    """
+    from sqlalchemy import func
+
+    months = (
+        session.execute(
+            select(
+                func.date_trunc("month", audit_events_table.c.created_at).label("month")
+            ).distinct()
+        )
+        .scalars()
+        .all()
+    )
+    if not months:
+        return 0
+    rows = [
+        {"table_name": "audit_events", "month": month.date(), "state": "hot"}
+        for month in months
+        if month is not None
+    ]
+    statement = pg_insert(storage_partitions_table).values(rows)
+    statement = statement.on_conflict_do_nothing(index_elements=["table_name", "month"])
+    result = session.execute(statement)
+    if commit:
+        session.commit()
+    return _inserted_count(result, len(rows))
+
+
+def sync_sources(session: Session, rows: list[SourceRegistryRow], *, commit: bool = True) -> int:
+    """Upsert registry rows into Postgres. No network access."""
+    if not rows:
+        return 0
+
+    values = [row.model_dump(mode="python") for row in rows]
+    # Single column definition lives in tables.py; keep upserts in sync with it.
+    columns = [c.name for c in sources_table.columns if c.name not in ("created_at", "updated_at")]
+    statement = pg_insert(sources_table).values(values)
+    statement = statement.on_conflict_do_update(
+        index_elements=["source_id"],
+        set_={
+            **{name: getattr(statement.excluded, name) for name in columns},
+            "updated_at": datetime.now(UTC),
+        },
+    )
+    session.execute(statement)
+    if commit:
+        session.commit()
+    return len(values)

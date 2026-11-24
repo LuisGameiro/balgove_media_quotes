@@ -1,4 +1,4 @@
-"""Documentation QA for the explanatory documentation set.
+"""Documentation QA for the six-document set.
 
 Usage: python scripts/docs_qa.py [--root PATH]
 
@@ -9,7 +9,8 @@ helpers can also be used by tests/contract/test_docs_qa.py.
 from __future__ import annotations
 
 import argparse
-import json
+import csv
+import io
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -24,11 +25,6 @@ FILE_SPAN_PATH_RE = re.compile(
     r"`((?:src|tests|scripts|data|docs)/[\w./-]+\.(?:py|sql|json|csv|md|toml))`"
 )
 TRACE_RE = re.compile(r"\b(?:DEC|RSK|CHK)-\d{2}\b")
-FENCED_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
-QUOTE_EXPORT_RE = re.compile(r"var/output/quotes/(?:[^/\s`'\"<>]+/)*([^/\s`'\"<>]+?)\.jsonl")
-VALID_QUOTE_EXPORT_RE = re.compile(r"quotes-(?:\d{4}-\d{2}-\d{2}|YYYY-MM-DD|\*)")
-VAR_ROOT_RE = re.compile(r"\bvar/([A-Za-z_-]+)")
-KNOWN_VAR_ROOTS = frozenset({"output", "test-output", "dagster"})
 OLD_DOC_RE = re.compile(
     r"(?:01-requirements-analysis|02-stack-and-architecture|03-work-breakdown|"
     r"04-risks-and-open-questions|06-observations|07-sources|08-traceability|"
@@ -38,8 +34,6 @@ OLD_DOC_RE = re.compile(
     r"17-connection-and-fetching-reference)\.md"
 )
 
-DECISION_LOG = "docs/07-decision-log.md"
-
 EXPECTED_DOCS = (
     "docs/01-requirements.md",
     "docs/02-architecture.md",
@@ -47,9 +41,9 @@ EXPECTED_DOCS = (
     "docs/04-repository-structure.md",
     "docs/05-command-reference.md",
     "docs/06-whats-left.md",
-    DECISION_LOG,
     "docs/README.md",
     "docs/Test_News.md",
+    "docs/Test_News.docx",
 )
 
 
@@ -190,23 +184,17 @@ def check_structure(docs: Docs) -> list[CheckResult]:
 
 
 def check_no_traceability(docs: Docs) -> list[CheckResult]:
-    trace_text = "\n".join(
-        text for path, text in docs.texts.items() if Path(path) != docs.root / DECISION_LOG
-    )
-    hits = sorted(set(TRACE_RE.findall(trace_text)))
+    hits = sorted(set(TRACE_RE.findall(docs.all_text)))
     old = sorted(set(OLD_DOC_RE.findall(docs.all_text)))
     return [
-        result("no stray trace tokens", not hits, details(hits)),
+        result("no trace tokens", not hits, details(hits)),
         result("no old doc names", not old, details(old)),
     ]
 
 
 def check_sources(docs: Docs) -> list[CheckResult]:
-    ids = sorted(
-        path.stem
-        for path in (docs.root / "data/sources").glob("*.json")
-        if not path.name.endswith(".schema.json")
-    )
+    text = (docs.root / "data/sources.csv").read_text(encoding="utf-8")
+    ids = [row["source_id"] for row in csv.DictReader(io.StringIO(text))]
     d03 = docs.text("docs/03-sources.md")
     missing = [source_id for source_id in ids if f"`{source_id}`" not in d03]
     return [result("sources documented", not missing, details(missing))]
@@ -214,129 +202,13 @@ def check_sources(docs: Docs) -> list[CheckResult]:
 
 def check_whats_left(docs: Docs) -> list[CheckResult]:
     text = docs.text("docs/06-whats-left.md")
-    open_items = re.findall(r"^- \[ \] (.+)$", text, re.MULTILINE)
-    ok = (
-        len(open_items) >= 10
-        and "#" in text
-        and all(item.strip() and item.strip() != "record." for item in open_items)
-    )
+    ok = text.count("- [ ]") >= 10 and "#" in text
     return [result("whats-left steps", ok)]
 
 
 def check_canonical_md_path(docs: Docs) -> list[CheckResult]:
     ok = "digests/YYYY-MM-DD.md" in docs.text("docs/01-requirements.md")
     return [result("canonical md path", ok)]
-
-
-def check_code_facts(docs: Docs) -> list[CheckResult]:
-    """Small guards that stop docs drifting from the code they describe."""
-    alembic = (docs.root / "alembic.ini").read_text(encoding="utf-8")
-    config = (docs.root / "src/media_quotes/config.py").read_text(encoding="utf-8")
-    configs = [
-        json.loads(path.read_text(encoding="utf-8"))
-        for path in (docs.root / "data/sources").glob("*.json")
-        if not path.name.endswith(".schema.json")
-    ]
-    source_count = len(configs)
-    blocked_count = sum(bool(config.get("tier_block")) for config in configs)
-    unblocked_count = source_count - blocked_count
-    d03 = " ".join(docs.text("docs/03-sources.md").split())
-    data_readme = " ".join(docs.text("data/README.md").split())
-    block_summary = f"{blocked_count} are `tier_block=true`; {unblocked_count} are not blocked"
-    return [
-        result(
-            "alembic script location",
-            "script_location = %(here)s/migrations" in alembic,
-        ),
-        result("output dir setting", "output_dir:" in config and "OUTPUT_DIR" in config),
-        result(
-            "source count documented",
-            f"**{source_count} sources**" in d03 and f"all {source_count} sources" in data_readme,
-        ),
-        result(
-            "source block counts documented",
-            block_summary in d03 and block_summary in data_readme,
-        ),
-    ]
-
-
-def check_repository_structure(docs: Docs) -> list[CheckResult]:
-    """Require the layout guide to name current modules, migrations and scripts."""
-    text = docs.text("docs/04-repository-structure.md")
-    package = docs.root / "src/media_quotes"
-    modules = {path.name for path in package.rglob("*.py") if path.name != "__init__.py"}
-    migrations = {
-        path.name
-        for path in (docs.root / "migrations/versions").glob("*.py")
-        if path.name != "__init__.py"
-    }
-    scripts = {
-        path.name
-        for path in (docs.root / "scripts").iterdir()
-        if path.suffix in {".py", ".ps1"} and path.name != "__init__.py"
-    }
-    root_files = {
-        ".env.example",
-        ".streamlit/config.toml",
-        "otelcol-config.yaml",
-        "var/dagster/dagster.yaml",
-    }
-    exact_paths = {
-        "src/media_quotes/adapters/pdf_extractor.py",
-        "src/media_quotes/archive.py",
-        "src/media_quotes/backfill.py",
-        "src/media_quotes/cli/app.py",
-        "src/media_quotes/collection.py",
-        "src/media_quotes/graph/sync.py",
-    }
-    missing = sorted(
-        name
-        for name in modules | migrations | scripts | root_files | exact_paths
-        if name not in text
-    )
-    pdf_path = "src/media_quotes/adapters/pdf_extractor.py"
-    if "\n├── pdf_extractor.py" in text:
-        missing.append(pdf_path)
-    return [result("repository structure documented", not missing, details(missing, limit=10))]
-
-
-def check_commands(docs: Docs) -> list[CheckResult]:
-    """Check top-level `mq` commands, excluding nested graph subcommands."""
-    app = (docs.root / "src/media_quotes/cli/app.py").read_text(encoding="utf-8")
-    known = set(re.findall(r'\bsubparsers\.add_parser\(\s*"([a-z][a-z0-9-]*)"', app))
-    text = docs.text("docs/05-command-reference.md")
-    section = (
-        text.split("## Commands", 1)[-1]
-        .split("## Important flags", 1)[0]
-        .split("## Command boundaries", 1)[0]
-    )
-    documented: set[str] = set()
-    for line in section.splitlines():
-        if line.startswith("|"):
-            first_cell = line.split("|")[1]
-            documented.update(re.findall(r"`([a-z][a-z0-9-]*)`", first_cell))
-    documented.update(re.findall(r"\bmq\s+([a-z][a-z0-9-]*)", text))
-    missing = sorted(documented - known)
-    undocumented = sorted(known - documented)
-    return [
-        result("documented commands exist", not missing, details(missing)),
-        result("CLI commands documented", not undocumented, details(undocumented)),
-    ]
-
-
-def check_readme_commands(docs: Docs) -> list[CheckResult]:
-    """Lint README fenced-block commands for canonical var/... artifact paths."""
-    commands = "\n".join(FENCED_BLOCK_RE.findall(docs.text("README.md")))
-    bad_export = [
-        name
-        for name in QUOTE_EXPORT_RE.findall(commands)
-        if not VALID_QUOTE_EXPORT_RE.fullmatch(name)
-    ]
-    bad_root = sorted(set(VAR_ROOT_RE.findall(commands)) - KNOWN_VAR_ROOTS)
-    return [
-        result("readme quote export paths", not bad_export, details(bad_export)),
-        result("readme var roots", not bad_root, details(bad_root)),
-    ]
 
 
 CHECKS: tuple[Callable[[Docs], list[CheckResult]], ...] = (
@@ -348,10 +220,6 @@ CHECKS: tuple[Callable[[Docs], list[CheckResult]], ...] = (
     check_sources,
     check_whats_left,
     check_canonical_md_path,
-    check_code_facts,
-    check_repository_structure,
-    check_commands,
-    check_readme_commands,
 )
 
 

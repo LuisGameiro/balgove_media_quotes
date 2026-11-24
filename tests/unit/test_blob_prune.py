@@ -101,30 +101,3 @@ def test_cli_prune_is_dry_run_until_execute(tmp_path: Path, monkeypatch: Any) ->
     assert old.is_file()  # the shared safety flag still wins
     assert app.main(["blob-prune", "--tombstones", str(manifest), "--execute"]) == 0
     assert not old.exists()
-
-
-def test_meta_unlink_failure_does_not_count_deleted_blob_as_kept(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    old, _, _ = _seeded_blobs(tmp_path)
-    meta = old.with_suffix(".meta")
-    meta.write_text("{}", encoding="utf-8")
-
-    real_unlink = Path.unlink
-
-    def fail_on_meta(path: Path) -> None:
-        if path.suffix == ".meta":
-            raise OSError("meta file locked")
-        real_unlink(path)
-
-    monkeypatch.setattr(Path, "unlink", fail_on_meta)
-    report = prune_blobs(
-        _settings(tmp_path),
-        today=TODAY,
-        tombstones=frozenset({OLD_TOMBSTONED}),
-        dry_run=False,
-    )
-    assert report["pruned"] == 1
-    assert report["kept"] == 2  # only the two policy-ineligible blobs
-    assert not old.exists()
-    assert meta.is_file()

@@ -65,15 +65,7 @@ from .graph import (
 )
 from .logs import _do_logs
 from .maintenance import _do_blob_prune, _do_restore_drill, _do_retention, _do_review
-from .ops import (
-    _do_audit_quotes,
-    _do_backfill,
-    _do_dashboard,
-    _do_digest,
-    _do_export,
-    _do_sources,
-    _do_topics,
-)
+from .ops import _do_backfill, _do_dashboard, _do_digest, _do_export, _do_sources, _do_topics
 from .orchestration_info import _do_dagster
 from .run import _collect, _do_run, _process_source
 
@@ -98,7 +90,6 @@ __all__ = [
     "_collect",
     "_digest_path",
     "_do_audit",
-    "_do_audit_quotes",
     "_do_backfill",
     "_do_batch",
     "_do_blob_prune",

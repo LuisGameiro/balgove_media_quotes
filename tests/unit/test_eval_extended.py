@@ -124,7 +124,7 @@ def test_eval_counts_topic_false_positives(tmp_path: Path, monkeypatch: Any) -> 
         False,
         False,
     ]
-    assert all(key in metrics for key in AcceptanceThresholds().as_dict())
+    assert {key in metrics for key in AcceptanceThresholds().as_dict()}
 
 
 def test_eval_direct_rule_decisions_are_not_duplicated(tmp_path: Path, monkeypatch: Any) -> None:

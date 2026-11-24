@@ -20,7 +20,6 @@ class GraphSyncStats:
     articles_projected: int = 0
     speakers_projected: int = 0
     relationships_created: int = 0
-    last_synced_at: str = ""
     errors: list[str] = field(default_factory=list)
 
 

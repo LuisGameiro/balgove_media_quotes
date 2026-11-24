@@ -9,23 +9,15 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
-from ..adapters import BlobCache, build_adapter
-from ..collection import collect_feed
+from ..adapters import build_adapter
 from ..config import DEFAULT_TOPIC_ID, Settings
-from ..exceptions import ConfigError
 from ..fetch import fetch_policy_from
+from ..live import fetch_feed_documents
 from ..topics import TopicPack
-from .common import (
-    EXIT_CONFIG,
-    EXIT_GAPS,
-    EXIT_OK,
-    _load_registry,
-    _load_source_configs,
-    _load_topic_pack,
-)
+from .common import EXIT_CONFIG, EXIT_OK, _load_registry, _load_source_configs, _load_topic_pack
 
 
 def _resolve_feed_url(settings: Settings, source_id: str, topic_id: str) -> str:
@@ -49,8 +41,6 @@ def _do_fetch(
     topic_id: str | None = None,
 ) -> int:
     """Fetch a source's topic feed and the first N articles into the local blob cache."""
-    if limit < 1:
-        raise ConfigError("--limit must be positive")
     row = next((row for row in _load_registry(settings) if row.source_id == source_id), None)
     if row is None:
         print(f"error: unknown source_id {source_id!r}", file=sys.stderr)
@@ -63,14 +53,7 @@ def _do_fetch(
             file=sys.stderr,
         )
         return EXIT_CONFIG
-    if row.tier_block:
-        print(
-            f"error: source {source_id!r} is tier_blocked: {row.blocker_reason}",
-            file=sys.stderr,
-        )
-        return EXIT_CONFIG
 
-    source_cfg = _load_source_configs(settings).get(source_id)
     pack: TopicPack | None = _load_topic_pack(settings, topic_id)
     active_topic = (
         pack.topic_id
@@ -104,22 +87,17 @@ def _do_fetch(
         )
         return EXIT_OK
 
-    policy = fetch_policy_from(settings).model_copy(update={"follow_redirects": True})
-    result = collect_feed(
+    policy = fetch_policy_from(settings)
+    discovered, downloaded = fetch_feed_documents(
         row,
         feed_url,
         policy=policy,
         topic_pack=pack,
         require_topic=True,
         limit=limit,
-        start=report_date - timedelta(days=settings.report_window_days - 1),
-        end=report_date,
-        extra_hosts=frozenset(source_cfg.redirect_hosts) if source_cfg else frozenset(),
-        cache=BlobCache(settings.blob_dir),
     )
-    discovered = result.discovered
-    downloaded = result.articles
 
+    source_cfg = _load_source_configs(settings).get(source_id)
     adapter = build_adapter(
         row,
         replay=False,
@@ -144,9 +122,6 @@ def _do_fetch(
             }
         )
 
-    errors = [
-        {"url": article.url, "error": article.error} for article in downloaded if article.error
-    ]
     report = {
         "source_id": source_id,
         "topic_id": active_topic,
@@ -157,7 +132,6 @@ def _do_fetch(
         "articles_discovered": len(discovered),
         "articles_fetched": len(articles),
         "articles": articles,
-        "errors": errors,
     }
     print(json.dumps(report, indent=2, ensure_ascii=True))
-    return EXIT_GAPS if errors or not articles else EXIT_OK
+    return EXIT_OK

@@ -17,7 +17,7 @@
   "discovery_method": "sitemap",
   "archive_start_date": "2026-10-01",
   "enabled": true,
-  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill.",
+  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Rights review required.",
   "routes": [
     {
       "route_id": "route-interfaxukraine-ukraine-default",
@@ -30,7 +30,7 @@
       "approved": true,
       "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Approved topic route; runtime health is reported separately."
+      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Not approved; rights review pending in registry; no live probe."
     }
   ],
   "extractor_hints": {

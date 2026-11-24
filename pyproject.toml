@@ -98,7 +98,7 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = [
     "jsonschema", "trafilatura", "openai", "defusedxml", "defusedxml.ElementTree", "neo4j",
-    "playwright.sync_api", "defusedxml.common",
+    "playwright", "playwright.sync_api",
 ]
 ignore_missing_imports = true
 

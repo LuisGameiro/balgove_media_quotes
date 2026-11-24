@@ -38,9 +38,9 @@ def extract_quotes(
 
 # Match curly quotes (“...”), straight quotes ("..."), or guillemets («...» / „...“)
 _QUOTE_RE = re.compile(
-    r"(?:[\u201c\"]((?:(?!\n\s*\n)[^\u201d\"]){20,4000})[\u201d\"]"
-    r"|[\u00ab]((?:(?!\n\s*\n)[^\u00bb]){20,4000})[\u00bb]"
-    r"|[\u201e]((?:(?!\n\s*\n)[^\u201c\u201d]){20,4000})[\u201c\u201d])"
+    r"(?:[\u201c\"]([^\u201d\"]{20,4000})[\u201d\"]"
+    r"|[\u00ab]([^\u00bb]{20,4000})[\u00bb]"
+    r"|[\u201e]([^\u201c\u201d]{20,4000})[\u201c\u201d])"
 )
 
 _ATTRIBUTION_VERBS = (
@@ -233,49 +233,18 @@ def _match_quote_group(match: re.Match[str]) -> tuple[str, int, int]:
     return "", match.start(), match.end()
 
 
-_NON_PERSON_TOKENS = frozenset(
-    {
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-        "january",
-        "february",
-        "march",
-        "april",
-        "may",
-        "june",
-        "july",
-        "august",
-        "september",
-        "october",
-        "november",
-        "december",
-    }
-)
-
-
-def _valid_speaker(match: re.Match[str]) -> bool:
-    return match.group(1).strip().casefold() not in _NON_PERSON_TOKENS
-
-
 def _find_attribution(prefix: str, suffix: str) -> tuple[str | None, str]:
     """Search suffix then prefix for verb-first or speaker-first attribution."""
-    suffix_matches: list[re.Match[str]] = list(_ATTRIBUTION_VERB_FIRST_RE.finditer(suffix)) + list(
-        _ATTRIBUTION_SPEAKER_FIRST_RE.finditer(suffix)
+    match = _ATTRIBUTION_VERB_FIRST_RE.search(suffix) or _ATTRIBUTION_SPEAKER_FIRST_RE.search(
+        suffix
     )
-    for match in suffix_matches:
-        if _valid_speaker(match):
-            return match.group(1), match.group(0)
-    prefix_matches: list[re.Match[str]] = list(_ATTRIBUTION_VERB_FIRST_RE.finditer(prefix)) + list(
+    if match:
+        return match.group(1), match.group(0)
+    matches: list[re.Match[str]] = list(_ATTRIBUTION_VERB_FIRST_RE.finditer(prefix)) + list(
         _ATTRIBUTION_SPEAKER_FIRST_RE.finditer(prefix)
     )
-    valid_prefix = [match for match in prefix_matches if _valid_speaker(match)]
-    if valid_prefix:
-        closest = max(valid_prefix, key=lambda match: match.end())
+    if matches:
+        closest = max(matches, key=lambda m: m.end())
         return closest.group(1), closest.group(0)
     return None, ""
 

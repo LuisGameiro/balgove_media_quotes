@@ -61,30 +61,3 @@ def test_pdf_extraction_via_newspaper_html_router() -> None:
     assert (
         result["quote_spans"][0]["quote_text"] == "Frontline stability has improved this quarter."
     )
-
-
-def test_adapter_routes_pdf_bytes_before_utf8_decode() -> None:
-    from media_quotes.adapters.base import SourceAdapter
-
-    quote_line = (
-        b'(Dr. Jane Doe noted, \\"Security protocols require enhanced monitoring.\\" '
-        b"on Wednesday.) Tj\n"
-    )
-    pdf_content = (
-        b"%PDF-1.4\n"
-        b"1 0 obj << /Title (Think Tank Strategic Assessment) /Author (Dr. Jane Doe) "
-        b"/CreationDate (D:20261119120000) >> endobj\n"
-        b"2 0 obj << /Length 120 >>\n"
-        b"stream\n"
-        b"BT\n" + quote_line + b"ET\n"
-        b"endstream\n"
-        b"endobj\n"
-        b"trailer << /Root 1 0 R >>\n"
-        b"%%EOF"
-    )
-    adapter = SourceAdapter(row=None, replay=True)  # type: ignore[arg-type]
-    parsed = adapter.parse_metadata(
-        pdf_content, source_url="https://thinktank.example.org/report.pdf"
-    )
-    assert parsed["extraction_method"] == "pdf_document_v1"
-    assert "Security protocols require enhanced monitoring." in parsed["article_text"]

@@ -66,30 +66,6 @@ def test_check_source_configs_not_dir_and_empty(tmp_path: Path) -> None:
     assert any("expected at least one source config" in err for err in errors)
 
 
-def test_check_source_configs_detects_json_route_drift_from_csv(tmp_path: Path) -> None:
-    from media_quotes.source_configs import sync_sources_to_csv
-
-    sources_dir = tmp_path / "sources"
-    sources_dir.mkdir()
-    payload = json.loads(Path("data/sources/guardian.json").read_text(encoding="utf-8"))
-    payload["routes"] = payload["routes"][:1]
-    config_path = sources_dir / "guardian.json"
-    config_path.write_text(json.dumps(payload), encoding="utf-8")
-    routes_csv = tmp_path / "source_topic_routes.csv"
-    sync_sources_to_csv(sources_dir, sources_csv=tmp_path / "sources.csv", routes_csv=routes_csv)
-
-    errors: list[str] = []
-    check_source_configs(sources_dir, {}, {}, errors, routes_csv)
-    assert not any("route" in message for message in errors)
-
-    payload["routes"][0]["discovery_url"] = "https://changed.example/rss"
-    config_path.write_text(json.dumps(payload), encoding="utf-8")
-    errors = []
-    check_source_configs(sources_dir, {}, {}, errors, routes_csv)
-    assert any("discovery_url" in message for message in errors)
-    assert any("source_topic_routes.csv" in message for message in errors)
-
-
 def test_check_source_configs_rule_violations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

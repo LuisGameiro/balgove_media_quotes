@@ -8,36 +8,36 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Any
 
 from sqlalchemy import Engine, text
 
-from ..export import content_hash as export_content_hash
 from ..models import ExportQuoteRecord
 from .protocol import GraphSessionProtocol, GraphSyncStats
 from .queries import _normalize_speaker_key
 
 
 def _get_val(obj: Any, key: str, default: Any = None) -> Any:
-    val = obj.get(key, default) if isinstance(obj, Mapping) else getattr(obj, key, default)
-    return default if val is None else val
+    if isinstance(obj, Mapping):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 
 _MERGE_QUOTE_CYPHER = """
 MERGE (s:Source {source_id: $source_id})
-SET s.source_name = $source_name,
-    s.tier = $source_tier,
-    s.country_region = $source_country_region,
-    s.source_type = $source_type,
-    s.claim_only = $claim_only,
-    s.rights_status = $rights_status
+ON CREATE SET s.source_name = $source_name,
+              s.tier = $source_tier,
+              s.country_region = $source_country_region,
+              s.source_type = $source_type,
+              s.claim_only = $claim_only,
+              s.rights_status = $rights_status
 
 MERGE (a:Article {canonical_url: $article_url})
-SET a.title = $article_name,
-    a.publication_date = $publication_date,
-    a.content_hash = $article_content_hash,
-    a.author = $article_author
+ON CREATE SET a.title = $article_name,
+              a.publication_date = $publication_date,
+              a.content_hash = $content_hash,
+              a.author = $article_author
 
 MERGE (s)-[:PUBLISHED]->(a)
 
@@ -48,9 +48,7 @@ SET q.quote_text_raw = $quote_text_raw,
     q.publication_date = $publication_date,
     q.is_obsolete = $is_obsolete,
     q.obsolete_reason = $obsolete_reason,
-    q.topic_id = $topic_id,
-    q.content_hash = $quote_content_hash,
-    q.projected_at = $projected_at
+    q.topic_id = $topic_id
 
 MERGE (a)-[:CONTAINS]->(q)
 
@@ -75,20 +73,10 @@ MERGE (q)-[:MENTIONS]->(tm)
 """
 
 _MERGE_SUPERSESSION_CYPHER = """
-MATCH (newer:Quote {canonical_quote_id: $newer_id})
-MATCH (older:Quote {canonical_quote_id: $older_id})
-MERGE (newer)-[sup:SUPERSEDES]->(older)
+MATCH (q:Quote {canonical_quote_id: $quote_id})
+MATCH (ancestor:Quote {canonical_quote_id: $superseded_id})
+MERGE (q)-[sup:SUPERSEDES]->(ancestor)
 SET sup.reason = $reason
-"""
-
-_WRITE_SYNC_METADATA_CYPHER = """
-MERGE (m:ProjectionMetadata {key: 'media_quotes'})
-SET m.last_synced_at = $last_synced_at,
-    m.quotes_projected = $quotes_projected,
-    m.sources_projected = $sources_projected,
-    m.articles_projected = $articles_projected,
-    m.speakers_projected = $speakers_projected,
-    m.error_count = $error_count
 """
 
 
@@ -102,8 +90,6 @@ def project_records_to_graph(
     articles_seen: set[str] = set()
     speakers_seen: set[str] = set()
     errors: list[str] = []
-    supersessions: list[tuple[str, str, str]] = []
-    projected_at = datetime.now(UTC).isoformat()
 
     for rec in records:
         try:
@@ -130,22 +116,6 @@ def project_records_to_graph(
                 _get_val(rec, "quote_text_original") or _get_val(rec, "quote_text_raw") or ""
             )
 
-            article_hash = str(
-                _get_val(rec, "article_content_hash", "") or _get_val(rec, "content_hash", "")
-            )
-            quote_hash = str(_get_val(rec, "quote_content_hash", "") or "")
-            if not quote_hash:
-                # Legacy Postgres rows predate quote_metadata.content_hash.
-                quote_hash = str(_get_val(rec, "content_hash", "") or "") or export_content_hash(
-                    [
-                        source_id,
-                        article_url,
-                        quote_text_raw,
-                        str(_get_val(rec, "char_start", 0)),
-                        article_hash,
-                    ]
-                )
-
             quote_params: dict[str, Any] = {
                 "source_id": source_id,
                 "source_name": str(_get_val(rec, "source_name", source_id)),
@@ -160,9 +130,7 @@ def project_records_to_graph(
                 "article_name": str(_get_val(rec, "article_name", "")),
                 "article_author": str(_get_val(rec, "article_author", "")),
                 "publication_date": pub_date_str,
-                "article_content_hash": article_hash,
-                "quote_content_hash": quote_hash,
-                "projected_at": projected_at,
+                "content_hash": str(_get_val(rec, "content_hash", "")),
                 "quote_id": quote_id,
                 "quote_text_raw": quote_text_raw,
                 "quote_text_en": str(_get_val(rec, "quote_text_en", "")),
@@ -179,21 +147,18 @@ def project_records_to_graph(
             articles_seen.add(article_url)
 
             # Speaker projection
-            speaker = str(_get_val(rec, "speaker") or "").strip()
-            if not speaker:
-                speaker = str(_get_val(rec, "article_author") or "").strip()
+            speaker = str(_get_val(rec, "speaker") or _get_val(rec, "article_author") or "").strip()
             if speaker:
                 speaker_key = _normalize_speaker_key(speaker)
-                if speaker_key:
-                    session.run(
-                        _MERGE_SPEAKER_CYPHER,
-                        {
-                            "quote_id": quote_id,
-                            "speaker_key": speaker_key,
-                            "speaker_name": speaker,
-                        },
-                    )
-                    speakers_seen.add(speaker_key)
+                session.run(
+                    _MERGE_SPEAKER_CYPHER,
+                    {
+                        "quote_id": quote_id,
+                        "speaker_key": speaker_key,
+                        "speaker_name": speaker,
+                    },
+                )
+                speakers_seen.add(speaker_key)
 
             # Terms projection
             matched_terms = _get_val(rec, "matched_terms") or []
@@ -206,69 +171,32 @@ def project_records_to_graph(
                         {"quote_id": quote_id, "term_key": term_key},
                     )
 
-            # Postgres flags are attached to the older quote and list newer quote IDs.
-            superseded_ids = _get_val(rec, "superseded_by")
-            if isinstance(superseded_ids, list):
-                for newer_id in superseded_ids:
-                    if newer_id:
-                        supersessions.append(
-                            (
-                                str(newer_id),
-                                quote_id,
-                                str(_get_val(rec, "obsolete_reason", "superseded")),
-                            )
-                        )
-
-            # JSONL records describe the older quote from the newer quote's perspective.
+            # Supersession projection
             superseded_id = _get_val(rec, "superseded_id")
             if not superseded_id:
                 notes_text = str(_get_val(rec, "notes", ""))
-                match = re.search(r"supersedes:?\s*(Q-\d{8}-\d{4})", notes_text, re.IGNORECASE)
-                if match:
-                    superseded_id = match.group(1)
+                m = re.search(r"supersedes:?\s*(Q-\d{8}-\d{4})", notes_text, re.IGNORECASE)
+                if m:
+                    superseded_id = m.group(1)
             if superseded_id:
-                supersessions.append(
-                    (
-                        quote_id,
-                        str(superseded_id),
-                        str(_get_val(rec, "obsolete_reason", "superseded")),
-                    )
+                session.run(
+                    _MERGE_SUPERSESSION_CYPHER,
+                    {
+                        "quote_id": quote_id,
+                        "superseded_id": str(superseded_id),
+                        "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
+                    },
                 )
         except Exception as exc:
             errors.append(f"Error projecting quote {getattr(rec, 'quote_id', '?')}: {exc}")
 
-    for newer_id, older_id, reason in dict.fromkeys(supersessions):
-        if newer_id == older_id:
-            continue
-        try:
-            session.run(
-                _MERGE_SUPERSESSION_CYPHER,
-                {"newer_id": newer_id, "older_id": older_id, "reason": reason},
-            )
-        except Exception as exc:
-            errors.append(f"Error projecting supersession {newer_id}->{older_id}: {exc}")
-
-    last_synced_at = projected_at
-    stats = GraphSyncStats(
+    return GraphSyncStats(
         quotes_projected=quotes_count,
         sources_projected=len(sources_seen),
         articles_projected=len(articles_seen),
         speakers_projected=len(speakers_seen),
-        last_synced_at=last_synced_at,
         errors=errors,
     )
-    session.run(
-        _WRITE_SYNC_METADATA_CYPHER,
-        {
-            "last_synced_at": last_synced_at,
-            "quotes_projected": stats.quotes_projected,
-            "sources_projected": stats.sources_projected,
-            "articles_projected": stats.articles_projected,
-            "speakers_projected": stats.speakers_projected,
-            "error_count": len(stats.errors),
-        },
-    )
-    return stats
 
 
 def sync_postgres_to_graph(
@@ -280,7 +208,6 @@ def sync_postgres_to_graph(
     """Read verified quotes from Postgres and project them to Neo4j."""
     query = """
     SELECT q.canonical_quote_id AS quote_id,
-           q.char_start,
            q.quote_text_raw,
            q.quote_text_en,
            q.quote_language,
@@ -290,18 +217,10 @@ def sync_postgres_to_graph(
            qc.section AS section_id,
            coalesce(obs.is_obsolete, false) AS is_obsolete,
            obs.reason AS obsolete_reason,
-           ARRAY(
-               SELECT newer.canonical_quote_id
-               FROM unnest(obs.superseded_by) AS flag(newer_uuid)
-               JOIN quotes newer ON newer.quote_id = flag.newer_uuid
-           ) AS superseded_by,
-           q.quote_metadata->>'notes' AS notes,
            a.canonical_url AS article_url,
            a.title AS article_name,
            a.publication_date,
-           a.content_hash AS article_content_hash,
-           q.quote_metadata->>'content_hash' AS quote_content_hash,
-           coalesce(a.article_metadata->>'byline', '') AS article_author,
+           a.content_hash,
            s.source_id,
            s.source_name,
            s.tier AS source_tier,
@@ -312,15 +231,9 @@ def sync_postgres_to_graph(
     FROM quotes q
     JOIN articles a ON q.article_id = a.article_id
     JOIN sources s ON a.source_id = s.source_id
+    LEFT JOIN quote_classifications qc ON q.quote_id = qc.quote_id
     LEFT JOIN LATERAL (
-        SELECT section
-        FROM quote_classifications
-        WHERE quote_id = q.quote_id
-        ORDER BY created_at DESC
-        LIMIT 1
-    ) qc ON true
-    LEFT JOIN LATERAL (
-        SELECT is_obsolete, reason, superseded_by
+        SELECT is_obsolete, reason
         FROM obsolescence_flags
         WHERE quote_id = q.quote_id
         ORDER BY created_at DESC
@@ -328,7 +241,7 @@ def sync_postgres_to_graph(
     ) obs ON true
     WHERE q.verification_status = 'verified'
       AND q.topic_id = :topic_id
-      AND (CAST(:report_date AS DATE) IS NULL OR a.publication_date = CAST(:report_date AS DATE))
+      AND (:report_date IS NULL OR a.publication_date = :report_date)
     """
     params: dict[str, Any] = {
         "topic_id": topic_id,

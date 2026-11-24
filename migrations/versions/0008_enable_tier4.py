@@ -18,16 +18,6 @@ def upgrade() -> None:
     op.execute("ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_tier4_disabled")
     op.execute("ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_tier4_claim_only")
     op.execute(
-        "CREATE TABLE IF NOT EXISTS sources_tier4_rollback_state ("
-        "source_id TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL, cadence_hours INTEGER NOT NULL)"
-    )
-    op.execute(
-        "UPDATE sources AS s SET enabled = b.enabled, cadence_hours = b.cadence_hours "
-        "FROM sources_tier4_rollback_state AS b "
-        "WHERE s.source_id = b.source_id AND s.tier = 4"
-    )
-    op.execute("DROP TABLE IF EXISTS sources_tier4_rollback_state")
-    op.execute(
         "ALTER TABLE sources ADD CONSTRAINT sources_tier4_claim_only "
         "CHECK (tier <> 4 OR claim_only)"
     )
@@ -35,15 +25,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_tier4_claim_only")
-    op.execute(
-        "CREATE TABLE IF NOT EXISTS sources_tier4_rollback_state ("
-        "source_id TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL, cadence_hours INTEGER NOT NULL)"
-    )
-    op.execute("DELETE FROM sources_tier4_rollback_state")
-    op.execute(
-        "INSERT INTO sources_tier4_rollback_state (source_id, enabled, cadence_hours) "
-        "SELECT source_id, enabled, cadence_hours FROM sources WHERE tier = 4"
-    )
     op.execute("UPDATE sources SET enabled = FALSE, cadence_hours = 0 WHERE tier = 4")
     op.execute(
         "ALTER TABLE sources ADD CONSTRAINT sources_tier4_disabled "

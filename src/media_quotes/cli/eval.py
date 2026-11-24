@@ -9,7 +9,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters import FixtureSource, build_adapter
-from ..config import Settings
+from ..config import Settings, require_safe_id
 from ..enums import SECTION_IDS
 from ..evaluation import AcceptanceThresholds, evaluate_metrics, obsolete_precision
 from ..gold_set import load_gold_set, split_articles, split_for
@@ -17,7 +17,7 @@ from ..models import QuoteCandidate
 from ..pipeline import detect_language, normalise_language_decision
 from ..relevance import evaluate_topic, load_topic_rules
 from ..risk_controls.obsolescence import obsoletion_allowed
-from ..text_utils import normalise_text, require_safe_id
+from ..text_utils import normalise_text
 from ..verification import verify_quote
 from .common import (
     EXIT_FAILURE,
@@ -60,7 +60,8 @@ def evaluate_gold_set_report(
         if flag.state == "confirmed"
     ]
     if labelled_obsolete:
-        held_out_precision = obsolete_precision(confirmed_obsolete, sorted(labelled_obsolete))
+        relevant = [quote_id for quote_id in confirmed_obsolete if quote_id in labelled_obsolete]
+        held_out_precision = obsolete_precision(relevant, sorted(labelled_obsolete))
         obsolete_note = "held-out human labels"
     elif full:
         held_out_precision = 0.0
