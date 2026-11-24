@@ -1,6 +1,8 @@
 """CHK-15/16/17 — unit level checks for the RSK-07/08/11 mitigation plan (docs/10)."""
 
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -84,6 +86,7 @@ def test_propose_obsolescence_builds_evidence_and_holds_for_review() -> None:
             quote_id=quote_id,
             quote_text_original=text,
             topic_id="ukraine-war",
+            section_id="war_intensity",
             publication_date=day,
             original_reporting_flag="first-hand",
             rights_status="license_held",
@@ -117,6 +120,61 @@ def test_propose_obsolescence_builds_evidence_and_holds_for_review() -> None:
     assert flags[0].evidence.is_primary_evidence
     assert flags[0].state in {"pending", "needs_evidence"}
     assert not flags[0].may_hide_quote(now=now)
+
+
+def test_propose_obsolescence_calls_provider_for_same_speaker_only() -> None:
+    from media_quotes.risk_controls.obsolescence import propose_obsolescence
+
+    def record(quote_id: str, text: str, day: date) -> ExportQuoteRecord:
+        return ExportQuoteRecord.model_construct(
+            quote_id=quote_id,
+            quote_text_original=text,
+            topic_id="ukraine-war",
+            section_id="war_intensity",
+            publication_date=day,
+            original_reporting_flag="first-hand",
+            rights_status="license_held",
+            access_mode="licensed_database",
+            article_url=f"https://example.invalid/{quote_id}",
+            content_hash="a" * 64,
+        )
+
+    class Provider:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def decide(self, *, task: str, context: Mapping[str, Any]) -> dict[str, object]:
+            self.calls.append({"task": task, **dict(context)})
+            return {
+                "verdict": "confirm",
+                "confidence": 0.95,
+                "rationale": "The newer statement supersedes the earlier position.",
+                "actor": "test-judge",
+                "escalation_reason": "",
+            }
+
+    older = record("Q-20261101-0001", "Talks continue tomorrow", date(2026, 11, 1))
+    newer = record("Q-20261119-0001", "Talks have been paused", date(2026, 11, 19))
+    other = record("Q-20261119-0002", "Aid deliveries have increased", date(2026, 11, 19))
+    provider = Provider()
+    now = datetime(2026, 11, 19, 12, tzinfo=UTC)
+
+    flags = propose_obsolescence(
+        [older, newer, other],
+        now=now,
+        judge=provider,
+        speakers={
+            older.quote_id: "Alex Morgan",
+            newer.quote_id: "Alex Morgan",
+            other.quote_id: "Sam Lee",
+        },
+    )
+
+    assert [flag.evidence.old_quote_id for flag in flags] == [older.quote_id]
+    assert len(provider.calls) == 1
+    assert provider.calls[0]["task"] == "obsolescence_review"
+    assert provider.calls[0]["old_quote_id"] == older.quote_id
+    assert provider.calls[0]["newer_quote_id"] == newer.quote_id
 
 
 def test_evidence_bundle_rejects_empty_span_and_coercion() -> None:

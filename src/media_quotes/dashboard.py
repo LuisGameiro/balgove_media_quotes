@@ -30,6 +30,7 @@ else:
     config_module = import_module("media_quotes.config")
 
 get_settings: Any = config_module.get_settings
+DEFAULT_TOPIC_ID: str = config_module.DEFAULT_TOPIC_ID
 
 st: Any
 try:
@@ -156,6 +157,96 @@ def coverage_by_day_matrix(records: list[dict[str, Any]]) -> list[dict[str, Any]
     return sorted(grid.values(), key=lambda row: str(row["source_id"]))
 
 
+def browse_quotes(
+    export_dir: Path, topic_id: str | None = None, limit: int = 500
+) -> list[dict[str, Any]]:
+    """Read governed JSONL exports for one topic, newest files first."""
+    if limit <= 0 or not export_dir.is_dir():
+        return []
+    target_dir = export_dir
+    if topic_id and topic_id != DEFAULT_TOPIC_ID:
+        target_dir = export_dir / topic_id
+        if not target_dir.is_dir():
+            return []
+
+    display_fields = (
+        "quote_id",
+        "publication_date",
+        "source_id",
+        "source_name",
+        "source_tier",
+        "section_id",
+        "claim_only",
+        "is_obsolete",
+        "quote_text_original",
+        "quote_text_en",
+        "original_reporting_flag",
+        "rights_status",
+        "article_name",
+        "article_author",
+        "article_url",
+        "topic_id",
+        "topic_status",
+        "topic_score",
+    )
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for path in sorted(target_dir.glob("quotes-*.jsonl"), reverse=True):
+        try:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    if topic_id and record.get("topic_id", DEFAULT_TOPIC_ID) != topic_id:
+                        continue
+                    quote_id = str(record.get("quote_id") or "")
+                    if not quote_id or quote_id in seen:
+                        continue
+                    seen.add(quote_id)
+                    rows.append({key: record[key] for key in display_fields if key in record})
+                    # shortcut: cap the browser at 500 newest quotes, add pagination if needed.
+                    if len(rows) >= limit:
+                        return rows
+        except OSError:
+            continue
+    return rows
+
+
+def filter_quotes(
+    rows: list[dict[str, Any]],
+    *,
+    text: str = "",
+    source_id: str = "",
+    section_id: str = "",
+    include_obsolete: bool = False,
+) -> list[dict[str, Any]]:
+    """Apply cheap interactive filters after the cached JSONL load."""
+    needle = text.strip().casefold()
+    source = source_id.strip().casefold()
+    section = section_id.strip().casefold()
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if not include_obsolete and row.get("is_obsolete"):
+            continue
+        if source and source not in str(row.get("source_id") or "").casefold():
+            continue
+        if section and section not in str(row.get("section_id") or "").casefold():
+            continue
+        if needle and not any(
+            needle in str(row.get(field) or "").casefold()
+            for field in ("quote_text_original", "quote_text_en", "article_name")
+        ):
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def recent_logs(logs_dir: Path, limit: int = 50) -> list[str]:  # pragma: no cover
     if not logs_dir.is_dir():
         return []
@@ -224,26 +315,268 @@ def graph_projection_summary(cfg: Settings) -> dict[str, Any]:
         }
     try:
         if __package__:
-            from .graph import check_graph_connectivity, get_driver, graph_session
+            from .graph import (
+                check_graph_connectivity,
+                fetch_sync_metadata,
+                get_driver,
+                graph_session,
+            )
         else:
-            from media_quotes.graph import check_graph_connectivity, get_driver, graph_session
+            from media_quotes.graph import (
+                check_graph_connectivity,
+                fetch_sync_metadata,
+                get_driver,
+                graph_session,
+            )
 
         driver = get_driver(cfg)
         if not check_graph_connectivity(driver):
             return {"status": "unreachable", "uri": cfg.neo4j_uri}
         with graph_session(driver, cfg.neo4j_database) as session:
             node_rows = session.run("MATCH (n) RETURN count(n) AS node_count").data()
-            edge_rows = session.run("MATCH ()-[r]->() RETURN count(r) AS rel_count").data()
+            edge_rows = session.run("MATCH ()-[r] RETURN count(r) AS rel_count").data()
             node_count = node_rows[0]["node_count"] if node_rows else 0
-            rel_count = edge_rows[0]["rel_count"] if edge_rows else 0
+            edge_count = edge_rows[0]["rel_count"] if edge_rows else 0
+            metadata = fetch_sync_metadata(session)
         return {
             "status": "connected",
             "node_count": node_count,
-            "relationship_count": rel_count,
+            "relationship_count": edge_count,
             "uri": cfg.neo4j_uri,
+            **metadata,
         }
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
+
+
+def graph_insights(
+    cfg: Settings,
+    topic_id: str,
+    *,
+    speaker: str | None = None,
+    quote_id: str | None = None,
+) -> dict[str, Any]:
+    """Read-only graph analytics for the optional Neo4j projection."""
+    if not cfg.sync_to_neo4j:
+        return {"status": "disabled"}
+    try:
+        if __package__:
+            from .graph import (
+                check_graph_connectivity,
+                fetch_cross_tier_divergence,
+                fetch_graphrag_subgraph,
+                fetch_speaker_timeline,
+                fetch_supersession_lineage,
+                fetch_sync_metadata,
+                get_driver,
+                graph_session,
+            )
+        else:
+            from media_quotes.graph import (
+                check_graph_connectivity,
+                fetch_cross_tier_divergence,
+                fetch_graphrag_subgraph,
+                fetch_speaker_timeline,
+                fetch_supersession_lineage,
+                fetch_sync_metadata,
+                get_driver,
+                graph_session,
+            )
+
+        driver = get_driver(cfg)
+        if not check_graph_connectivity(driver):
+            return {"status": "unreachable", "uri": cfg.neo4j_uri}
+        with graph_session(driver, cfg.neo4j_database) as session:
+            return {
+                "status": "connected",
+                "summary": fetch_sync_metadata(session),
+                "divergence": fetch_cross_tier_divergence(session, topic_id=topic_id),
+                "active_quotes": fetch_graphrag_subgraph(session, topic_id=topic_id),
+                "speaker_rows": (
+                    fetch_speaker_timeline(session, speaker, topic_id=topic_id) if speaker else []
+                ),
+                "lineage": (fetch_supersession_lineage(session, quote_id) if quote_id else {}),
+            }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+if st is not None and hasattr(st, "cache_data"):
+    _latest_audit_cached = st.cache_data(ttl="30s", max_entries=32)(_latest_audit)
+    latest_digests_cached = st.cache_data(ttl="30s", max_entries=32)(latest_digests)
+    daily_source_coverage_cached = st.cache_data(ttl="30s", max_entries=32)(daily_source_coverage)
+    browse_quotes_cached = st.cache_data(ttl="30s", max_entries=16)(browse_quotes)
+else:  # pragma: no cover - Streamlit is optional for CLI imports
+    _latest_audit_cached = _latest_audit
+    latest_digests_cached = latest_digests
+    daily_source_coverage_cached = daily_source_coverage
+    browse_quotes_cached = browse_quotes
+
+
+def _render_overview(
+    audit: dict[str, Any],
+    coverage: list[dict[str, Any]],
+    gaps: list[dict[str, Any]],
+    queue: list[dict[str, Any]],
+    source_count: int,
+) -> None:
+    with st.container(border=True):
+        st.subheader("Run overview")
+        quote_count = sum(
+            int(row.get("quotes", row.get("quotes_found", 0)) or 0) for row in coverage
+        )
+        pending = sum(
+            1 for flag in queue if flag.get("state") in {"pending", "needs_evidence", "escalated"}
+        )
+        with st.container(horizontal=True):
+            st.metric("Report date", str(audit.get("report_date", "none")), border=True)
+            st.metric("Verified quotes", quote_count, border=True)
+            st.metric("Coverage gaps", len(gaps), border=True)
+            st.metric("Pending review", pending, border=True)
+            st.metric("Registered sources", source_count, border=True)
+        chart_data = [
+            {
+                "source_id": str(row.get("source_id") or "unknown"),
+                "quotes": int(row.get("quotes", row.get("quotes_found", 0)) or 0),
+            }
+            for row in coverage
+        ]
+        if chart_data:
+            st.bar_chart(
+                chart_data,
+                x="source_id",
+                y="quotes",
+                alt="Verified quotes by source for the latest audit",
+            )
+
+
+def _render_coverage(
+    cfg: Settings, topic: str, coverage: list[dict[str, Any]], gaps: list[dict[str, Any]]
+) -> None:
+    with st.container(border=True):
+        st.subheader("Per-source coverage")
+        if coverage:
+            st.dataframe(coverage, hide_index=True, alt="Latest per-source coverage")
+        else:
+            st.write("No coverage data found in latest audit.")
+        st.subheader("Per-source coverage by day")
+        daily = daily_source_coverage_cached(cfg.audit_dir, topic_id=topic)
+        if daily:
+            st.dataframe(
+                coverage_by_day_matrix(daily),
+                hide_index=True,
+                alt="Per-source quote counts by day",
+            )
+        else:
+            st.write("No multi-day coverage data found.")
+        st.subheader("Coverage gaps")
+        if gaps:
+            st.dataframe(gaps, hide_index=True, alt="Latest coverage gaps")
+        else:
+            st.write("No gap report yet; run `mq run --date …`.")
+
+
+def _render_digests_and_logs(cfg: Settings, topic: str) -> None:
+    with st.container(border=True):
+        st.subheader("Latest digests")
+        digests = latest_digests_cached(cfg.digest_dir, topic_id=topic)
+        if digests:
+            for day, markdown in digests:
+                with st.expander(day):
+                    st.markdown(markdown)
+        else:
+            st.write("No digests generated yet for this topic.")
+        st.subheader("Recent logs")
+        logs = recent_logs(cfg.logs_dir)
+        if logs:
+            for line in logs:
+                st.code(line, language="json")
+        else:
+            st.write("No log files found.")
+
+
+def _render_quotes(export_dir: Path, topic: str) -> None:
+    with st.container(border=True):
+        st.subheader("Browse quotes (read-only)")
+        rows = browse_quotes_cached(export_dir, topic_id=topic)
+        if not rows:
+            st.caption("No JSONL quote files found. Run `mq run --date ...` first.")
+            return
+        with st.expander("Filters", expanded=True):
+            text = st.text_input("Quote or article contains", key="qb_text", type="search")
+            source = st.text_input("Source ID", key="qb_source")
+            section = st.text_input("Section", key="qb_section")
+            include_obsolete = st.checkbox("Include obsolete", value=False, key="qb_obsolete")
+        filtered = filter_quotes(
+            rows,
+            text=text,
+            source_id=source,
+            section_id=section,
+            include_obsolete=include_obsolete,
+        )
+        dataframe_options: dict[str, Any] = {}
+        if hasattr(st, "column_config"):
+            dataframe_options["column_config"] = {
+                "article_url": st.column_config.LinkColumn("Article")
+            }
+        st.dataframe(
+            filtered,
+            hide_index=True,
+            alt="Governed verified quotes with article metadata",
+            **dataframe_options,
+        )
+        st.caption(
+            f"Showing {len(filtered)} of {len(rows)} quotes. "
+            "Data is read-only; article bodies are not exported."
+        )
+
+
+def _render_data(cfg: Settings, schema_sql: Path, queue: list[dict[str, Any]]) -> None:
+    with st.container(border=True):
+        st.subheader("Obsolescence review queue")
+        if queue:
+            st.dataframe(queue, hide_index=True, alt="Obsolescence review queue")
+        else:
+            st.write("No review flags in the latest audit.")
+
+        st.subheader("Sources (registry and T0 gate)")
+        sources = registered_sources(cfg.sources_csv)
+        if sources:
+            st.dataframe(sources, hide_index=True, alt="Registered sources and rights gate")
+
+        st.subheader("Database schema summary")
+        st.write(schema_summary(schema_sql))
+        if cfg.persist_to_postgres:
+            counts = database_summary(cfg)
+            if "error" in counts:
+                st.write(f"Postgres query failed: {counts['error']}")
+            elif counts:
+                st.subheader("Database row counts (read-only)")
+                st.dataframe(
+                    [{"table": name, "rows": rows} for name, rows in counts.items()],
+                    hide_index=True,
+                    alt="Read-only Postgres row counts",
+                )
+            else:
+                st.write("Postgres is enabled but no counts were returned.")
+
+        if cfg.sync_to_neo4j:
+            st.subheader("Graph projection summary (Neo4j)")
+            graph_info = graph_projection_summary(cfg)
+            if graph_info.get("status") == "connected":
+                st.dataframe(
+                    [
+                        {"metric": "Nodes", "count": graph_info.get("node_count", 0)},
+                        {
+                            "metric": "Relationships",
+                            "count": graph_info.get("relationship_count", 0),
+                        },
+                    ],
+                    hide_index=True,
+                    alt="Neo4j projection element counts",
+                )
+            else:
+                st.write(f"Neo4j status: {graph_info.get('status')} ({graph_info.get('uri', '')})")
 
 
 def main(settings: Settings | None = None) -> None:  # pragma: no cover
@@ -251,6 +584,7 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     if st is None:
         print(guidance(settings))
         return
+    st.set_page_config(page_title="Media quotes", layout="wide")
     cfg = settings or get_settings()
 
     # Password extraction: configuration first, Streamlit secrets fallback
@@ -275,7 +609,7 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     if hasattr(st, "session_state"):
         state = st.session_state
         if not state.get("authenticated", False):
-            st.title("Media Quotes — Login")
+            st.title("Media quotes — Login")
             form_ctx = st.form("login_form") if hasattr(st, "form") else None
             entered = ""
             submit = False
@@ -333,104 +667,73 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
             st.subheader("Topic")
             available_topics = [cfg.active_topic]
             if cfg.topics_dir.is_dir():
-                for p in sorted(cfg.topics_dir.glob("*.json")):
-                    if p.name.endswith(".schema.json"):
+                for path in sorted(cfg.topics_dir.glob("*.json")):
+                    if path.name.endswith(".schema.json"):
                         continue
-                    if p.stem not in available_topics:
-                        available_topics.append(p.stem)
-            selected_topic = st.selectbox("Active Topic", available_topics, index=0)
+                    if path.stem not in available_topics:
+                        available_topics.append(path.stem)
+            selected_topic = st.selectbox("Active topic", available_topics, index=0)
 
-    # Dynamic mode banner
     if cfg.persist_to_postgres and cfg.llm_provider == "openrouter":
         mode_desc = "live Postgres + OpenRouter"
     elif cfg.persist_to_postgres:
         mode_desc = "Postgres persistent"
     else:
         mode_desc = "blocked/degraded (synthetic fixture replay)"
-    st.title("Media Quotes — Operational Dashboard")
-    st.info(f"Mode: **{mode_desc}** | Active Topic: **{selected_topic}**")
+    st.title("Media quotes — operational dashboard")
+    if hasattr(st, "badge"):
+        st.badge(f"Mode: {mode_desc}")
+    else:  # pragma: no cover - older Streamlit
+        st.info(f"Mode: {mode_desc}")
+    st.caption(f"Active topic: {selected_topic}")
 
-    st.subheader("Latest digests")
-    digests = latest_digests(cfg.digest_dir, topic_id=selected_topic)
-    if digests:
-        for day, markdown in digests:
-            with st.expander(day):
-                st.markdown(markdown)
-    else:
-        st.write("No digests generated yet for this topic.")
-
-    latest_audit = _latest_audit(cfg.audit_dir, topic_id=selected_topic)
-    report_topic = str(latest_audit.get("topic_id", selected_topic))
-    report_date = str(latest_audit.get("report_date", "none"))
-    st.caption(f"Latest audit report: topic {report_topic} | date {report_date}")
-
-    st.subheader("Per-source coverage")
-    cov = coverage_summary(cfg.audit_dir, topic_id=selected_topic)
-    if cov:
-        st.dataframe(cov)
-    else:
-        st.write("No coverage data found in latest audit.")
-
-    st.subheader("Per-source coverage by day")
-    daily_cov = daily_source_coverage(cfg.audit_dir, topic_id=selected_topic)
-    if daily_cov:
-        st.dataframe(coverage_by_day_matrix(daily_cov))
-    else:
-        st.write("No multi-day coverage data found.")
-
-    st.subheader("Coverage gaps")
-    gaps = coverage_gaps(cfg.audit_dir, topic_id=selected_topic)
-    if gaps:
-        st.dataframe(gaps)
-    else:
-        st.write("No gap report yet; run `mq run --date …`.")
-
-    st.subheader("Recent logs")
-    logs = recent_logs(cfg.logs_dir)
-    if logs:
-        for line in logs:
-            st.code(line, language="json")
-    else:
-        st.write("No log files found.")
-
-    st.subheader("Sources (registry and T0 gate)")
+    audit = _latest_audit_cached(cfg.audit_dir, topic_id=selected_topic)
+    coverage_rows = audit.get("coverage", [])
+    coverage = (
+        [row for row in coverage_rows if isinstance(row, dict)]
+        if isinstance(coverage_rows, list)
+        else []
+    )
+    gap_rows = audit.get("coverage_gaps", [])
+    gaps = [row for row in gap_rows if isinstance(row, dict)] if isinstance(gap_rows, list) else []
+    queue_rows = audit.get("review_queue", [])
+    queue = (
+        [row for row in queue_rows if isinstance(row, dict)] if isinstance(queue_rows, list) else []
+    )
     sources = registered_sources(cfg.sources_csv)
-    if sources:
-        st.dataframe(sources)
-
-    st.subheader("Database schema summary")
     schema_sql = Path(__file__).resolve().parent / "db" / "schema.sql"
-    st.write(schema_summary(schema_sql))
-    if cfg.persist_to_postgres:
-        counts = database_summary(cfg)
-        if "error" in counts:
-            st.write(f"Postgres query failed: {counts['error']}")
-        elif counts:
-            st.subheader("Database row counts (read-only)")
-            st.dataframe([{"table": name, "rows": rows} for name, rows in counts.items()])
-        else:
-            st.write("Postgres is enabled but no counts were returned.")
 
-    if cfg.sync_to_neo4j:
-        st.subheader("Graph projection summary (Neo4j)")
-        g_info = graph_projection_summary(cfg)
-        if g_info.get("status") == "connected":
-            st.dataframe(
-                [
-                    {"metric": "Nodes", "count": g_info.get("node_count", 0)},
-                    {"metric": "Relationships", "count": g_info.get("relationship_count", 0)},
-                ]
-            )
-        else:
-            st.write(f"Neo4j status: {g_info.get('status')} ({g_info.get('uri', '')})")
+    tabs = st.tabs(
+        ["Overview", "Coverage", "Digests and logs", "Quotes", "Data"],
+        on_change="rerun",
+    )
+    overview, coverage_tab, digests_tab, quotes_tab, data_tab = tabs
+    if overview.open:
+        with overview:
+            _render_overview(audit, coverage, gaps, queue, len(sources))
+    if coverage_tab.open:
+        with coverage_tab:
+            _render_coverage(cfg, selected_topic, coverage, gaps)
+    if digests_tab.open:
+        with digests_tab:
+            _render_digests_and_logs(cfg, selected_topic)
+    if quotes_tab.open:
+        with quotes_tab:
+            _render_quotes(cfg.export_dir, selected_topic)
+    if data_tab.open:
+        with data_tab:
+            _render_data(cfg, schema_sql, queue)
 
 
 __all__ = [
+    "browse_quotes",
     "coverage_by_day_matrix",
     "coverage_gaps",
     "coverage_summary",
     "daily_source_coverage",
     "database_summary",
+    "filter_quotes",
+    "graph_insights",
     "graph_projection_summary",
     "guidance",
     "latest_digests",

@@ -1,0 +1,103 @@
+"""Read-only quote browser loading, filtering and widget behavior."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from streamlit.testing.v1 import AppTest
+
+from media_quotes.dashboard import browse_quotes, filter_quotes
+
+
+def _row(
+    quote_id: str, *, topic_id: str = "ukraine-war", obsolete: bool = False
+) -> dict[str, object]:
+    return {
+        "quote_id": quote_id,
+        "topic_id": topic_id,
+        "publication_date": "2026-11-19",
+        "source_id": "guardian",
+        "source_name": "Guardian",
+        "section_id": "war_intensity",
+        "is_obsolete": obsolete,
+        "quote_text_original": "Talks have been paused.",
+        "quote_text_en": "",
+        "article_name": "Ukraine briefing",
+        "article_author": "Jane Reporter",
+        "article_url": f"https://example.invalid/{quote_id}",
+    }
+
+
+def test_browse_quotes_is_topic_scoped_deduplicated_and_bounded(tmp_path: Path) -> None:
+    export_dir = tmp_path / "quotes"
+    export_dir.mkdir()
+    rows = [
+        _row("Q-20261119-0001"),
+        _row("Q-20261119-0001"),
+        _row("Q-20261119-0002", topic_id="ai-policy"),
+    ]
+    (export_dir / "quotes-2026-11-19.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\nnot-json\n[]\n",
+        encoding="utf-8",
+    )
+    topic_dir = export_dir / "ai-policy"
+    topic_dir.mkdir()
+    (topic_dir / "quotes-2026-11-19.jsonl").write_text(
+        json.dumps(_row("Q-20261119-0003", topic_id="ai-policy")) + "\n",
+        encoding="utf-8",
+    )
+
+    assert [row["quote_id"] for row in browse_quotes(export_dir, topic_id="ukraine-war")] == [
+        "Q-20261119-0001"
+    ]
+    assert [row["quote_id"] for row in browse_quotes(export_dir, topic_id="ai-policy")] == [
+        "Q-20261119-0003"
+    ]
+    assert browse_quotes(export_dir, topic_id="missing") == []
+    assert browse_quotes(export_dir, topic_id="ukraine-war", limit=0) == []
+
+
+def test_filter_quotes_matches_text_source_section_and_obsolete_state() -> None:
+    rows = [
+        _row("Q-20261119-0001"),
+        _row("Q-20261119-0002", obsolete=True),
+        {**_row("Q-20261119-0003"), "source_id": "reuters", "section_id": "other"},
+    ]
+    rows[1]["quote_text_original"] = "The earlier position has changed."
+
+    assert len(filter_quotes(rows)) == 2
+    assert [row["quote_id"] for row in filter_quotes(rows, text="earlier")] == []
+    assert [
+        row["quote_id"] for row in filter_quotes(rows, text="earlier", include_obsolete=True)
+    ] == ["Q-20261119-0002"]
+    assert [row["quote_id"] for row in filter_quotes(rows, source_id="reut")] == ["Q-20261119-0003"]
+    assert [row["quote_id"] for row in filter_quotes(rows, section_id="war")] == ["Q-20261119-0001"]
+
+
+def test_quotes_tab_filters_rendered_table(tmp_path: Path) -> None:
+    export_dir = tmp_path / "quotes"
+    export_dir.mkdir()
+    rows = [_row("Q-20261119-0001"), _row("Q-20261119-0002", obsolete=True)]
+    rows[1]["quote_text_original"] = "The earlier position has changed."
+    (export_dir / "quotes-2026-11-19.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    script = (
+        "from pathlib import Path\n"
+        "import media_quotes.dashboard as dashboard\n"
+        f"dashboard._render_quotes(Path({str(export_dir)!r}), 'ukraine-war')\n"
+    )
+
+    app = AppTest.from_string(script).run()
+    assert not app.exception
+    assert len(app.dataframe[0].value) == 1
+
+    app.text_input(key="qb_text").set_value("earlier").run()
+    assert not app.exception
+    assert len(app.dataframe[0].value) == 0
+
+    app.checkbox(key="qb_obsolete").check().run()
+    assert not app.exception
+    assert len(app.dataframe[0].value) == 1
+    assert app.dataframe[0].value.iloc[0]["quote_id"] == "Q-20261119-0002"

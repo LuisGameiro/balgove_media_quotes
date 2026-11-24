@@ -7,7 +7,6 @@ relative to PROJECT_ROOT so the CLI, bootstrap and scripts share one convention.
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping
 from datetime import date
 from difflib import get_close_matches
@@ -27,20 +26,11 @@ REPORT_WINDOW_DAYS: Final = 14
 GOLD_SET_VERSION: Final = "synthetic-v1"
 DEFAULT_TOPIC_ID: Final = "ukraine-war"
 
-# DEC-10 licence-limit policy — enforced by the renderer, never by the frozen schema.
+# DEC-10 licence-limit policy — word cap and attribution are enforced before rendering.
+# Licence territory is metadata only; the renderer does not enforce geography.
 MAX_QUOTE_WORDS: Final = 30
 ATTRIBUTION_FORMAT: Final = "Outlet — Named person (role), Article, YYYY-MM-DD, URL"
 LICENCE_TERRITORY: Final = "internal worldwide"
-
-_SAFE_ID_RE: Final = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-
-
-def require_safe_id(value: str, name: str = "id") -> str:
-    """Validate that an identifier matches safe slug requirements (preventing path traversal)."""
-    cleaned = value.strip()
-    if not _SAFE_ID_RE.fullmatch(cleaned):
-        raise ValueError(f"invalid {name} {value!r}; expected lowercase alphanumeric, '-' or '_'")
-    return cleaned
 
 
 class Settings(BaseSettings):
@@ -90,7 +80,7 @@ class Settings(BaseSettings):
     report_window_days: int = REPORT_WINDOW_DAYS
     gold_set_version: str = GOLD_SET_VERSION
 
-    # DEC-10 (docs/04): renderer-enforced rights limits; no change to quotes.schema.json.
+    # DEC-10 (docs/07): word cap and attribution are enforced; territory is metadata only.
     max_quote_words: int = Field(default=MAX_QUOTE_WORDS, gt=0)
     attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
     licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)

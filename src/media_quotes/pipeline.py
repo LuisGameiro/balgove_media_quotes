@@ -482,8 +482,7 @@ def _persist_result(
     except Exception as exc:
         raise RuntimeError(
             f"Failed to persist pipeline results to PostgreSQL: {exc}. "
-            f"Ensure PostgreSQL is accessible at {settings.database_url_value} "
-            "(e.g. run 'docker compose up -d postgres') or set PERSIST_TO_POSTGRES=false "
+            "Check the database host or set PERSIST_TO_POSTGRES=false "
             "to run in offline/file-backed mode."
         ) from exc
     return {
@@ -513,6 +512,7 @@ def run_daily_pipeline(
     from .cli.common import (
         _NOTICE,
         _digest_path,
+        _event,
         _load_topic_pack,
         _run_id,
         _window,
@@ -565,6 +565,41 @@ def run_daily_pipeline(
 
     now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
     review_flags = _load_review_flags(settings)
+
+    # DEC-17 / FR-2.4: only compare quotes attributed to the same speaker.
+    # Offline runs escalate and produce no new flags; failures are recorded, never hidden.
+    try:
+        from .risk_controls.obsolescence import propose_obsolescence as _propose_obsolescence
+
+        _judge = make_judge(settings)
+        _speakers = {
+            quote_id: str(meta.get("speaker") or "")
+            for quote_id, meta in offsets.items()
+            if isinstance(meta, Mapping)
+        }
+        _new_flags = _propose_obsolescence(list(kept), now=now, judge=_judge, speakers=_speakers)
+        _existing_ids = {f.evidence.old_quote_id for f in review_flags}
+        _merged = list(review_flags)
+        for flag in _new_flags:
+            if flag.evidence.old_quote_id not in _existing_ids:
+                _merged.append(flag)
+                _existing_ids.add(flag.evidence.old_quote_id)
+        if _merged != list(review_flags):
+            _queue_path = settings.audit_dir / "review-queue.json"
+            _write_json(_queue_path, {"flags": [f.model_dump(mode="json") for f in _merged]})
+            review_flags = _merged
+    except Exception as exc:
+        events.append(
+            _event(
+                run_id=actual_run_id,
+                trace_id=actual_run_id,
+                source_id="pipeline",
+                step="obsolescence",
+                status="skipped",
+                error_type=type(exc).__name__,
+            )
+        )
+
     review_badges: dict[str, str] = {}
     for flag in review_flags:
         badge = review_badge(flag, now=now)

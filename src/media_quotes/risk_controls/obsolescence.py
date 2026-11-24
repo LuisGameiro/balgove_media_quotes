@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from ..enums import APPROVED_RIGHTS, PERMITTED_ACCESS
 from ..exceptions import ReviewNotFoundError, ReviewStateError
@@ -44,6 +44,12 @@ class JudgeDecisionLike(Protocol):
 
     @property
     def escalation_reason(self) -> str: ...
+
+
+class JudgeProviderLike(Protocol):
+    """Provider boundary used by the daily pipeline to obtain one decision per pair."""
+
+    def decide(self, *, task: str, context: Mapping[str, Any]) -> object: ...
 
 
 def _value(source: Any, name: str, default: Any) -> Any:
@@ -113,6 +119,52 @@ def flag_with_judge_provenance(
     return flag.model_copy(update={"evidence": evidence, "confidence": confidence})
 
 
+def _eligible_pair(old: ExportQuoteRecord, newer: ExportQuoteRecord) -> bool:
+    if old.quote_id == newer.quote_id or old.topic_id != newer.topic_id:
+        return False
+    if old.section_id != newer.section_id or newer.publication_date < old.publication_date:
+        return False
+    if normalise_text(old.quote_text_original) == normalise_text(newer.quote_text_original):
+        return False
+    return (
+        newer.original_reporting_flag == "first-hand"
+        and newer.rights_status in APPROVED_RIGHTS
+        and newer.access_mode in PERMITTED_ACCESS
+    )
+
+
+def _pair_context(old: ExportQuoteRecord, newer: ExportQuoteRecord) -> dict[str, Any]:
+    return {
+        "old_quote_id": old.quote_id,
+        "old_quote_text": old.quote_text_original,
+        "old_publication_date": old.publication_date.isoformat(),
+        "newer_quote_id": newer.quote_id,
+        "newer_quote_text": newer.quote_text_original,
+        "newer_publication_date": newer.publication_date.isoformat(),
+        "newer_article_url": newer.article_url,
+        "topic_id": old.topic_id,
+        "section_id": old.section_id,
+        "newer_is_first_hand": newer.original_reporting_flag == "first-hand",
+        "newer_rights_cleared": (
+            newer.rights_status in APPROVED_RIGHTS and newer.access_mode in PERMITTED_ACCESS
+        ),
+    }
+
+
+def _pair_decision(
+    judge: JudgeDecisionLike | JudgeProviderLike,
+    old: ExportQuoteRecord,
+    newer: ExportQuoteRecord,
+) -> JudgeDecisionLike:
+    decide = getattr(judge, "decide", None)
+    if callable(decide):
+        return cast(
+            JudgeDecisionLike,
+            decide(task="obsolescence_review", context=_pair_context(old, newer)),
+        )
+    return cast(JudgeDecisionLike, judge)
+
+
 def assess_obsolescence(
     old: ExportQuoteRecord,
     newer: ExportQuoteRecord,
@@ -121,15 +173,7 @@ def assess_obsolescence(
     judge: JudgeDecisionLike,
 ) -> ObsolescenceFlag | None:
     """Build a flag only when the judge confirms a newer quote supersedes an older one."""
-    if old.quote_id == newer.quote_id or old.topic_id != newer.topic_id:
-        return None
-    if newer.publication_date < old.publication_date:
-        return None
-    if normalise_text(old.quote_text_original) == normalise_text(newer.quote_text_original):
-        return None
-    if newer.original_reporting_flag != "first-hand":
-        return None
-    if newer.rights_status not in APPROVED_RIGHTS or newer.access_mode not in PERMITTED_ACCESS:
+    if not _eligible_pair(old, newer):
         return None
 
     confidence = float(_value(judge, "confidence", 0.0))
@@ -160,13 +204,25 @@ def assess_obsolescence(
 
 
 def propose_obsolescence(
-    records: Sequence[ExportQuoteRecord], *, now: datetime, judge: JudgeDecisionLike
+    records: Sequence[ExportQuoteRecord],
+    *,
+    now: datetime,
+    judge: JudgeDecisionLike | JudgeProviderLike,
+    speakers: Mapping[str, str] | None = None,
 ) -> list[ObsolescenceFlag]:
-    """Deterministic candidate flags; a human still decides before any quote is hidden."""
+    """Propose review flags; a human still decides before any quote is hidden."""
     proposed: list[ObsolescenceFlag] = []
     for index, old in enumerate(records):
+        old_speaker = normalise_text((speakers or {}).get(old.quote_id, "")).casefold()
         for newer in records[index + 1 :]:
-            flag = assess_obsolescence(old, newer, now=now, judge=judge)
+            if speakers is not None:
+                newer_speaker = normalise_text(speakers.get(newer.quote_id, "")).casefold()
+                if not old_speaker or not newer_speaker or old_speaker != newer_speaker:
+                    continue
+            if not _eligible_pair(old, newer):
+                continue
+            decision = _pair_decision(judge, old, newer)
+            flag = assess_obsolescence(old, newer, now=now, judge=decision)
             if flag is not None:
                 proposed.append(flag)
                 break
