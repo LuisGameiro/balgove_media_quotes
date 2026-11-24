@@ -1,11 +1,12 @@
 # 06 — What is left
 
-Only unfinished work, grouped by the original requirement it limits.
+Unfinished work, grouped by the original requirement it limits, plus completed highlights.
 
 ## 1. FR-2.2 — automatic daily source checks
 
 - [ ] Enable the daily and six-hour Tier-1 Dagster schedules in the target environment.
-- [ ] Wire live discovery/fetch into the scheduled pipeline; the asset currently defaults to fixtures.
+- [x] Wire live discovery/fetch into the scheduled pipeline: the daily and Tier-1 schedules now
+      request `source_mode=live` when enabled (schedules remain stopped by default).
 - [ ] Prove Reuters and BBC are checked on every required day, with failures recorded as coverage gaps.
 - [ ] Supply a working approved Reuters licensed endpoint and clear its HTTP 401 coverage gap.
 - [ ] Clear AP's HTTP 401 and verify live quote extraction.
@@ -16,12 +17,16 @@ Only unfinished work, grouped by the original requirement it limits.
 
 ## 2. FR-2.3 — live collection and backfill
 
-- [ ] Implement historical archive discovery for 2026-10-01 through the current date.
-- [ ] Execute and audit the initial live backfill; the current command replays fixtures or prefetched blobs.
+- [x] Implement bounded historical archive discovery for 2026-10-01 through the current date
+      (RSS/sitemap/sitemap-index recursion, date filtering, resumable atomic manifests,
+      `--source-id` filtering, 365-day cap, paid-mode fail-closed).
+- [ ] Execute and audit the initial live backfill; the command supports fixtures, blobs and `--live`,
+      but no full 2026-10-01 production run has been completed.
 - [ ] Confirm backfill estimates stay within ±20% of actual spend across three real runs.
 - [ ] Confirm zero duplicate billed calls and at least 60% cache hits on a repeat backfill.
 - [x] Complete automated source admission probing for robots/terms, archive depth and first-hand reporting.
-- [ ] Make source onboarding optionally trigger the 2026-10-01 backfill after rights approval.
+- [x] Provide an operator-triggered 2026-10-01 backfill after rights approval via
+      `mq sources --action backfill --source-id ... --max-cost ...`.
 
 ## 3. FR-2.4 — obsolescence and digest fidelity
 
@@ -51,7 +56,7 @@ Only unfinished work, grouped by the original requirement it limits.
 ## 6. Production operations
 
 - [x] Run migrations `0007_widen_version`, `0007_audit_events_monthly_partition` and `0008_enable_tier4` with backup and rollback verification.
-- [ ] Run migration `0009_source_availability` with backup and rollback verification.
+- [ ] Run migrations `0009_source_availability` and `0010_article_provenance` with backup and rollback verification.
 - [ ] Provision the production OTLP collector and enable `OTEL_ENABLED=true`.
 - [ ] Schedule periodic `mq blob-prune --execute` runs backed by operator-approved tombstones.
 - [x] Persist the held-out precision and drift guard, then cut `mq eval --full` over to production thresholds.
@@ -63,3 +68,10 @@ Only unfinished work, grouped by the original requirement it limits.
       `extractor_hints.render_js=true`; it is disabled by default and rights-gated.
 - [x] Optional Neo4j projection and bounded GraphRAG context packs exist; Postgres remains the
       system of record.
+
+## Completed
+
+- [x] 2026-11-24 real Tier-1 canary: `mq run --live` collected **two BBC `live_feed` quotes** from
+      official-feed discovery, with no fixture fallback. Reuters returned HTTP 401 and was
+      disclosed as a coverage gap. This is point-in-time evidence that live collection works, not
+      proof of completeness or of any production acceptance target.

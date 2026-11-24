@@ -66,6 +66,12 @@ sources and seven fixture fallbacks; 19 sources yielded verified quotes from liv
 content. Live-verified sources were BBC, Guardian, DW, Al Jazeera, Kyiv Independent, Suspilne,
 Interfax-Ukraine, Anadolu, The Hindu, Yonhap and Global Times.
 
+Live discovery in `mq run --live` and `mq backfill --execute --live` prefers each usable source's
+official feed or sitemap; Bing News is used only as an opt-in discovery fallback, and live mode
+never falls back to fixtures. On 2026-11-24 a real Tier-1 canary collected two BBC `live_feed`
+quotes while Reuters returned HTTP 401 (disclosed as a coverage gap). This is point-in-time
+evidence that live collection works, not proof of completeness.
+
 Current blockers include Reuters and AP HTTP 401, Bloomberg having no public feed, FT/Economist/
 NYT paywall or 403 responses, Kyodo 404, RT timeout, Xinhua's stale HTTP-only feed, GDELT being
 discovery-only, Guardian API lacking a key, and several sources whose sampled articles contained
@@ -88,9 +94,11 @@ language and claim-only flags travel with every quote.
 
 A new source is admitted only after manual review of rights, access mode, robots/terms, stable
 canonical URLs, publication date, byline, archive depth to 2026-10-01, named attribution and
-first-hand reporting. `mq sources --action add` creates a disabled, pending-review JSON config;
-it does not perform those checks or start a backfill. Automated admission probing remains work
-in [06-whats-left.md](06-whats-left.md).
+first-hand reporting. `mq sources --action add` creates a disabled, pending-review JSON config.
+`mq sources --action add --probe --live` and `mq sources --action probe --source-id <id> --live`
+run bounded admission-only probes (robots/terms, feed and article reachability); they never grant
+rights or enable a source. `mq sources --action backfill --source-id <id>` requires a usable source
+and a positive `--max-cost`. Rights approval and first-hand sign-off stay manual.
 
 ## Offline replay
 

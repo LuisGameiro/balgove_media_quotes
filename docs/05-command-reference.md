@@ -8,15 +8,16 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 |---|---|
 | `doctor`, `validate` | Check config, registry, schema, versions and derived data |
 | `bootstrap` | Apply Alembic migrations and sync the source registry |
-| `run` | Daily pipeline plus audit and logs (`--from-blobs` for live cached HTML, `--tier 1` for Tier-1 cadence) |
+| `run` | Daily pipeline plus audit and logs (`--live` to collect, `--from-blobs` for cached HTML, `--tier 1` for Tier-1 cadence) |
 | `fetch` | Rights-gated live feed fetch into `BLOB_DIR`; dry-run by default (`--live` to download) |
 | `audit` | Generate or read the T0 and coverage audit report |
+| `audit-quotes` | Paid shadow audit for missed quotes; defaults to `live_feed` blobs, accepts `--provenance` |
 | `logs` | Inspect structured logs by run id and trace id |
-| `eval` | Gold-set metrics with optional split filter |
-| `sources` | List registry rows and rights state; scaffold or sync configs |
+| `eval` | Gold-set metrics with optional split filter; `--full` fails closed without live human-labelled evidence |
+| `sources` | List registry rows and rights state; `add`, `sync-csv`, `probe` and `backfill` actions |
 | `topics` | List, show or scaffold topic packs |
 | `version` | Print the version manifest |
-| `backfill` | Cost estimate and budget gate for a date range; pass `--execute` to run partitions |
+| `backfill` | Bounded historical backfill with cost estimate (`--live`, `--source-id`, `--execute`) |
 | `digest` | Regenerate the Markdown digest from local records |
 | `export` | Write JSONL from local or Postgres records (`--from-db`), or bounded `--context` packs |
 | `dashboard` | Print dashboard launch guidance |
@@ -31,15 +32,23 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 ## Command boundaries
 
 - `run` replays fixtures by default. `--from-blobs` ingests HTML already downloaded by `fetch`;
-  it does not contact a source.
-- `fetch --live` performs rights-gated current feed/sitemap discovery. It is not a historical
-  archive backfill.
-- `backfill` is capped at 365 days. Execution requires `--max-cost`; it runs fixture partitions
-  unless `--from-blobs` is supplied. `--max-cost` checks a flat estimate, not provider spend.
-- `sources --action add` only scaffolds a disabled, pending-review JSON config. Rights,
-  archive depth and first-hand admission are manual.
-- Dagster schedules and the review sensor are stopped by default. The scheduled asset also
-  defaults to fixture replay.
+  it does not contact a source. `--live` collects from official feeds first (Bing News is an opt-in
+  discovery fallback) and never falls back to fixtures.
+- `fetch --live` performs rights-gated current feed/sitemap discovery into blobs. It is not a
+  historical archive backfill.
+- `backfill` is capped at 365 days and supports `--source-id` filtering. Execution requires
+  `--max-cost`; partitions use fixtures unless `--live` (bounded archive discovery) or
+  `--from-blobs` is supplied, and paid historical inference fails closed. `--max-cost` checks a
+  flat estimate, not provider spend.
+- `sources --action add` scaffolds a disabled, pending-review JSON config. `add --probe --live` and
+  `probe --source-id <id> --live` run bounded admission-only probes; they never grant rights or
+  enable a source. `sources --action backfill --source-id <id>` needs a usable source and a positive
+  `--max-cost`.
+- `audit-quotes` audits `live_feed` blobs by default; `--provenance` selects another acquisition
+  provenance and `--execute` makes paid calls. `eval --full` fails closed on fixture-only evidence,
+  missing human/obsolete labels, or uncalibrated judge agreement.
+- Dagster schedules and the review sensor are stopped by default. When enabled, the daily and
+  Tier-1 schedules request `source_mode=live`; a manual asset run still defaults to fixtures.
 - OpenRouter inference requires `PERSIST_TO_POSTGRES=true`, a pinned model and an API key.
 - `scripts/test_scraper.py --validate-source <id> --live-routes` performs a memory-only health
   probe. It uses the registered feed URL and reports `reachable`, `empty_feed`,
@@ -76,9 +85,19 @@ uv run python -m media_quotes fetch --source-id guardian
 uv run python -m media_quotes fetch --source-id guardian --live
 uv run python -m media_quotes run --date 2026-11-23 --from-blobs
 
+# Live collection (official feed first; Bing opt-in fallback; never fixtures)
+uv run python -m media_quotes run --date 2026-11-23 --live
+
 # Bounded historical replay (estimate, then execute; add --from-blobs for fetched HTML)
 uv run python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50
 uv run python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50 --execute
+
+# Bounded live archive backfill (estimate, then execute; --source-id restricts the run)
+uv run python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50 --live --source-id bbc
+uv run python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50 --execute --live --source-id bbc
+
+# Admission probe (bounded, admission-only; no rights granted, source stays disabled)
+uv run python -m media_quotes sources --action probe --source-id bbc --live
 
 # Local Postgres: set PERSIST_TO_POSTGRES=true in .env before the run
 docker compose up -d --wait

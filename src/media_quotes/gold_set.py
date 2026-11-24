@@ -1,8 +1,10 @@
-"""Versioned gold set with deterministic 60/20/20 article splits (A2, docs/12).
+"""Versioned gold set with deterministic 60/20/20 article splits.
 
-The fixture is synthetic; the label model and split function are production-shaped. Splitting
-is deterministic by sha256(article_ref) so a gold-set version always yields the same train,
-dev and test sets — no tuning on the test split.
+A gold set records acquisition provenance (`fixture`, `live_feed`, `live_bing`, `manual_sample`) and
+its article refs may be `blob://` paths so evaluation can run on collected text. The fixture is
+synthetic; the label model and split function are production-shaped. Splitting is deterministic by
+sha256(article_ref) so a gold-set version always yields the same train, dev and test sets — no
+tuning on the test split.
 """
 
 from __future__ import annotations

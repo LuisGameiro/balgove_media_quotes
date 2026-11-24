@@ -11,8 +11,10 @@ Derived graph projections optionally run against Neo4j with the official Python 
 
 1. `cli/run.py` loads the JSON source configs, mirrored CSV, topic pack and registry rows, then
    calls `pipeline.run_daily_pipeline`.
-2. The pipeline processes fixture references or cached live blobs. Live discovery and download
-   are a separate `mq fetch --live` step; scheduled assets default to fixture replay.
+2. The pipeline processes fixture references, cached blobs or articles collected in the same run.
+   `mq run --live` and `mq backfill --execute --live` collect from official feeds/sitemaps first
+   (Bing News is an opt-in discovery fallback) and never fall back to fixtures; `mq fetch --live`
+   is the separate plan/download step. Schedules request `source_mode=live` when enabled.
 3. `verification_stages.py` runs a deterministic pre-filter, then `verification.py` checks the
    exact span, metadata, attribution, first-hand evidence and policy flags.
 4. `curation.py` assigns sections and removes duplicates; `rights_guard.py` applies word and
@@ -35,6 +37,9 @@ Derived graph projections optionally run against Neo4j with the official Python 
 - **Database.** `db/engine.py` builds the engine; `db/repository.py` owns writes. Business rows
   use idempotent upserts; audit events are append-only. Quote text and offsets are immutable.
 - **Files.** `export.py` uses atomic replace for JSONL, audit and digest artifacts.
+- **Provenance.** Acquisition provenance (`fixture`, `live_feed`, `live_bing`, `manual_sample`) is
+  stored on articles, quotes, exports, digests and review queues; fixture artifacts are written to
+  isolated paths and are never promoted or used as a live fallback.
 - **Graph.** `src/media_quotes/graph/` projects verified quotes into Neo4j with idempotent MERGE
   statements. Sync failure is warning-only; Postgres remains authoritative.
 
@@ -68,9 +73,10 @@ evidence. Observability is configured once at the shared pipeline entry point.
 ## Background work
 
 Dagster materialises `daily_quotes_digest` from 2026-10-01. The daily 06:00 UTC schedule, the
-six-hour Tier-1 schedule and the review SLA sensor are all stopped by default. The asset’s
-`source_mode` also defaults to `fixtures`; enabling a schedule alone does not perform live
-fetching. Declared `cadence_hours` values are registry metadata, not scheduler configuration.
+six-hour Tier-1 schedule and the review SLA sensor are all stopped by default. When enabled, the
+daily and Tier-1 schedules issue `RunRequest`s with `source_mode=live`; a manual asset
+materialisation still defaults to `fixtures`. Declared `cadence_hours` values are registry metadata,
+not scheduler configuration.
 
 The dashboard caches file reads, loads the latest audit once per render, and only executes the
 selected tab. It renders run metrics, digests, logs, per-source coverage, review flags, registry
@@ -84,9 +90,16 @@ With Neo4j enabled, the Data tab shows projection element counts.
 coverage, the package build and CLI smoke tests. CI adds gitleaks and `uv lock --check`. Tests
 inject HTTP transports and fake LLM clients; unit tests do not require network access.
 
+`mq audit-quotes` is a paid shadow audit that defaults to `live_feed` blobs and accepts
+`--provenance`. Gold sets carry provenance and support `blob://` article refs so evaluation can run
+on collected text; `mq eval --full` fails closed on fixture-only evidence, missing human or
+obsolete labels, or uncalibrated judge agreement.
+
 ## Known limits
 
-- Live historical archive discovery and an end-to-end 2026-10-01 backfill are not implemented.
+- Live historical archive discovery is implemented (bounded RSS/sitemap recursion, date filtering,
+  resumable manifests, 365-day cap), but an end-to-end 2026-10-01 production backfill has not been
+  executed.
 - Route approval is not runtime health: all 28 sources are enabled, 11 were live-verified on
   2026-11-24, Reuters returned HTTP 401, and several other approved routes are stale, partial
   or unsupported.

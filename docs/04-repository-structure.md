@@ -25,6 +25,7 @@ var/output/               generated output root (digests, quotes, audit, logs, r
 src/media_quotes/
 ├── __init__.py / __main__.py / cli/   package marker, module entry, parser and handlers
 ├── adapters/                   source adapters, blob cache, RSS/sitemap, HTML and PDF parsing
+├── archive.py                  bounded historical RSS/sitemap/sitemap-index discovery
 ├── db/                         engine, table definitions, schema.sql, session helpers
 ├── graph/                      derived Neo4j projection, queries and GraphRAG protocol
 ├── risk_controls/              review queue, budget gate, retention policy

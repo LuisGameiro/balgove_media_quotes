@@ -14,11 +14,11 @@ part is missing or disabled; **Not verified** means the checkout cannot prove th
 | ID | Brief requirement | Current implementation | Status |
 |---|---|---|---|
 | FR-2.1 | Auditable quote database with required metadata and LLM-friendly storage | Postgres schema, strict JSONL export, content hashes, offsets, audit events and optional Neo4j projection | Implemented in persistent mode; offline JSONL is a local replay store |
-| FR-2.2 | Deterministic daily checks of Reuters and BBC, article detection and quote reasoning | Versioned topic rules, rights-gated adapters, extraction and two-stage verification | Partial: schedules are stopped, runs default to fixtures, and the enabled Reuters route returns HTTP 401 |
-| FR-2.3a | Extract and deterministically verify quote text and metadata | Exact-span verifier, attribution and junk checks, first-hand evidence and rights guard | Implemented for fixture and fetched-blob inputs |
-| FR-2.3b | Collect 2026-10-01 through the current date | `BACKFILL_START=2026-10-01`, bounded backfill command and idempotent partitions | Partial: no live historical discovery or completed production backfill |
-| FR-2.3c | Optional historical period selection | `mq backfill --from ... --to ...` with a 365-day cap and budget gate | Implemented for fixtures or prefetched blobs |
-| FR-2.3d | Optional automatic onboarding of another source | `mq sources --action add` scaffolds a blocked JSON config | Partial: rights, archive and first-hand admission remain manual |
+| FR-2.2 | Deterministic daily checks of Reuters and BBC, article detection and quote reasoning | Versioned topic rules, rights-gated adapters, extraction, two-stage verification and `mq run --live` (official feed first, Bing News only as opt-in discovery fallback) | Partial: live collection works in run/backfill modes but never falls back to fixtures; schedules are stopped and the enabled Reuters route returns HTTP 401 |
+| FR-2.3a | Extract and deterministically verify quote text and metadata | Exact-span verifier, attribution and junk checks, first-hand evidence and rights guard | Implemented for fixture, fetched-blob and live-collected inputs |
+| FR-2.3b | Collect 2026-10-01 through the current date | `BACKFILL_START=2026-10-01`, bounded archive discovery (RSS/sitemap/sitemap-index) and resumable partitions | Partial: live historical discovery implemented; no completed production backfill |
+| FR-2.3c | Optional historical period selection | `mq backfill --from ... --to ...` with a 365-day cap, `--source-id` filter and budget gate | Implemented for fixtures, prefetched blobs or `--live` discovery |
+| FR-2.3d | Optional automatic onboarding of another source | `mq sources --action add --probe --live` scaffolds a blocked config and runs a bounded admission probe | Partial: probes are admission-only; rights grants and first-hand sign-off remain manual |
 | FR-2.4 | Daily 14-day Markdown digest with sections, verbatim metadata, non-obsolete quotes and LLM inference | Deterministic renderer, six canonical sections, daily same-speaker obsolescence proposals, review flags and injectable inference provider | Partial: quote whitespace is normalised and production review evidence is pending |
 | OUT-3 | Dashboard for latest MD files, logs and database access; GitHub repository | Tabbed Streamlit dashboard, read-only JSONL quote/article browser, structured logs, read-only Postgres counts and configured Git remote | Partial: browser implemented; dashboard deployment is pending |
 | Q-4 | Complete, relevant, clean, accurate, auditable and fault-tolerant processing | Verification, coverage gaps, retries, audit reports, gold-set evaluation and CI gates | Partial: real-source completeness and several content-type limits remain unproven |
@@ -91,13 +91,19 @@ metadata only under the decision log, not a renderer control. See [06-whats-left
 | Branch coverage | At least 85% | Enforced by the full coverage gate |
 
 “All material articles and quotes” is an acceptance objective, not a claim that the current
-synthetic gold set proves production completeness.
+synthetic gold set proves production completeness. A real Tier-1 canary on 2026-11-24 collected
+two BBC `live_feed` quotes; Reuters returned HTTP 401 and was disclosed as a coverage gap. That
+run is point-in-time evidence that live collection works, not proof of completeness.
 
 ## Operating modes
 
-- **Fixture replay:** default; no network or database writes.
+- **Fixture replay:** default; no network or database writes. Fixture artifacts are isolated.
 - **Blob ingest:** `mq run --from-blobs` processes previously fetched HTML.
 - **Live fetch:** `mq fetch --source-id <id> --live` performs a separate rights-gated download.
+- **Live collection:** `mq run --live` and `mq backfill ... --execute --live` collect from official
+  feeds first with Bing News only as an opt-in discovery fallback; live mode never falls back to
+  fixtures. Acquisition provenance (`fixture`, `live_feed`, `live_bing`, `manual_sample`) is stored
+  on articles, quotes, exports, digests and review queues.
 - **Persistent:** `PERSIST_TO_POSTGRES=true` writes business and audit rows.
 - **Live inference:** `LLM_PROVIDER=openrouter` with a pinned model, key and persistence.
 

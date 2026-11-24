@@ -164,32 +164,39 @@ needed when you use the database; it does not download sources. Inspect rows wit
 
 ### Gather live articles
 
-Live fetching is rights-gated and writes HTML blobs locally; it does not write quote rows.
-Approved live routes include Guardian and BBC RSS and Reuters sitemap. Start with a plan, then
-use `--live`:
+Live collection is rights-gated. `mq run --date YYYY-MM-DD --live` collects current articles from
+each usable source's official feed or sitemap first; Bing News is used only as an opt-in discovery
+fallback. Live mode never falls back to fixtures — if no usable live route yields articles, the run
+reports a coverage gap rather than replaying synthetic data. Provenance is recorded per article,
+quote, export, digest and review flag as `fixture`, `live_feed`, `live_bing` or `manual_sample`,
+and fixture artifacts are isolated from live outputs. `mq fetch` is the separate plan/download step
+that writes HTML blobs locally; it does not write quote rows:
 
 ```bash
 uv run python -m media_quotes fetch --source-id guardian
 uv run python -m media_quotes fetch --source-id guardian --live
+uv run python -m media_quotes run --date YYYY-MM-DD --live
 uv run python -m media_quotes run --date YYYY-MM-DD --from-blobs
 ```
 
-`--from-blobs` makes the pipeline use the downloaded pages instead of synthetic fixtures. See
+`--from-blobs` ingests pages already downloaded by `fetch`; it does not contact a source. See
 [Sources](docs/03-sources.md) for the registry and T0 gate.
 
 ### Backfill a date range
 
 A backfill replays one partition per day. The first command estimates cost; `--execute` runs it.
-`--max-cost` checks a flat estimate, not a provider-side spend cap.
+`--max-cost` checks a flat estimate, not a provider-side spend cap. `--live` discovers historical
+articles from registered RSS/sitemap/sitemap-index archives with bounded recursion, date filtering
+and resumable atomic manifests; `--source-id` restricts the run. The window is capped at 365 days
+and paid historical inference fails closed. A full production backfill has not yet been executed.
 
 ```bash
 uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute
+uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute --live --source-id bbc
 uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute --from-blobs
 ```
 
-The maximum window is 365 days. See the [command reference](docs/05-command-reference.md) for
-all flags.
+See the [command reference](docs/05-command-reference.md) for all flags.
 
 ### Change sources and topics
 
@@ -221,7 +228,8 @@ uv run dagster dev -m media_quotes.orchestration
 ```
 
 On Windows you can also run `scripts/run_dagster.ps1`. Schedules and the review SLA sensor are
-stopped by default; enable `daily_digest_schedule` in the Dagster UI after rights review. Set
+stopped by default; when enabled, the daily and Tier-1 schedules request `source_mode=live` rather
+than fixture replay. Enable `daily_digest_schedule` in the Dagster UI after rights review. Set
 `PERSIST_TO_POSTGRES=true` to write run rows and audit events. Concurrency limits live in
 `var/dagster/dagster.yaml`.
 
