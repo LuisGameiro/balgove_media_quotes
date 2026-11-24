@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -172,8 +173,129 @@ def test_full_eval_requires_obsolete_labels(tmp_path: Path) -> None:
     metrics = eval_cli.evaluate_gold_set_report(settings, gold_set="synthetic-v1", full=True)
     assert metrics["obsolete_precision"] == 0.0
     assert "obsolete_precision" in metrics["failed_checks"]
+    assert "full_requires_live_provenance" in metrics["failed_checks"]
+    assert metrics["pass"] is False
     assert metrics["consecutive_failures"] == 0
     assert metrics["obsoletion_allowed"] is True
+
+
+def _write_live_blob_gold_set(
+    tmp_path: Path, *, human_label: bool, provenance: str = "live_feed"
+) -> tuple[Settings, str]:
+    from media_quotes.adapters import BlobCache
+
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "blob_dir": tmp_path / "blobs",
+            "fixtures_dir": tmp_path / "fixtures",
+            "gold_set_dir": tmp_path / "gold_set",
+        }
+    )
+    cache = BlobCache(settings.blob_dir)
+    quote = "every additional battery protects homes across the country"
+    payload = {
+        "article_text": f"Officials said talks continued. A minister said {quote} this winter.",
+        "quote_spans": [
+            {
+                "quote_text": quote,
+                "speaker": "A minister",
+                "attribution_span": "A minister said",
+                "section_id": "war_intensity",
+            }
+        ],
+        "canonical_url": "",
+        "title": "Live blob headline",
+        "byline": "A Reporter",
+        "publication_date": settings.report_date.isoformat(),
+    }
+    digest, _ = cache.store("guardian", json.dumps(payload).encode("utf-8"), suffix=".json")
+    cache.store_meta(
+        "guardian",
+        digest,
+        {
+            "url": "https://example.invalid/live-eval",
+            "title": "Live blob headline",
+            "provenance": provenance,
+        },
+    )
+    gold = {
+        "version": "live-blob-v1",
+        "provenance": provenance,
+        "articles": [
+            {
+                "article_ref": f"blob://guardian/{digest}.json",
+                "source_id": "guardian",
+                "publication_date": settings.report_date.isoformat(),
+                "relevant": True,
+                "quotes": [
+                    {
+                        "quote_text": quote,
+                        "section_id": "war_intensity",
+                        "human_label": human_label,
+                    }
+                ],
+            }
+        ],
+        "negative_candidates": [],
+        "obsolete_quote_ids": [],
+    }
+    settings.gold_set_dir.mkdir(parents=True, exist_ok=True)
+    (settings.gold_set_dir / "live-blob-v1.json").write_text(json.dumps(gold), encoding="utf-8")
+    return settings, quote
+
+
+def test_live_gold_set_eval_reads_blob_and_reports_provenance(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from media_quotes.adapters import FixtureSource
+
+    settings, _quote = _write_live_blob_gold_set(tmp_path, human_label=True)
+    roots: list[Path] = []
+    real_source = FixtureSource
+
+    class SpySource(real_source):
+        def __init__(self, root: Path | None = None) -> None:
+            roots.append((root or settings.fixtures_dir).resolve())
+            super().__init__(root)
+
+    monkeypatch.setattr(eval_cli, "FixtureSource", SpySource)
+    metrics = eval_cli.evaluate_gold_set_report(settings, gold_set="live-blob-v1")
+
+    assert metrics["provenance"] == "live_feed"
+    assert metrics["source_mode"] == "blobs"
+    assert roots and all(root == settings.blob_dir.resolve() for root in roots)
+    assert metrics["quote_recall"] == 1.0
+    assert metrics["judge_kappa"] == 0.0
+    assert "judge calibration pending" in metrics["judge_note"]
+    assert "judge_kappa" in metrics["failed_checks"]
+    assert metrics["pass"] is False
+    assert metrics["topic_decisions"][0]["article_ref"].startswith("blob://")
+
+
+def test_live_blob_ref_source_mismatch_fails_closed(tmp_path: Path) -> None:
+    settings, _quote = _write_live_blob_gold_set(tmp_path, human_label=True)
+    gold_path = settings.gold_set_dir / "live-blob-v1.json"
+    gold = json.loads(gold_path.read_text(encoding="utf-8"))
+    # The blob is stored under guardian but the label now claims a different source.
+    gold["articles"][0]["source_id"] = "reuters"
+    gold_path.write_text(json.dumps(gold), encoding="utf-8")
+
+    metrics = eval_cli.evaluate_gold_set_report(settings, gold_set="live-blob-v1")
+
+    assert metrics["provenance"] == "live_feed"
+    assert metrics["quote_recall"] == 0.0
+    assert metrics["article_recall"] == 0.0
+
+
+def test_live_full_eval_fails_closed_without_human_or_obsolete_labels(tmp_path: Path) -> None:
+    settings, _quote = _write_live_blob_gold_set(tmp_path, human_label=False)
+    metrics = eval_cli.evaluate_gold_set_report(settings, gold_set="live-blob-v1", full=True)
+
+    assert metrics["provenance"] == "live_feed"
+    assert "full_requires_human_quote_labels" in metrics["failed_checks"]
+    assert "full_requires_obsolete_labels" in metrics["failed_checks"]
+    assert "full_requires_live_provenance" not in metrics["failed_checks"]
+    assert metrics["pass"] is False
 
 
 def test_eval_counts_false_positive_when_gate_accepts_off_topic(

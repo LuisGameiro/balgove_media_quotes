@@ -8,10 +8,11 @@ from datetime import UTC, date, datetime, time
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from ..adapters import FixtureSource, build_adapter
+from ..adapters import BlobCache, FixtureSource, build_adapter
 from ..config import Settings
-from ..enums import SECTION_IDS
+from ..enums import SECTION_IDS, AcquisitionProvenance
 from ..evaluation import AcceptanceThresholds, evaluate_metrics, obsolete_precision
+from ..exceptions import SourceNotPermitted
 from ..gold_set import load_gold_set, split_articles, split_for
 from ..models import QuoteCandidate
 from ..pipeline import detect_language, normalise_language_decision
@@ -34,6 +35,17 @@ def _ratio(numerator: int, denominator: int) -> float:  # pragma: no cover
     return round(numerator / denominator, 4) if denominator else 0.0
 
 
+_BLOB_SCHEME = "blob://"
+
+
+def _blob_ref_parts(ref: str) -> tuple[str, str, str]:
+    """Split a ``blob://<source_id>/<sha256>[.ext]`` ref into source id, digest and suffix."""
+    source_id, _, name = ref[len(_BLOB_SCHEME) :].partition("/")
+    digest, dot, ext = name.partition(".")
+    suffix = f".{ext}" if dot and ext else ".html"
+    return source_id, digest, suffix
+
+
 def evaluate_gold_set_report(
     settings: Settings,
     *,
@@ -53,10 +65,12 @@ def evaluate_gold_set_report(
     if not path.is_file():
         raise FileNotFoundError(f"unknown gold set: {gold_set} (looked in {settings.gold_set_dir})")
     gold_data = load_gold_set(path)
+    provenance: AcquisitionProvenance = gold_data.provenance
+    is_fixture = provenance == "fixture"
     labelled_obsolete = set(gold_data.obsolete_quote_ids)
     confirmed_obsolete = [
         flag.evidence.old_quote_id
-        for flag in load_review_flags(settings)
+        for flag in load_review_flags(settings, provenance=provenance)
         if flag.state == "confirmed"
     ]
     if labelled_obsolete:
@@ -68,6 +82,14 @@ def evaluate_gold_set_report(
     else:
         held_out_precision = 1.0
         obsolete_note = "synthetic stand-in: no obsolete labels in this gold set"
+    full_blockers: list[str] = []
+    if full:
+        if is_fixture:
+            full_blockers.append("full_requires_live_provenance")
+        if not any(quote.human_label for article in gold_data.articles for quote in article.quotes):
+            full_blockers.append("full_requires_human_quote_labels")
+        if not labelled_obsolete:
+            full_blockers.append("full_requires_obsolete_labels")
     consecutive_failures = 0
     if settings.persist_to_postgres:
         from ..db.repository import eval_recent_failures
@@ -80,6 +102,7 @@ def evaluate_gold_set_report(
     )
     splits = split_articles(gold_data)
     rows = {row.source_id: row for row in _load_registry(settings)}
+    blob_cache = None if is_fixture else BlobCache(settings.blob_dir)
     window_start, _ = _window(effective_date, settings)
     now = datetime.combine(effective_date, time(12, 0), tzinfo=UTC)
     gate = _topic_gate(settings)
@@ -118,19 +141,44 @@ def evaluate_gold_set_report(
         source_id = str(article.source_id or "")
         row = rows.get(source_id)
         ref = str(article.article_ref or "")
-        adapter = (
-            build_adapter(
+        adapter = None
+        text = ""
+        metadata: dict[str, Any] = {}
+        if row is not None and ref.startswith(_BLOB_SCHEME) and blob_cache is not None:
+            try:
+                blob_source, digest, suffix = _blob_ref_parts(ref)
+                sidecar = blob_cache.read_meta(blob_source, digest)
+                # A blob only counts for this gold set if its ref names the same source as the
+                # labelled article and its sidecar declares the same acquisition path;
+                # a mismatch or missing provenance fails closed.
+                if blob_source == source_id and str(sidecar.get("provenance") or "") == provenance:
+                    raw = blob_cache.read(blob_source, digest, suffix=suffix)
+                    adapter = build_adapter(
+                        row,
+                        FixtureSource(settings.blob_dir),
+                        replay=False,
+                        extraction_fallback=settings.extraction_fallback,
+                    )
+                    source_url = str(sidecar.get("url") or "")
+                    metadata = (
+                        adapter.parse_metadata(raw, source_url=source_url)
+                        if source_url
+                        else adapter.parse_metadata(raw)
+                    )
+                    if not metadata.get("canonical_url") and sidecar.get("url"):
+                        metadata["canonical_url"] = str(sidecar["url"])
+                    text = str(metadata.get("article_text") or "")
+            except (FileNotFoundError, ValueError, SourceNotPermitted):
+                adapter = None
+                text = ""
+                metadata = {}
+        elif row is not None and ref.startswith("fixture://") and is_fixture:
+            adapter = build_adapter(
                 row,
                 FixtureSource(settings.fixtures_dir),
                 replay=True,
                 extraction_fallback=settings.extraction_fallback,
             )
-            if (row is not None and ref.startswith("fixture://"))
-            else None
-        )
-        text = ""
-        metadata: dict[str, Any] = {}
-        if adapter is not None:
             try:
                 raw = adapter.fetch(ref)
                 metadata = adapter.parse_metadata(raw)
@@ -317,6 +365,8 @@ def evaluate_gold_set_report(
     topic_evaluated = non_relevant_articles > 0
     metrics: dict[str, Any] = {
         "gold_set_version": gold_set,
+        "provenance": provenance,
+        "source_mode": "fixtures" if is_fixture else "blobs",
         "report_date": effective_date.isoformat(),
         "evaluated_split": selected_split,
         "splits": {k: len(v) for k, v in splits.items()},
@@ -331,8 +381,12 @@ def evaluate_gold_set_report(
         "obsolete_eval_note": obsolete_note,
         "consecutive_failures": consecutive_failures,
         "obsoletion_allowed": drift_guard_ok,
-        "judge_kappa": 1.0,
-        "judge_note": "deterministic stand-in: all synthetic labels agree; no judge model called",
+        "judge_kappa": 1.0 if is_fixture else 0.0,
+        "judge_note": (
+            "deterministic stand-in: all synthetic labels agree; no judge model called"
+            if is_fixture
+            else "human/model judge calibration pending; agreement not yet measured"
+        ),
         "relevant_articles": relevant_articles,
         "non_relevant_articles": non_relevant_articles,
         "topic_true_positive": topic_true_positive,
@@ -364,6 +418,9 @@ def evaluate_gold_set_report(
         ),
     }
     metrics = evaluate_metrics(metrics, AcceptanceThresholds())
+    if full_blockers:
+        metrics["failed_checks"] = sorted([*metrics["failed_checks"], *full_blockers])
+        metrics["pass"] = False
     suffix = "" if selected_split == "all" else f"-{selected_split}"
     _write_json(settings.audit_dir / f"eval-{gold_set}{suffix}.json", metrics)
     if settings.persist_to_postgres:

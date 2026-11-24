@@ -18,11 +18,11 @@ from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .adapters import FixtureSource, build_adapter
+from .adapters import BlobCache, FixtureSource, build_adapter
 from .config import DEFAULT_TOPIC_ID, Settings
 from .enums import AcquisitionProvenance
 from .exceptions import ConfigError
-from .export import local_store_path, read_jsonl
+from .export import atomic_write_text, local_store_path, read_jsonl
 from .llm_live import (
     LLMDecision,
     LLMRequest,
@@ -88,16 +88,27 @@ class _Article:
     text: str
 
 
-def _audit_path(settings: Settings, report_date: date, topic_id: str) -> Path:
-    target = settings.audit_dir
-    if topic_id and topic_id != DEFAULT_TOPIC_ID:
-        target = target / topic_id
-    target.mkdir(parents=True, exist_ok=True)
-    return target / f"missed-quotes-{report_date.isoformat()}.json"
+def _audit_path(
+    settings: Settings,
+    report_date: date,
+    topic_id: str,
+    provenance: AcquisitionProvenance = "live_feed",
+) -> Path:
+    from .cli.audit import _audit_target_dir
+
+    target = _audit_target_dir(settings, topic_id, provenance)
+    stem = f"missed-quotes-{report_date.isoformat()}"
+    if provenance != "fixture":
+        stem = f"missed-quotes-{provenance}-{report_date.isoformat()}"
+    return target / f"{stem}.json"
 
 
 def _load_articles(
-    settings: Settings, report_date: date, topic_id: str, limit: int
+    settings: Settings,
+    report_date: date,
+    topic_id: str,
+    limit: int,
+    provenance: AcquisitionProvenance = "live_feed",
 ) -> tuple[list[_Article], list[str]]:
     from .cli.common import (
         _load_registry,
@@ -110,30 +121,75 @@ def _load_articles(
     configs = _load_source_configs(settings)
     rows = _load_registry(settings)
     start, end = _window(report_date, settings)
+    is_fixture = provenance == "fixture"
+    # Live provenance never touches the fixture tree: blobs and their sidecars only.
+    article_root = settings.fixtures_dir if is_fixture else settings.blob_dir
+    blob_cache = None if is_fixture else BlobCache(settings.blob_dir)
     articles: list[_Article] = []
     skipped: list[str] = []
     for row in rows:
-        adapter = build_adapter(
-            row,
-            FixtureSource(settings.fixtures_dir),
-            replay=True,
-            topic_pack=topic_pack,
-            source_config=configs.get(row.source_id),
-            extraction_fallback=settings.extraction_fallback,
-        )
-        for ref in adapter.discover(start, end):
-            raw = adapter.fetch(ref)
-            metadata = adapter.parse_metadata(raw)
-            text = str(metadata.get("article_text") or "")
-            if not text.strip():
-                skipped.append(f"{row.source_id}: empty article text")
+        if not is_fixture and not row.usable:
+            skipped.append(f"{row.source_id}: source not permitted for live audit")
+            continue
+        try:
+            adapter = build_adapter(
+                row,
+                FixtureSource(article_root),
+                replay=is_fixture,
+                topic_pack=topic_pack,
+                source_config=configs.get(row.source_id),
+                extraction_fallback=settings.extraction_fallback,
+            )
+            # Fixture replay keeps the deterministic date filter; live enumeration must
+            # not parse every blob up front or one malformed blob would hide its peers.
+            refs = (
+                adapter.discover(start, end)
+                if is_fixture
+                else adapter.fixture_source.list_refs(row.source_id)
+            )
+        except Exception as exc:
+            skipped.append(f"{row.source_id}: discovery failed: {exc}")
+            continue
+        for ref in refs:
+            try:
+                raw = adapter.fetch(ref)
+                if blob_cache is not None:
+                    ref_stem = Path(ref.rsplit("/", 1)[-1]).stem
+                    sidecar = blob_cache.read_meta(row.source_id, ref_stem)
+                    if str(sidecar.get("provenance") or "") != provenance:
+                        skipped.append(f"{row.source_id}: sidecar provenance != {provenance}")
+                        continue
+                    source_url = str(sidecar.get("url") or "")
+                    metadata = (
+                        adapter.parse_metadata(raw, source_url=source_url)
+                        if source_url
+                        else adapter.parse_metadata(raw)
+                    )
+                    if not metadata.get("canonical_url") and sidecar.get("url"):
+                        metadata["canonical_url"] = str(sidecar["url"])
+                    published_raw = str(metadata.get("publication_date") or "")[:10]
+                    try:
+                        published = date.fromisoformat(published_raw)
+                    except ValueError:
+                        published = None
+                    if published is None or not (start <= published <= end):
+                        skipped.append(f"{row.source_id}: {ref}: blob outside report window")
+                        continue
+                else:
+                    metadata = adapter.parse_metadata(raw)
+                text = str(metadata.get("article_text") or "")
+                if not text.strip():
+                    skipped.append(f"{row.source_id}: empty article text")
+                    continue
+                if contains_instruction_override(text):
+                    skipped.append(f"{row.source_id}: instruction override in article")
+                    continue
+                articles.append(_Article(row=row, ref=ref, metadata=metadata, text=text))
+                if len(articles) >= limit:
+                    return articles, skipped
+            except Exception as exc:
+                skipped.append(f"{row.source_id}: {ref}: {exc}")
                 continue
-            if contains_instruction_override(text):
-                skipped.append(f"{row.source_id}: instruction override in article")
-                continue
-            articles.append(_Article(row=row, ref=ref, metadata=metadata, text=text))
-            if len(articles) >= limit:
-                return articles, skipped
     return articles, skipped
 
 
@@ -141,7 +197,7 @@ def _published_texts(
     settings: Settings,
     report_date: date,
     topic_id: str,
-    provenance: AcquisitionProvenance = "fixture",
+    provenance: AcquisitionProvenance = "live_feed",
 ) -> set[str]:
     records = read_jsonl(
         local_store_path(settings.export_dir, report_date, topic_id=topic_id, provenance=provenance)
@@ -190,7 +246,12 @@ def _parse_response(raw: str) -> list[_Candidate]:
 
 
 def _verify_candidate(
-    article: _Article, candidate: _Candidate, *, settings: Settings, report_date: date
+    article: _Article,
+    candidate: _Candidate,
+    *,
+    settings: Settings,
+    window_start: date,
+    window_end: date,
 ) -> dict[str, Any]:
     quote_text = candidate.quote_text.strip()
     offset = article.text.find(quote_text)
@@ -219,8 +280,8 @@ def _verify_candidate(
         source_row=article.row,
         policy_flags=policy_flags,
         metadata=article.metadata,
-        window_start=report_date,
-        window_end=report_date,
+        window_start=window_start,
+        window_end=window_end,
         max_quote_words=settings.max_quote_words,
     )
     result = outcome.results[0] if outcome.results else None
@@ -257,20 +318,22 @@ def audit_missed_quotes(
     max_cost: float | None = None,
     execute: bool = False,
     client: PinnedOpenAIClient | None = None,
-    provenance: AcquisitionProvenance = "fixture",
+    provenance: AcquisitionProvenance = "live_feed",
 ) -> tuple[dict[str, Any], Path]:
     """Run the shadow audit and write its report; never touch the digest."""
     if limit <= 0:
         raise ConfigError("--limit must be positive")
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
-    articles, skipped = _load_articles(settings, report_date, active_topic, limit)
+    articles, skipped = _load_articles(settings, report_date, active_topic, limit, provenance)
     published = _published_texts(settings, report_date, active_topic, provenance)
-    out_path = _audit_path(settings, report_date, active_topic)
+    out_path = _audit_path(settings, report_date, active_topic, provenance)
     estimate = round(len(articles) * 0.01, 4)
     plan: dict[str, Any] = {
         "schema_version": "missed-quote-audit-v1",
         "report_date": report_date.isoformat(),
         "topic_id": active_topic,
+        "provenance": provenance,
+        "source_mode": "fixtures" if provenance == "fixture" else "blobs",
         "mode": "shadow",
         "executed": False,
         "prompt_version": PROMPT_VERSION,
@@ -315,8 +378,17 @@ def audit_missed_quotes(
                 }
             )
             continue
+        from .cli.common import _window
+
+        window_start, window_end = _window(report_date, settings)
         verified = [
-            _verify_candidate(article, candidate, settings=settings, report_date=report_date)
+            _verify_candidate(
+                article,
+                candidate,
+                settings=settings,
+                window_start=window_start,
+                window_end=window_end,
+            )
             for candidate in candidates
         ]
         missed = [
@@ -352,10 +424,7 @@ def audit_missed_quotes(
 
 
 def write_report(report: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8"
-    )
+    atomic_write_text(path, json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
 
 
 __all__ = ["PROMPT_VERSION", "audit_missed_quotes", "write_report"]

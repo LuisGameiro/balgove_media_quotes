@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .enums import SECTION_IDS
+from .enums import SECTION_IDS, AcquisitionProvenance
 
 STRICT = ConfigDict(strict=True, extra="forbid")
 Split = Literal["train", "dev", "test"]
@@ -58,6 +58,7 @@ class GoldSet(BaseModel):
     model_config = STRICT
 
     version: str
+    provenance: AcquisitionProvenance = "fixture"
     notice: str = ""
     split: str = ""
     articles: list[GoldArticle] = Field(min_length=1)

@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from ..admission import probe_source_live
 from ..config import DEFAULT_TOPIC_ID, Settings
 from ..digest import write_digest
 from ..enums import AcquisitionProvenance
@@ -31,6 +32,7 @@ from .common import (
     EXIT_OK,
     _digest_path,
     _load_registry,
+    _load_source_configs,
     _load_topic_pack,
     _read_json,
     _window,
@@ -48,11 +50,16 @@ def _do_backfill(  # pragma: no cover
     topic_id: str | None = None,
     source_mode: str = "fixtures",
     provenance: AcquisitionProvenance = "fixture",
+    source_ids: set[str] | None = None,
 ) -> int:
     if end < start:
         raise ConfigError("--to must not precede --from")
     span = min((end - start).days + 1, _MAX_BACKFILL_DAYS)
-    rows = [row for row in _load_registry(settings) if row.tier < 4]
+    rows = [
+        row
+        for row in _load_registry(settings)
+        if row.tier < 4 and (source_ids is None or row.source_id in source_ids)
+    ]
     base = estimate_backfill(
         articles_per_source_day=_ARTICLES_PER_SOURCE_DAY,
         sources=max(1, len(rows)),
@@ -117,7 +124,12 @@ def _do_backfill(  # pragma: no cover
                 raise ConfigError("--max-cost is required to execute a backfill")
             print(f"Budget: {note}; executing bounded historical backfill (archive).")
             summary = run_historical_backfill(
-                settings, start=start, end=end, max_cost=max_cost, topic_id=topic_id
+                settings,
+                start=start,
+                end=end,
+                max_cost=max_cost,
+                topic_id=topic_id,
+                source_ids=source_ids,
             )
             print(f"Manifest: {summary['manifest']}")
             print(f"Backfill summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True)}")
@@ -189,6 +201,7 @@ def _do_audit_quotes(
     limit: int,
     max_cost: float | None,
     execute: bool,
+    provenance: AcquisitionProvenance = "live_feed",
 ) -> int:  # pragma: no cover
     import json
 
@@ -201,6 +214,7 @@ def _do_audit_quotes(
         limit=limit,
         max_cost=max_cost,
         execute=execute,
+        provenance=provenance,
     )
     if execute:
         write_report(report, path)
@@ -223,7 +237,14 @@ def _do_sources(
     language: str = "en",
     country_region: str = "Global",
     topic_id: str | None = None,
+    probe: bool = False,
+    live: bool = False,
+    backfill: bool = False,
+    max_cost: float | None = None,
 ) -> int:  # pragma: no cover
+    if backfill and action == "list":
+        action = "backfill"
+
     if action == "add":
         if not source_id or not homepage_url:
             raise ConfigError("sources --action add requires --source-id and --homepage-url")
@@ -239,12 +260,66 @@ def _do_sources(
             out_dir=settings.sources_dir,
         )
         print(f"Created source config: {created}")
-        print(
-            "Admission probe requires fetched robots.txt/feed/article content; "
-            "not run in offline mode (no network calls)."
-        )
+        if probe and live:
+            created_config = _load_source_configs(settings)[created.stem]
+            report = probe_source_live(
+                created_config, settings=settings, topic_id=topic_id or settings.active_topic
+            )
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+            print(f"Admission report: {report['report_path']}")
+        else:
+            message = (
+                "Admission probe requires fetched robots.txt/feed/article content; "
+                "not run in offline mode (no network calls)."
+            )
+            if probe:
+                message = "Admission probe requires --live; no network calls were made."
+            print(message)
         print("Next: complete T0 rights review, then run `mq sources --action sync-csv`.")
         return EXIT_OK
+
+    if action == "probe":
+        if not source_id:
+            raise ConfigError("sources --action probe requires --source-id")
+        cleaned = source_id.strip().lower()
+        if not live:
+            print("Admission probe requires --live; no network calls were made.")
+            return EXIT_OK
+        config = _load_source_configs(settings).get(cleaned)
+        if config is None:
+            raise ConfigError(f"no source config for {cleaned!r} in {settings.sources_dir}")
+        report = probe_source_live(
+            config, settings=settings, topic_id=topic_id or settings.active_topic
+        )
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+        print(f"Admission report: {report['report_path']}")
+        return EXIT_OK
+
+    if action == "backfill":
+        if not source_id:
+            raise ConfigError("sources --action backfill requires --source-id")
+        if max_cost is None or max_cost <= 0:
+            raise ConfigError("sources --action backfill requires a positive --max-cost")
+        cleaned = source_id.strip().lower()
+        registry_rows = {item.source_id: item for item in _load_registry(settings)}
+        target_row = registry_rows.get(cleaned)
+        if target_row is None or not target_row.usable:
+            raise ConfigError(
+                f"source {cleaned!r} is not usable for backfill; complete rights approval "
+                "and run `mq sources --action sync-csv` before backfilling"
+            )
+        from ..backfill import run_historical_backfill
+
+        summary = run_historical_backfill(
+            settings,
+            start=settings.backfill_start,
+            end=settings.report_date,
+            max_cost=max_cost,
+            topic_id=topic_id or settings.active_topic,
+            source_ids={cleaned},
+        )
+        print(f"Backfill summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True)}")
+        return EXIT_GAPS if summary["gaps"] else EXIT_OK
 
     if action == "sync-csv":
         sources_n, routes_n = sync_sources_to_csv(

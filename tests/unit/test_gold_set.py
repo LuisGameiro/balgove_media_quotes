@@ -24,6 +24,11 @@ def test_load_real_fixture() -> None:
     assert all(quote.human_label for article in gold.articles for quote in article.quotes)
 
 
+def test_legacy_gold_set_defaults_to_fixture_provenance() -> None:
+    gold = load_gold_set(FIXTURE)
+    assert gold.provenance == "fixture"
+
+
 def test_split_is_deterministic_and_exhaustive() -> None:
     gold = load_gold_set(FIXTURE)
     split = split_articles(gold)

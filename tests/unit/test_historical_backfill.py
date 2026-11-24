@@ -588,3 +588,27 @@ def test_resume_ignores_fetched_articles_for_completed_middle_day(
     assert any(
         "completed article" in issue and middle.isoformat() in issue for issue in summary["issues"]
     )
+
+
+def test_source_ids_filter_limits_discovery_to_requested_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    other = _config().model_copy(update={"source_id": "other-news"})
+    calls = _install(
+        monkeypatch,
+        settings,
+        candidates=[("https://www.example.com/a", "A", "2026-10-01")],
+        statuses=["succeeded"],
+        sources=[_config(), other],
+    )
+
+    summary = run_historical_backfill(
+        settings, start=START, end=START, max_cost=10, source_ids={SOURCE_ID}
+    )
+
+    assert len(calls["discover"]) == 1
+    assert len(calls["fetch"]) == 1
+    assert all(set(call["prefetched_refs"]) == {SOURCE_ID} for call in calls["pipeline"])
+    assert summary["discovered"] == 1
+    assert summary["fetched"] == 1

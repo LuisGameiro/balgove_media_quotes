@@ -95,6 +95,7 @@ def run_historical_backfill(
     end: date,
     max_cost: float,
     topic_id: str | None = None,
+    source_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Discover, fetch and run the archive pipeline for every day in ``start..end``."""
     if end < start:
@@ -150,6 +151,8 @@ def run_historical_backfill(
     fetched = 0
 
     for row in _load_registry(settings):
+        if source_ids is not None and row.source_id not in source_ids:
+            continue
         if not row.usable:
             continue  # T0 gate: an unusable source is never contacted.
         try:

@@ -148,6 +148,13 @@ def _build_parser() -> argparse.ArgumentParser:
     missed_parser.add_argument(
         "--execute", action="store_true", help="make paid model calls (default: plan only)"
     )
+    missed_parser.add_argument(
+        "--provenance",
+        dest="provenance",
+        choices=ACQUISITION_PROVENANCES,
+        default="live_feed",
+        help="acquisition provenance to audit (default: live_feed)",
+    )
     subparsers.add_parser("logs", help="correlated JSON logs for a run", **shared)
     eval_parser = subparsers.add_parser("eval", help="metrics on a synthetic gold set", **shared)
     eval_parser.add_argument("--gold-set", dest="gold_set", help="gold set version")
@@ -164,9 +171,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sources = subparsers.add_parser("sources", help="registry and T0 state at a glance", **shared)
     sources.add_argument(
         "--action",
-        choices=("list", "add", "sync-csv"),
+        choices=("list", "add", "sync-csv", "probe", "backfill"),
         default="list",
-        help="list sources, scaffold a new data/sources/<id>.json, or sync CSV contracts",
+        help=("list, scaffold, sync CSV, run an admission probe, or backfill a usable source"),
     )
     sources.add_argument("--tier", dest="tier", type=int, choices=(1, 2, 3, 4))
     sources.add_argument("--rights-status", dest="rights_status")
@@ -180,6 +187,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--language", dest="language", default="en", help="ISO 639-1 language code"
     )
     sources.add_argument("--country-region", dest="country_region", default="Global")
+    sources.add_argument(
+        "--probe", action="store_true", help="probe after scaffolding (with --live)"
+    )
+    sources.add_argument(
+        "--live", action="store_true", help="allow network calls for an admission probe"
+    )
+    sources.add_argument(
+        "--backfill",
+        dest="backfill_flag",
+        action="store_true",
+        help="shorthand for --action backfill",
+    )
+    sources.add_argument("--max-cost", dest="max_cost", type=float)
     topics = subparsers.add_parser("topics", help="list, inspect or scaffold topic packs", **shared)
     topics.add_argument(
         "--action",
@@ -200,6 +220,12 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--from", dest="from_date", help="period start YYYY-MM-DD")
     backfill.add_argument("--to", dest="to_date", help="period end YYYY-MM-DD")
     backfill.add_argument("--max-cost", dest="max_cost", type=float)
+    backfill.add_argument(
+        "--source-id",
+        dest="source_ids",
+        action="append",
+        help="restrict backfill to this source (repeatable)",
+    )
     backfill.add_argument(
         "--execute",
         action="store_true",
@@ -396,16 +422,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if command == "sources":
             action = str(getattr(args, "action", "list"))
+            source_kwargs: dict[str, Any] = {
+                "tier": int(args.tier) if getattr(args, "tier", None) else None,
+                "rights_status": getattr(args, "rights_status", None),
+                "probe": bool(getattr(args, "probe", False)),
+                "live": bool(getattr(args, "live", False)),
+                "backfill": bool(getattr(args, "backfill_flag", False)),
+                "max_cost": getattr(args, "max_cost", None),
+            }
             if action == "list":
-                return _do_sources(
-                    settings,
-                    tier=int(args.tier) if getattr(args, "tier", None) else None,
-                    rights_status=getattr(args, "rights_status", None),
-                )
+                return _do_sources(settings, **source_kwargs)
             return _do_sources(
                 settings,
-                tier=int(args.tier) if getattr(args, "tier", None) else None,
-                rights_status=getattr(args, "rights_status", None),
                 action=action,
                 source_id=getattr(args, "source_id", None),
                 source_name=getattr(args, "source_name", None),
@@ -414,6 +442,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 language=str(getattr(args, "language", "en")),
                 country_region=str(getattr(args, "country_region", "Global")),
                 topic_id=topic_arg,
+                **source_kwargs,
             )
         if command == "topics":
             return _do_topics(
@@ -482,6 +511,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 limit=int(getattr(args, "missed_limit", 20)),
                 max_cost=getattr(args, "max_cost", None),
                 execute=bool(getattr(args, "execute", False)),
+                provenance=cast(
+                    AcquisitionProvenance, str(getattr(args, "provenance", "live_feed"))
+                ),
             )
         if command == "logs":
             run_id = getattr(args, "run_id", None)
@@ -547,6 +579,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 backfill_kwargs["execute"] = True
             if topic_arg is not None:
                 backfill_kwargs["topic_id"] = topic_arg
+            if getattr(args, "source_ids", None):
+                backfill_kwargs["source_ids"] = set(args.source_ids)
             if getattr(args, "live", False):
                 backfill_kwargs["source_mode"] = "live"
                 backfill_kwargs["provenance"] = "live_feed"

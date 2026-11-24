@@ -70,6 +70,7 @@ def probe_source_admission(
     robots_txt_content: str | None = None,
     feed_sample_content: str | None = None,
     sample_article_html: str | None = None,
+    archive_start_date: date | None = None,
     user_agent: str = "MediaQuotesBot/0.1",
 ) -> dict[str, Any]:
     """Run automated admission probing (robots.txt, archive depth, first-hand check).
@@ -110,6 +111,10 @@ def probe_source_admission(
             feed_sample_content.count("<item>"), feed_sample_content.count("<entry>")
         )
     feed_depth_ok = entries_found >= 1 if feed_sample_content else True
+    # archive depth: the feed must reach back at least as far as the declared archive start.
+    archive_depth_ok = True
+    if earliest_date is not None and archive_start_date is not None:
+        archive_depth_ok = date.fromisoformat(earliest_date) <= archive_start_date
 
     # 3. First-hand quote check
     quote_count = 0
@@ -128,9 +133,11 @@ def probe_source_admission(
         "feed_entries_found": entries_found,
         "earliest_feed_date": earliest_date,
         "feed_depth_ok": feed_depth_ok,
+        "archive_start_date": archive_start_date.isoformat() if archive_start_date else None,
+        "archive_depth_ok": archive_depth_ok,
         "sample_quotes_found": quote_count,
         "first_hand_check_ok": first_hand_ok,
-        "admission_ready": bool(robots_ok and feed_depth_ok and first_hand_ok),
+        "admission_ready": bool(robots_ok and feed_depth_ok and first_hand_ok and archive_depth_ok),
     }
 
 
