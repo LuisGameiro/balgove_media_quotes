@@ -1,62 +1,105 @@
-# 01 — What the system does
+# 01 — Requirements and current status
 
 ## Purpose
 
-`media-quotes` collects media quotes from rights-cleared sources, verifies them against the
-original article text, and writes a daily Markdown digest. It is a deterministic offline-first
-system: no live source, database or LLM is contacted unless the operator explicitly enables it.
+[`Test_News.md`](Test_News.md) is the immutable assignment. This document maps that brief to the
+current implementation; it does not amend the brief. Design choices and their rationale are
+recorded in [07-decision-log.md](07-decision-log.md).
 
-The two constraints that shape every design choice:
+Status meanings: **Implemented** is available in the stated mode; **Partial** means a material
+part is missing or disabled; **Not verified** means the checkout cannot prove the requirement.
 
-1. **Rights first.** A source is contacted only when its registry row permits the exact use case.
-   Reuters and BBC remain mandatory; all 28 sources are now licensed for retrieval, storage,
-   LLM grounding, verbatim republication and the historical backfill. The T0 gate stays in code
-   as a fail-closed guard for any future unlicensed row.
-2. **Nothing unverified is published.** Quotes must match an exact span in the extracted article
-   body, carry attribution, pass the junk and word-limit checks, and come from a first-hand
-   source with preserved policy flags.
+## Requirement traceability
+
+| ID | Brief requirement | Current implementation | Status |
+|---|---|---|---|
+| FR-2.1 | Auditable quote database with required metadata and LLM-friendly storage | Postgres schema, strict JSONL export, content hashes, offsets, audit events and optional Neo4j projection | Implemented in persistent mode; offline JSONL is a local replay store |
+| FR-2.2 | Deterministic daily checks of Reuters and BBC, article detection and quote reasoning | Versioned topic rules, rights-gated adapters, extraction and two-stage verification | Partial: schedules are stopped, runs default to fixtures, and the enabled Reuters route returns HTTP 401 |
+| FR-2.3a | Extract and deterministically verify quote text and metadata | Exact-span verifier, attribution and junk checks, first-hand evidence and rights guard | Implemented for fixture and fetched-blob inputs |
+| FR-2.3b | Collect 2026-10-01 through the current date | `BACKFILL_START=2026-10-01`, bounded backfill command and idempotent partitions | Partial: no live historical discovery or completed production backfill |
+| FR-2.3c | Optional historical period selection | `mq backfill --from ... --to ...` with a 365-day cap and budget gate | Implemented for fixtures or prefetched blobs |
+| FR-2.3d | Optional automatic onboarding of another source | `mq sources --action add` scaffolds a blocked JSON config | Partial: rights, archive and first-hand admission remain manual |
+| FR-2.4 | Daily 14-day Markdown digest with sections, verbatim metadata, non-obsolete quotes and LLM inference | Deterministic renderer, six canonical sections, daily same-speaker obsolescence proposals, review flags and injectable inference provider | Partial: quote whitespace is normalised and production review evidence is pending |
+| OUT-3 | Dashboard for latest MD files, logs and database access; GitHub repository | Tabbed Streamlit dashboard, read-only JSONL quote/article browser, structured logs, read-only Postgres counts and configured Git remote | Partial: browser implemented; dashboard deployment is pending |
+| Q-4 | Complete, relevant, clean, accurate, auditable and fault-tolerant processing | Verification, coverage gaps, retries, audit reports, gold-set evaluation and CI gates | Partial: real-source completeness and several content-type limits remain unproven |
+
+## Required quote metadata
+
+| Brief field | Storage or export mapping |
+|---|---|
+| Quote ID | `quotes.canonical_quote_id`; `ExportQuoteRecord.quote_id` |
+| Quote text | `quotes.quote_text_raw`; `quote_text_original`, with optional `quote_text_en` |
+| Source ID | `sources.source_id`, joined through `articles.source_id` |
+| Source name | `sources.source_name`; `source_name` |
+| Publication date | `articles.publication_date`; `publication_date` |
+| Article name | `articles.title`; `article_name` |
+| Article weblink | `articles.canonical_url`; `article_url` |
+| Extraction date | `articles.processed_at` and `quotes.created_at`; `extraction_date` |
+| Additional audit data | Byline, publication name, language, source type, rights status, licence reference, content hash, character offsets, verification details and obsolescence state |
+
+Postgres is the system of record when `PERSIST_TO_POSTGRES=true`. The dated JSONL file is a
+derived export in persistent mode and the only local quote store in offline replay mode.
+
+## Deterministic and LLM boundaries
+
+- Discovery, topic relevance, extraction, exact-span verification, section assignment,
+  deduplication, rights limits and Markdown selection are deterministic.
+- Quote text and metadata never come from an LLM. A quote must match the stored article text.
+- The LLM boundary supplies section inferences and optional translation, judging or
+  obsolescence suggestions. The default `local` provider is a labelled deterministic stand-in.
+- OpenRouter inference uses a pinned model, strict output validation and a content-addressed
+  cache; live provider use requires Postgres persistence.
+
+## Digest contract
+
+The renderer writes `var/output/digests/YYYY-MM-DD.md` for the rolling 14-day window ending on
+the report date. The title contains the period. Quotes are grouped under War Intensity,
+International Support, Peace Initiatives, Sanctions, Conflicting Parties’ Resources and Other.
+Each quote carries verbatim source text, source name, publication name, article name,
+publication date, byline when present and the canonical link. Each non-empty section receives
+a one- or two-sentence inference.
+
+Current limitations are explicit: the daily pipeline proposes same-speaker supersessions, but a
+human still reviews every flag before a quote can be hidden; the renderer collapses whitespace
+and escapes Markdown syntax; the default inference is not a live LLM. Licence territory is
+metadata only under the decision log, not a renderer control. See [06-whats-left.md](06-whats-left.md).
 
 ## Outputs
 
-All generated output files live under `OUTPUT_DIR` (`var/output/` by default):
-
-| Output | Path | Contents |
+| Output | Path | Purpose |
 |---|---|---|
-| Daily digest | `var/output/digests/YYYY-MM-DD.md` | Verified quotes by section, with the degraded-mode notice when gaps exist |
-| Derived export | `var/output/quotes/quotes-YYYY-MM-DD.jsonl` | Strict `ExportQuoteRecord` objects; derived, never the system of record |
-| Audit report | `var/output/audit/audit-YYYY-MM-DD.json` and `.md` | Coverage, gaps, gates, checks, review queue, version manifest |
-| Run log | `var/output/logs/<run-id>.jsonl` | Structured events with `trace_id` |
-| Postgres rows | tables in `src/media_quotes/db/schema.sql` | Append-only articles, quotes, runs, audit events, cache and governance tables |
-
-## Guarantees
-
-- **Exactness.** Quote offsets are realigned against the extracted text, then `verify_quote`
-  confirms they are exact spans in the stored article text. Normalised text is used for matching,
-  never for rendering.
-- **Rights limits.** At most 30 words per quote, named attribution, internal territory. The
-  renderer applies these again before publication.
-- **Determinism.** Locale/date/version inputs are pinned; the LLM boundary uses strict models,
-  content-addressed cache keys and injected clients.
-- **Fail closed.** A source must pass the T0 gate before collection; a low-quality extraction,
-  a refusal or a failed verification check keeps the quote out of the digest and reports the gap.
-- **Idempotence.** Re-running a date reuses canonical ids instead of creating a second business
-  record; file writes go through atomic replace.
-- **Auditability.** Every run writes a version manifest, source coverage and trace ids; Postgres
-  is the system of record when persistence is enabled.
-
-## Modes
-
-- **Local / default:** fixture replay, no network, no database writes, deterministic LLM stand-in.
-- **Live fetch:** `mq fetch --source-id <id> --live` for a rights-cleared source; still no database writes.
-- **Persistent:** `PERSIST_TO_POSTGRES=true` writes run, article, quote, audit and digests rows.
-- **Live inference:** `LLM_PROVIDER=openrouter` with a pinned model and key; changes only section
-  inferences, never verification or the rights gate.
+| Daily digest | `var/output/digests/YYYY-MM-DD.md` | Human-readable rolling report |
+| Derived export | `var/output/quotes/quotes-YYYY-MM-DD.jsonl` | Strict machine-readable quote records |
+| Audit report | `var/output/audit/audit-YYYY-MM-DD.json` and `.md` | Coverage, gaps, gates and review queue |
+| Run log | `var/output/logs/<run-id>.jsonl` | Structured events with trace IDs |
+| Source proof | `var/output/proof/source-proof-YYYY-MM-DD.json` and `.md` | Per-source live, sample and fixture evidence with blockers |
+| Postgres tables | `src/media_quotes/db/schema.sql` | Authoritative persistent records when enabled |
+| Neo4j projection | `src/media_quotes/graph/` | Optional derived graph and bounded context packs |
 
 ## Acceptance targets
 
-The gold set is versioned and split 60/20/20. Targets are exact span match 100%, false-quote
-rate 0%, recall at least 0.90, metadata accuracy at least 0.95, and judge agreement at least
-0.70. Branch coverage of `src/media_quotes` must stay at or above 85%.
+| Measure | Target | Current gate or evidence |
+|---|---|---|
+| Article recall | At least 0.90 | Gold-set metric; real-source completeness not yet verified |
+| Quote recall | At least 0.90 | Gold-set metric; real-source completeness not yet verified |
+| Exact span match | 100% target | Automated default is 0.95; reconciliation is open |
+| Metadata accuracy | At least 0.95 | Gold-set metric |
+| False-quote rate | 0 | Fail-closed verifier and evaluation contract |
+| Section accuracy | At least 0.90 | Evaluation contract |
+| Obsolete precision | At least 0.90 | Human-labelled production evidence pending |
+| Judge agreement | κ at least 0.70 | Gold-set calibration |
+| Branch coverage | At least 85% | Enforced by the full coverage gate |
 
-Full command syntax is in [05-command-reference.md](05-command-reference.md); the source
-catalogue is in [03-sources.md](03-sources.md).
+“All material articles and quotes” is an acceptance objective, not a claim that the current
+synthetic gold set proves production completeness.
+
+## Operating modes
+
+- **Fixture replay:** default; no network or database writes.
+- **Blob ingest:** `mq run --from-blobs` processes previously fetched HTML.
+- **Live fetch:** `mq fetch --source-id <id> --live` performs a separate rights-gated download.
+- **Persistent:** `PERSIST_TO_POSTGRES=true` writes business and audit rows.
+- **Live inference:** `LLM_PROVIDER=openrouter` with a pinned model, key and persistence.
+
+Commands are in [05-command-reference.md](05-command-reference.md); source policy is in
+[03-sources.md](03-sources.md); architecture is in [02-architecture.md](02-architecture.md).

@@ -1,4 +1,4 @@
-"""Documentation QA for the six-document set.
+"""Documentation QA for the explanatory documentation set.
 
 Usage: python scripts/docs_qa.py [--root PATH]
 
@@ -34,6 +34,8 @@ OLD_DOC_RE = re.compile(
     r"17-connection-and-fetching-reference)\.md"
 )
 
+DECISION_LOG = "docs/07-decision-log.md"
+
 EXPECTED_DOCS = (
     "docs/01-requirements.md",
     "docs/02-architecture.md",
@@ -41,9 +43,9 @@ EXPECTED_DOCS = (
     "docs/04-repository-structure.md",
     "docs/05-command-reference.md",
     "docs/06-whats-left.md",
+    DECISION_LOG,
     "docs/README.md",
     "docs/Test_News.md",
-    "docs/Test_News.docx",
 )
 
 
@@ -184,10 +186,13 @@ def check_structure(docs: Docs) -> list[CheckResult]:
 
 
 def check_no_traceability(docs: Docs) -> list[CheckResult]:
-    hits = sorted(set(TRACE_RE.findall(docs.all_text)))
+    trace_text = "\n".join(
+        text for path, text in docs.texts.items() if Path(path) != docs.root / DECISION_LOG
+    )
+    hits = sorted(set(TRACE_RE.findall(trace_text)))
     old = sorted(set(OLD_DOC_RE.findall(docs.all_text)))
     return [
-        result("no trace tokens", not hits, details(hits)),
+        result("no stray trace tokens", not hits, details(hits)),
         result("no old doc names", not old, details(old)),
     ]
 
@@ -211,6 +216,31 @@ def check_canonical_md_path(docs: Docs) -> list[CheckResult]:
     return [result("canonical md path", ok)]
 
 
+def check_code_facts(docs: Docs) -> list[CheckResult]:
+    """Small guards that stop docs drifting from the code they describe."""
+    alembic = (docs.root / "alembic.ini").read_text(encoding="utf-8")
+    config = (docs.root / "src/media_quotes/config.py").read_text(encoding="utf-8")
+    return [
+        result(
+            "alembic script location",
+            "script_location = %(here)s/migrations" in alembic,
+        ),
+        result("output dir setting", "output_dir:" in config and "OUTPUT_DIR" in config),
+        result("source count documented", "28 sources" in docs.text("docs/03-sources.md")),
+    ]
+
+
+def check_commands(docs: Docs) -> list[CheckResult]:
+    """Every `mq` command named in the reference must exist in the CLI parser."""
+    app = (docs.root / "src/media_quotes/cli/app.py").read_text(encoding="utf-8")
+    known = set(re.findall(r'add_parser\(\s*"([a-z][a-z0-9-]*)"', app))
+    text = docs.text("docs/05-command-reference.md")
+    section = text.split("## Commands", 1)[-1].split("## Command boundaries", 1)[0]
+    documented = set(re.findall(r"^\|\s*`([a-z][a-z0-9-]*)", section, re.MULTILINE))
+    missing = sorted(documented - known)
+    return [result("documented commands exist", not missing, details(missing))]
+
+
 CHECKS: tuple[Callable[[Docs], list[CheckResult]], ...] = (
     check_required_docs,
     check_links,
@@ -220,6 +250,8 @@ CHECKS: tuple[Callable[[Docs], list[CheckResult]], ...] = (
     check_sources,
     check_whats_left,
     check_canonical_md_path,
+    check_code_facts,
+    check_commands,
 )
 
 

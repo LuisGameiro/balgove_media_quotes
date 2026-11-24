@@ -47,10 +47,26 @@ def test_duplicates_and_contains(qa: ModuleType) -> None:
     assert qa.contains_any("alpha beta", ("missing", "beta"))
 
 
+def test_trace_tokens_allowed_only_in_decision_log(qa: ModuleType, project_root: Path) -> None:
+    decision_path = (project_root / qa.DECISION_LOG).as_posix()
+    requirements_path = (project_root / "docs/01-requirements.md").as_posix()
+    docs = qa.Docs(
+        root=project_root,
+        files=(),
+        texts={decision_path: "DEC-01", requirements_path: "DEC-02"},
+        all_text="DEC-01\nDEC-02",
+    )
+
+    trace_check, _ = qa.check_no_traceability(docs)
+
+    assert not trace_check.ok
+    assert trace_check.detail == "DEC-02"
+
+
 def test_docs_snapshot_and_all_checks_run(qa: ModuleType, project_root: Path) -> None:
     docs = qa.Docs.load(project_root)
     assert docs.text("README.md")
     results = [item for check in qa.CHECKS for item in check(docs)]
-    assert len(results) >= 10
+    assert len(results) >= 14
     assert all(isinstance(item, qa.CheckResult) for item in results)
     assert all(item.ok for item in results)

@@ -5,91 +5,104 @@
 Python 3.12+, Pydantic v2 strict models, SQLAlchemy 2 Core with Alembic and psycopg, httpx and
 trafilatura for live HTML, structlog plus OpenTelemetry for logs and traces, Dagster for daily
 partitions, and Streamlit for the read-only dashboard. `uv` and `uv.lock` pin the environment.
-Derived graph projections optionally run against Neo4j with official Python driver protocols.
+Derived graph projections optionally run against Neo4j with the official Python driver.
 
 ## Main flow
 
-1. `cli/run.py` loads the registry and topic pack, then calls `pipeline.run_daily_pipeline`.
-2. `SourceAdapter` discovers fixture refs, cached live blobs (`--from-blobs`), or live feeds,
-   fetches bytes and parses them through `adapters/html_extractor.py` and `extraction.py`.
-3. `verification_stages.py` runs a cheap pre-filter, then `verification.py` checks the exact
-   span, metadata, attribution, first-hand evidence and policy flags.
-4. `curation.py` assigns sections and removes cross-outlet duplicates; `rights_guard.py` applies
-   word and attribution limits again; `digest.py` and `export.py` write the artifacts.
+1. `cli/run.py` loads the JSON source configs, mirrored CSV, topic pack and registry rows, then
+   calls `pipeline.run_daily_pipeline`.
+2. The pipeline processes fixture references or cached live blobs. Live discovery and download
+   are a separate `mq fetch --live` step; scheduled assets default to fixture replay.
+3. `verification_stages.py` runs a deterministic pre-filter, then `verification.py` checks the
+   exact span, metadata, attribution, first-hand evidence and policy flags.
+4. `curation.py` assigns sections and removes duplicates; `rights_guard.py` applies word and
+   attribution limits; `digest.py` and `export.py` write the artifacts.
 5. `_audit_report` produces the audit JSON/Markdown; `db/repository.py` persists rows when
    persistence is enabled.
-6. `cli/app.py` dispatches all commands; `orchestration.py` exposes the same pipeline as a Dagster
-   daily asset with checks, daily and 6-hourly Tier-1 schedules, and a review SLA sensor.
+6. `cli/app.py` dispatches commands; `orchestration.py` exposes the same pipeline as a Dagster
+   asset with checks, schedules and a review sensor.
 
 ## Boundaries
 
-- **Registry and rights.** `registry.py` validates `sources.csv` into strict rows; `usable` is the
-  T0 gate. `assert_fetch_permitted` and `assert_url_permitted` enforce it at the HTTP boundary.
-- **HTTP.** `fetch.py` has strict timeouts, connection limits, a byte cap, HTTPS-only host
-  allowlisting and a DNS check that live fetches enable. A shared token bucket spaces requests;
-  a retry loop waits for a token with the real clock and fails fast with an injected clock.
-- **LLM.** `llm_live.py` is the pinned boundary. It checks the model snapshot, consults the cache
-  before the provider, blocks instruction overrides in untrusted text, and rejects refusal or
-  incomplete results. `llm_openrouter.py` implements the chat-completions provider; judge and
-  translation use the same boundary.
-- **Database.** `db/engine.py` builds the engine; `pipeline._default_session_context` reuses one
-  engine per URL. `db/repository.py` contains the only writes: most use idempotent upserts, while
-  audit events are append-only inserts.
-- **Files.** `export.py` uses atomic replace for JSONL and audit/digest artifacts.
-- **Graph.** `src/media_quotes/graph/` projects verified quotes into Neo4j via idempotent MERGE
-  statements. Postgres remains the single authoritative source of record.
+- **Registry and rights.** `source_configs.py` loads `data/sources/*.json` as authoritative and
+  regenerates the CSV mirror. `registry.py` validates strict rows; `usable` is the T0 gate.
+  `assert_fetch_permitted` and `assert_url_permitted` enforce it at the HTTP boundary.
+- **HTTP.** `fetch.py` has strict timeouts, connection limits, a 5 MB byte cap, HTTPS-only host
+  allowlisting and a DNS check for live fetches. A shared token bucket spaces requests.
+- **LLM.** `llm_live.py` checks the model snapshot, consults the cache before the provider,
+  blocks instruction overrides and rejects refusal or incomplete output. Live OpenRouter use
+  requires Postgres so decisions can be cached and audited.
+- **Database.** `db/engine.py` builds the engine; `db/repository.py` owns writes. Business rows
+  use idempotent upserts; audit events are append-only. Quote text and offsets are immutable.
+- **Files.** `export.py` uses atomic replace for JSONL, audit and digest artifacts.
+- **Graph.** `src/media_quotes/graph/` projects verified quotes into Neo4j with idempotent MERGE
+  statements. Sync failure is warning-only; Postgres remains authoritative.
 
 ## Data model
 
 `src/media_quotes/db/schema.sql` is the primary DDL source. It defines sources, pipeline_runs,
 articles, quotes, quote_classifications, obsolescence_flags, digests, audit_events,
 gold_set_labels, eval_runs, decision_cache and storage_partitions. Migration `0001_initial`
-executes the file in full; revisions `0002`–`0006` are no-op chain placeholders; revision
-`0007_audit_events_monthly_partition` converts `audit_events` to physical monthly range partitions.
+executes the schema; revisions `0002`–`0006` are placeholders; `0007_widen_version` widens the
+Alembic version column; `0007_audit_events_monthly_partition` partitions audit events by month;
+`0008` allows enabled tier-4 rows while preserving the claim-only constraint.
 
-## Graph projection (Neo4j)
+The brief’s quote metadata maps to article, source and quote rows. Character offsets, DOM path,
+content hashes, extractor versions, verification details, policy flags and obsolescence evidence
+provide the audit trail. The strict JSONL export is optimized for LLM context packs; it is not a
+second authoritative database.
 
-When opt-in `SYNC_TO_NEO4J=true` is enabled, verified quotes, sources, articles, speakers,
-sections, and topics are deterministically projected into Neo4j (`src/media_quotes/graph/`).
-The graph schema maintains uniqueness constraints on canonical keys and indexes on temporal
-and classification properties.
+## Graph projection
 
-The graph projection captures relational topologies that are difficult in relational tables:
-- **`SUPERSEDES` lineage chains**: Direct graph traversals track how claims evolve or reverse.
-- **`SAID` speaker attribution**: Enables chronological speaker timelines and temporal tracking.
-- **Cross-tier & regional divergence**: Correlates claims across tiers and jurisdictions.
-- **Bounded GraphRAG context packs**: Subgraph extraction (`fetch_graphrag_subgraph`) retrieves
-  active, non-obsolete quotes with speaker and supersession depth, bounded by token budget.
+When `SYNC_TO_NEO4J=true`, verified quotes, sources, articles, speakers, sections and topics are
+projected into Neo4j. The graph supports supersession lineage, speaker timelines, cross-tier
+comparison and bounded GraphRAG context packs. It is optional and derived from Postgres.
 
 ## Config and secrets
 
-`config.py` loads `.env` with pydantic-settings. Secrets (`database_url`, API keys, dashboard
-password, Neo4j password) are `SecretStr`. Paths resolve against the project root. Validators
-reject unpinned model snapshots and unknown modes. `observability._redact` keeps sensitive keys
-out of logs; `license_reference` is audit evidence and is deliberately not redacted.
-`configure_observability` is invoked once at the pipeline entry point shared by CLI and Dagster.
+`config.py` loads `.env` with pydantic-settings. Secrets are `SecretStr`. Paths resolve against
+the project root. Validators reject unpinned model snapshots and unknown modes.
+`observability._redact` keeps sensitive keys out of logs; `license_reference` remains audit
+evidence. Observability is configured once at the shared pipeline entry point.
 
 ## Background work
 
-Dagster materialises `daily_quotes_digest` from 2026-10-01 with two stopped-by-default UTC
-schedules: `daily_digest_schedule` (06:00 UTC for all tiers) and `tier1_six_hourly_schedule`
-(every 6 hours for Tier-1 sources). Asset checks verify the export, audit gates, gap disclosure,
-rights boundary, renderer limits and gold-set thresholds. `review_queue_sla_sensor` is also
-stopped by default; when started, it checks the obsolescence queue every five minutes. The
-dashboard uses `st.cache_data` only for read artifacts and renders both latest and multi-day
-per-source coverage.
+Dagster materialises `daily_quotes_digest` from 2026-10-01. The daily 06:00 UTC schedule, the
+six-hour Tier-1 schedule and the review SLA sensor are all stopped by default. The asset’s
+`source_mode` also defaults to `fixtures`; enabling a schedule alone does not perform live
+fetching. Declared `cadence_hours` values are registry metadata, not scheduler configuration.
+
+The dashboard caches file reads, loads the latest audit once per render, and only executes the
+selected tab. It renders run metrics, digests, logs, per-source coverage, review flags, registry
+rows, a read-only JSONL quote/article browser and read-only Postgres counts. The Quotes tab loads
+the newest 500 governed records for the selected topic; article bodies are not part of the export.
+With Neo4j enabled, the Data tab shows projection element counts.
 
 ## Quality gates
 
 `make check` runs docs QA, ruff format and lint, `mypy --strict src/`, pytest with 85% branch
-coverage, the package build and CLI smoke tests. CI runs the same gate plus gitleaks and
-`uv lock --check`. Tests inject HTTP transports and fake LLM clients; integration tests may use a
-real local Postgres, but unit tests never need the network or a live provider.
+coverage, the package build and CLI smoke tests. CI adds gitleaks and `uv lock --check`. Tests
+inject HTTP transports and fake LLM clients; unit tests do not require network access.
+
+## Known limits
+
+- Live historical archive discovery and an end-to-end 2026-10-01 backfill are not implemented.
+- Route approval is not runtime health: all 28 sources are enabled, 11 were live-verified on
+  2026-11-24, Reuters returned HTTP 401, and several other approved routes are stale, partial
+  or unsupported.
+- Daily obsolescence proposals are wired, but held-out human labels and production SLA evidence
+  are still pending.
+- Digest rendering normalises quote whitespace; strict formatting preservation is incomplete.
+- Licence territory is metadata only by the decision log; it is not enforced by the renderer.
+- PDF extraction exists but is not yet validated across production source routes; live responses
+  are capped at 5 MB.
+- The dashboard quote browser is capped at the newest 500 records and shows article metadata and
+  links, not article bodies.
+
+These are tracked in [06-whats-left.md](06-whats-left.md). Decision rationale is in
+[07-decision-log.md](07-decision-log.md).
 
 ## Load assumed
 
 One operator at a CLI, one Dagster daemon, one shared Postgres and a few dashboard viewers.
 This is not a multi-user web service.
-
-Full commands are in [05-command-reference.md](05-command-reference.md); remaining work is in
-[06-whats-left.md](06-whats-left.md).

@@ -7,7 +7,7 @@ README.md                 entry point and operator overview
 pyproject.toml            project metadata, dependencies and tool config
 uv.lock                   locked dependency resolution
 Makefile / scripts/check.ps1   one-command quality gate
-docker-compose.yml        local Postgres and opt-in Neo4j services
+docker-compose.yml        local Postgres (Neo4j runs separately for graph features)
 alembic.ini               Alembic configuration
 requirements.txt          generated deployment artifact for Streamlit Cloud
 data/                     registry, frozen schema, fixtures, gold set, topics
@@ -24,13 +24,14 @@ var/output/               generated output root (digests, quotes, audit, logs, r
 ```text
 src/media_quotes/
 ├── __init__.py / __main__.py / cli/   package marker, module entry, parser and handlers
-├── adapters/                   source adapters, blob cache, RSS/sitemap and HTML parsing
+├── adapters/                   source adapters, blob cache, RSS/sitemap, HTML and PDF parsing
 ├── db/                         engine, table definitions, schema.sql, session helpers
 ├── graph/                      derived Neo4j projection, queries and GraphRAG protocol
 ├── risk_controls/              review queue, budget gate, retention policy
 ├── validation/                 data-asset validation for registry, schema and exports
 ├── batch.py / batch_runner.py  OpenRouter batch payloads and submit/poll client
 ├── blob_prune.py               tombstone-gated raw blob pruning
+├── context_pack.py             bounded, provenance-tagged context packs
 ├── bootstrap.py                Alembic upgrade plus source sync
 ├── config.py                   Settings, pinned defaults and path resolution
 ├── curation.py                 section assignment, dedupe and review badges
@@ -70,14 +71,14 @@ src/media_quotes/
 
 ```text
 docs/README.md                 index
-docs/01-requirements.md        what the system does
+docs/01-requirements.md        requirement traceability and current status
 docs/02-architecture.md        how it is built
 docs/03-sources.md             source catalogue and rights state
 docs/04-repository-structure.md this file
 docs/05-command-reference.md   commands, flags and configuration
 docs/06-whats-left.md          remaining steps
-docs/Test_News.md              original brief, unchanged
-docs/Test_News.docx            original brief, Word copy
+docs/07-decision-log.md        design decisions and rationale
+docs/Test_News.md              immutable original assignment
 ```
 
 ## Placement rules
