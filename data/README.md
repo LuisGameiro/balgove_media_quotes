@@ -69,6 +69,8 @@ One object per line, validated against `quotes.schema.json`. Key design choices:
 - **Verbatim by default.** `quote_text_original` is an exact substring of the fetched page,
   confirmed by `verification.verbatim_match` and `content_hash`. `quote_text_en` is an
   *additional* field for non-English sources; it never replaces the original.
+- **Rights word caps apply to the original text.** Translations in `quote_text_en` are not counted
+  toward the limit; over-length originals are dropped rather than shortened.
 - **Deterministic IDs.** `Q-YYYYMMDD-NNNN` uses the publication date plus a sequence, so
   re-running a backfill produces the same IDs. A correction is a new versioned row in Postgres
   with an explanatory `notes` field and supersedes the earlier export line; the earlier row
@@ -97,6 +99,8 @@ validator: one schema, one code path.
    any `unknown` values. Then run `mq sources --action sync-csv` to refresh the mirrored CSV.
 3. Sample several articles and confirm first-hand bylines against wire copy
    (`original_reporting_flag` must be `first-hand` for Tier 3 inclusion); record the evidence.
+   Legacy approved configs default to `first-hand`; newly scaffolded sources start as `unknown`
+   until a human signs off, and quote audit and evaluation honour the flag.
 4. Set `source_type`, `claim_only` and `rights_status`/`access_mode`/`license_reference` per
    policy above.
 5. Set `enabled=true` only after T0 approval, then backfill from `archive_start_date`.
@@ -104,7 +108,9 @@ validator: one schema, one code path.
 ## Daily output structure
 
 Daily MD files are written to `../var/output/digests/YYYY-MM-DD.md` (canonical path under
-`OUTPUT_DIR`). The pipeline selects quotes where `is_obsolete=false` and `publication_date`
+`OUTPUT_DIR`). Canonical paths are reserved for a complete `live_feed` run with no tier or source
+filter; partial runs write under `../var/output/runs/<scope>/` and create no canonical Postgres
+digest manifest. The pipeline selects quotes where `is_obsolete=false` and `publication_date`
 falls in the rolling `REPORT_WINDOW_DAYS` (default 14) ending on `REPORT_DATE`, groups them
 by `section_id`, and renders for each quote: verbatim text (original plus English translation
 when present), source name, publication name, article name and canonical link. Quotes with

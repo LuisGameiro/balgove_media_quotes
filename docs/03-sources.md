@@ -40,7 +40,9 @@ schedules are defined but stopped, and the asset defaults to fixture replay.
   is verified from the fetched page. The feed was reachable during the same validation.
 
 Both remain mandatory. Reuters is reported as a live-route coverage gap and is never silently
-replaced by fallback outlets.
+replaced by fallback outlets. A full `live` or `archive` run fails closed when all expected
+mandatory sources contribute zero quotes; missing coverage counts as zero. A tier or source filter
+that intentionally excludes the mandatory baseline is a scoped partial run, not a full run.
 
 ## T0 rights gate
 
@@ -78,8 +80,11 @@ discovery-only, Guardian API lacking a key, and several sources whose sampled ar
 no verifiable quotes. The proof report is written under `var/output/proof/`.
 
 The validator probes the registered feed URL instead of an approved homepage, classifies XML,
-JSON and HTML separately, follows same-host redirects in proof mode, rejects cross-host redirects
-and treats route approval as distinct from runtime health. Translation remains a separate right:
+JSON and HTML separately, and treats route approval as distinct from runtime health. Redirect
+responses are rejected unless safe following is explicitly enabled: the proof runner opts in with
+an approved-host allowlist and every hop is re-checked against it. Archive discovery checks DNS
+before fetching. Malformed feed XML and per-article failures are disclosed as gaps without
+aborting the other articles. Translation remains a separate right:
 Reuters and BBC have `translation_rights_confirmed=false`; non-English output must preserve the
 original quote and use the optional pinned translation boundary only after route approval.
 
@@ -98,7 +103,9 @@ first-hand reporting. `mq sources --action add` creates a disabled, pending-revi
 `mq sources --action add --probe --live` and `mq sources --action probe --source-id <id> --live`
 run bounded admission-only probes (robots/terms, feed and article reachability); they never grant
 rights or enable a source. `mq sources --action backfill --source-id <id>` requires a usable source
-and a positive `--max-cost`. Rights approval and first-hand sign-off stay manual.
+and a positive `--max-cost`. Rights approval and first-hand sign-off stay manual. Legacy approved
+configs default `original_reporting_flag` to `first-hand`; newly scaffolded sources start as
+`unknown` until a human signs off, and quote audit and evaluation honour the flag.
 
 ## Offline replay
 

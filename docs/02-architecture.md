@@ -24,19 +24,34 @@ Derived graph projections optionally run against Neo4j with the official Python 
 6. `cli/app.py` dispatches commands; `orchestration.py` exposes the same pipeline as a Dagster
    asset with checks, schedules and a review sensor.
 
+The topic gate and the optional topic judge are configured once per collection and reused for
+every article; gate and judge decisions are recorded in the run log. Malformed feed XML and
+per-article failures are disclosed as gaps without aborting the remaining articles.
+
 ## Boundaries
 
 - **Registry and rights.** `source_configs.py` loads `data/sources/*.json` as authoritative and
   regenerates the CSV mirror. `registry.py` validates strict rows; `usable` is the T0 gate.
   `assert_fetch_permitted` and `assert_url_permitted` enforce it at the HTTP boundary.
 - **HTTP.** `fetch.py` has strict timeouts, connection limits, a 5 MB byte cap, HTTPS-only host
-  allowlisting and a DNS check for live fetches. A shared token bucket spaces requests.
+  allowlisting and a DNS check for live fetches. Redirect responses are rejected unless safe
+  following is explicitly enabled in the fetch policy; every hop is re-checked against the host
+  allowlist. Archive discovery enables the DNS check. A shared token bucket spaces requests.
 - **LLM.** `llm_live.py` checks the model snapshot, consults the cache before the provider,
   blocks instruction overrides and rejects refusal or incomplete output. Live OpenRouter use
-  requires Postgres so decisions can be cached and audited.
+  requires Postgres so decisions can be cached and audited. A failed section-inference call is
+  disclosed in the digest with a fixed unavailable marker and an audit event; quotes, logs and
+  audit rows are preserved, and the call is never retried or replaced with local text.
 - **Database.** `db/engine.py` builds the engine; `db/repository.py` owns writes. Business rows
   use idempotent upserts; audit events are append-only. Quote text and offsets are immutable.
 - **Files.** `export.py` uses atomic replace for JSONL, audit and digest artifacts.
+- **Artifact scoping.** Canonical daily paths are reserved for a complete `live_feed` live run with
+  no tier or source filter. Tier-filtered, source-filtered, archive, blob, `live_bing` and
+  `manual_sample` runs write under `<artifact-root>/runs/<scope>/` and do not create a canonical
+  Postgres digest manifest. Fixture replay keeps its own `fixtures/` tree.
+- **Coverage gate.** A full `live` or `archive` run fails closed when every expected mandatory
+  source contributes zero quotes; missing coverage counts as zero. A tier or source filter that
+  intentionally excludes the mandatory baseline is a scoped partial run, not a full run.
 - **Provenance.** Acquisition provenance (`fixture`, `live_feed`, `live_bing`, `manual_sample`) is
   stored on articles, quotes, exports, digests and review queues; fixture artifacts are written to
   isolated paths and are never promoted or used as a live fallback.
@@ -82,7 +97,11 @@ The dashboard caches file reads, loads the latest audit once per render, and onl
 selected tab. It renders run metrics, digests, logs, per-source coverage, review flags, registry
 rows, a read-only JSONL quote/article browser and read-only Postgres counts. The Quotes tab loads
 the newest 500 governed records for the selected topic; article bodies are not part of the export.
-With Neo4j enabled, the Data tab shows projection element counts.
+With Neo4j enabled, the Data tab shows projection element counts. It ignores legacy
+provenance-less root artifacts in favour of provenance-tagged trees, uses an 8-hour session TTL
+and a server-wide lockout after 5 failed attempts for 15 minutes (stored as counters only, never
+passwords), and caches database counts for 30 seconds. Dead graph-insight helpers have been
+removed; graph information appears only in the Data tab projection summary.
 
 ## Quality gates
 
@@ -91,9 +110,15 @@ coverage, the package build and CLI smoke tests. CI adds gitleaks and `uv lock -
 inject HTTP transports and fake LLM clients; unit tests do not require network access.
 
 `mq audit-quotes` is a paid shadow audit that defaults to `live_feed` blobs and accepts
-`--provenance`. Gold sets carry provenance and support `blob://` article refs so evaluation can run
-on collected text; `mq eval --full` fails closed on fixture-only evidence, missing human or
-obsolete labels, or uncalibrated judge agreement.
+`--provenance`; for live provenance it prefilters blobs by sidecar publication date before fetching
+article bodies. `mq audit`, `mq digest`, `mq export` and `mq restore-drill` also accept
+`--provenance`; an audit reconstructed from stored records is labelled `reconstructed=true`. Gold
+sets carry provenance and support `blob://` article refs so evaluation can run on collected text;
+`mq eval --full` fails closed on fixture-only evidence, missing human or obsolete labels, or
+uncalibrated judge agreement. Both quote audit and evaluation honour a source's
+`original_reporting_flag`. Rights word caps apply to the original source text, not translations;
+a budget overrun is resolved by raising `--max-cost` or narrowing the backfill scope — there is no
+`--force` override.
 
 ## Known limits
 
@@ -108,7 +133,8 @@ obsolete labels, or uncalibrated judge agreement.
 - Digest rendering normalises quote whitespace; strict formatting preservation is incomplete.
 - Licence territory is metadata only by the decision log; it is not enforced by the renderer.
 - PDF extraction exists but is not yet validated across production source routes; live responses
-  are capped at 5 MB.
+  are capped at 5 MB. A PDF lacking title, URL, byline or date fails closed — no metadata is
+  invented to satisfy verification.
 - The dashboard quote browser is capped at the newest 500 records and shows article metadata and
   links, not article bodies.
 

@@ -10,7 +10,7 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 | `bootstrap` | Apply Alembic migrations and sync the source registry |
 | `run` | Daily pipeline plus audit and logs (`--live` to collect, `--from-blobs` for cached HTML, `--tier 1` for Tier-1 cadence) |
 | `fetch` | Rights-gated live feed fetch into `BLOB_DIR`; dry-run by default (`--live` to download) |
-| `audit` | Generate or read the T0 and coverage audit report |
+| `audit` | Generate or read the T0 and coverage audit report (`--provenance`; reconstructed reports are labelled `reconstructed=true`) |
 | `audit-quotes` | Paid shadow audit for missed quotes; defaults to `live_feed` blobs, accepts `--provenance` |
 | `logs` | Inspect structured logs by run id and trace id |
 | `eval` | Gold-set metrics with optional split filter; `--full` fails closed without live human-labelled evidence |
@@ -18,14 +18,14 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 | `topics` | List, show or scaffold topic packs |
 | `version` | Print the version manifest |
 | `backfill` | Bounded historical backfill with cost estimate (`--live`, `--source-id`, `--execute`) |
-| `digest` | Regenerate the Markdown digest from local records |
-| `export` | Write JSONL from local or Postgres records (`--from-db`), or bounded `--context` packs |
+| `digest` | Regenerate the Markdown digest from local records (`--provenance`) |
+| `export` | Write JSONL from local or Postgres records (`--from-db`, `--provenance`), or bounded `--context` packs |
 | `dashboard` | Print dashboard launch guidance |
 | `dagster` | Print Dagster asset, partition and schedule guidance |
 | `review` | List or decide obsolescence review flags |
 | `blob-prune` | Plan or execute (`--execute`) tombstone-gated pruning of aged raw blobs |
 | `retention` | Print retention and lock readiness plan; with persistence on and no `--dry-run`, report observed audit months |
-| `restore-drill` | Compare two exports by quote id and content hash |
+| `restore-drill` | Compare two exports by quote id and content hash (`--provenance`) |
 | `batch` | OpenRouter batch dry-run, submit, status and apply |
 | `graph` | Manage derived Neo4j projection (`init`, `status`, `sync`, `lineage`, `speaker`, `divergence`, `context`) |
 
@@ -33,13 +33,20 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 
 - `run` replays fixtures by default. `--from-blobs` ingests HTML already downloaded by `fetch`;
   it does not contact a source. `--live` collects from official feeds first (Bing News is an opt-in
-  discovery fallback) and never falls back to fixtures.
+  discovery fallback) and never falls back to fixtures. Canonical daily paths are reserved for a
+  complete `live_feed` run with no tier or source filter; tier/source-filtered, archive, blob,
+  `live_bing` and `manual_sample` runs write under `<artifact-root>/runs/<scope>/` and create no
+  canonical Postgres digest manifest. A full `live` or `archive` run fails closed when all expected
+  mandatory sources have zero quotes (missing coverage counts as zero); a filter that excludes the
+  mandatory baseline is a scoped partial run.
 - `fetch --live` performs rights-gated current feed/sitemap discovery into blobs. It is not a
   historical archive backfill.
-- `backfill` is capped at 365 days and supports `--source-id` filtering. Execution requires
-  `--max-cost`; partitions use fixtures unless `--live` (bounded archive discovery) or
-  `--from-blobs` is supplied, and paid historical inference fails closed. `--max-cost` checks a
-  flat estimate, not provider spend.
+- `backfill` is capped at 365 days and supports `--source-id` filtering. Unknown source IDs are
+  rejected; explicit IDs may select Tier 4, while a no-ID run excludes Tier 4, and estimate and
+  execution resolve the same source scope. Execution requires `--max-cost`; partitions use fixtures
+  unless `--live` (bounded, DNS-checked archive discovery) or `--from-blobs` is supplied, and paid
+  historical inference fails closed. `--max-cost` checks a flat estimate, not provider spend; an
+  overrun means raising `--max-cost` or narrowing the span — there is no `--force`.
 - `sources --action add` scaffolds a disabled, pending-review JSON config. `add --probe --live` and
   `probe --source-id <id> --live` run bounded admission-only probes; they never grant rights or
   enable a source. `sources --action backfill --source-id <id>` needs a usable source and a positive
@@ -49,6 +56,8 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
   missing human/obsolete labels, or uncalibrated judge agreement.
 - Dagster schedules and the review sensor are stopped by default. When enabled, the daily and
   Tier-1 schedules request `source_mode=live`; a manual asset run still defaults to fixtures.
+- `retention` uses observed Postgres audit months only when persistence is on and `--dry-run` is
+  off; offline and dry-run runs report that months are unobserved and fabricate no detach plan.
 - OpenRouter inference requires `PERSIST_TO_POSTGRES=true`, a pinned model and an API key.
 - `scripts/test_scraper.py --validate-source <id> --live-routes` performs a memory-only health
   probe. It uses the registered feed URL and reports `reachable`, `empty_feed`,
@@ -57,9 +66,10 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 
 ## Shared flags
 
-`--date YYYY-MM-DD`, `--topic ID`, `--run-id ID`, `--out PATH`, `--verbose` and `--dry-run` are
-accepted where relevant. `--offline` is a deprecated compatibility flag; every command is
-offline unless it is an explicit live command.
+`--date YYYY-MM-DD`, `--topic ID`, `--run-id ID`, `--out PATH`, `--verbose`, `--dry-run` and
+`--provenance` are accepted where relevant. `--provenance` selects the acquisition tree for
+`audit`, `audit-quotes`, `digest`, `export` and `restore-drill`. `--offline` is a deprecated
+compatibility flag; every command is offline unless it is an explicit live command.
 
 Exit codes: `0` pass, `1` validation or threshold failure, `2` partial success with disclosed
 coverage gaps, `3` configuration or T0-gate error. Re-runs are idempotent.

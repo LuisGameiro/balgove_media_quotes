@@ -27,6 +27,8 @@ Unfinished work, grouped by the original requirement it limits, plus completed h
 - [x] Complete automated source admission probing for robots/terms, archive depth and first-hand reporting.
 - [x] Provide an operator-triggered 2026-10-01 backfill after rights approval via
       `mq sources --action backfill --source-id ... --max-cost ...`.
+- [ ] Obtain human first-hand sign-off for each newly scaffolded source before enabling it; new
+      sources start with `original_reporting_flag=unknown`.
 
 ## 3. FR-2.4 — obsolescence and digest fidelity
 
@@ -36,6 +38,8 @@ Unfinished work, grouped by the original requirement it limits, plus completed h
 - [ ] Obtain held-out human obsolete labels and confirm obsolete precision at least 0.90.
 - [ ] Preserve quote whitespace and formatting instead of collapsing it in the Markdown renderer.
 - [ ] Reconcile the 100% exact-span target with the current 0.95 automated evaluation threshold.
+- [ ] Collect held-out human labels and calibrate judge agreement before cutting evaluation over
+      to production thresholds.
 
 ## 4. OUT-3 — dashboard and repository
 
@@ -57,6 +61,8 @@ Unfinished work, grouped by the original requirement it limits, plus completed h
 
 - [x] Run migrations `0007_widen_version`, `0007_audit_events_monthly_partition` and `0008_enable_tier4` with backup and rollback verification.
 - [ ] Run migrations `0009_source_availability` and `0010_article_provenance` with backup and rollback verification.
+- [ ] Rehearse real Postgres migrations and downgrades with backup/rollback verification; current
+      checks are offline and do not prove a production rehearsal.
 - [ ] Provision the production OTLP collector and enable `OTEL_ENABLED=true`.
 - [ ] Schedule periodic `mq blob-prune --execute` runs backed by operator-approved tombstones.
 - [x] Persist the held-out precision and drift guard, then cut `mq eval --full` over to production thresholds.
@@ -68,6 +74,36 @@ Unfinished work, grouped by the original requirement it limits, plus completed h
       `extractor_hints.render_js=true`; it is disabled by default and rights-gated.
 - [x] Optional Neo4j projection and bounded GraphRAG context packs exist; Postgres remains the
       system of record.
+
+## 8. Review remediations
+
+- [x] Scope partial artifacts: canonical daily files are reserved for a complete `live_feed` run;
+      tier/source-filtered, archive, blob, `live_bing` and `manual_sample` runs write under
+      `var/output/runs/<scope>/` and create no canonical Postgres digest manifest.
+- [x] Fail closed on missing mandatory-source coverage in full live/archive runs, treating missing
+      coverage as zero quotes and filters that exclude mandatory sources as scoped partial runs.
+- [x] Add `--provenance` to `audit`, `digest`, `export` and `restore-drill`, and label reconstructed
+      audits `reconstructed=true`.
+- [x] Reject unknown backfill source IDs and spans over 365 days; let explicit IDs select Tier 4,
+      exclude Tier 4 when no IDs are given, and share one resolved scope between estimate and
+      execution.
+- [x] Reject redirects unless safe following is explicitly enabled, fail closed on admission
+      robots/feed errors, DNS-check archive discovery, and disclose malformed feed XML and
+      per-article failures without aborting other articles.
+- [x] Fail closed on PDFs missing title, URL, byline or date without inventing metadata, and emit a
+      fixed unavailable marker plus audit event on digest inference failure while keeping quotes,
+      logs and audit.
+- [x] Default legacy approved `original_reporting_flag` to `first-hand`, scaffold new sources as
+      `unknown` until manual sign-off, and honour the flag in quote audit and evaluation.
+- [x] Apply rights word caps to original text rather than translations; require `--max-cost` or a
+      narrowed scope for overruns (no `--force`).
+- [x] Ignore legacy provenance-less root artifacts in the dashboard, enforce an 8-hour session TTL
+      and a server-wide 5-attempt/15-minute counter-only lockout, cache DB counts for 30 seconds,
+      and remove dead graph-insight helpers.
+- [x] Base retention plans on observed Postgres audit months and fabricate no detach plan offline
+      or in dry-run mode.
+- [x] Prefilter live quote-audit blobs by sidecar date before fetching bodies, and build the topic
+      gate and judge once per collection.
 
 ## Completed
 

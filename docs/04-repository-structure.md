@@ -87,5 +87,8 @@ docs/Test_News.md              immutable original assignment
 - Business logic belongs in `src/media_quotes/`, with a unit test.
 - Database changes go through Alembic; `schema.sql` is the base DDL source.
 - Runtime output belongs under `var/output/` (or `OUTPUT_DIR`), never in the source package.
+- Canonical daily files are reserved for a complete `live_feed` run with no tier/source filter;
+  partial runs write under `var/output/runs/<scope>/`, create no canonical Postgres digest
+  manifest, and fixture replay keeps its own `fixtures/` tree.
 - Canonical values live in `enums.py`; do not duplicate them as literals.
 - Generated Python modules stay single-purpose; split only on independent change reasons.
