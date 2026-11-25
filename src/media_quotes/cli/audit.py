@@ -41,6 +41,7 @@ def _audit_report(  # pragma: no cover
     topic_id: str = DEFAULT_TOPIC_ID,
     provenance: AcquisitionProvenance = "fixture",
     source_mode: str = "fixtures",
+    scope: str | None = None,
 ) -> dict[str, Any]:
     window_start, window_end = _window(report_date, settings)
     checks = {
@@ -76,6 +77,7 @@ def _audit_report(  # pragma: no cover
         "topic_id": topic_id,
         "source_mode": source_mode,
         "provenance": provenance,
+        "artifact_scope": scope,
         "report_date": report_date.isoformat(),
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
@@ -98,11 +100,17 @@ def _audit_report(  # pragma: no cover
         "version_manifest": _version_manifest(settings, topic_id=topic_id, source_mode=source_mode),
         "artifacts": {
             "digest": str(
-                _digest_path(settings, report_date, topic_id=topic_id, provenance=provenance)
+                _digest_path(
+                    settings, report_date, topic_id=topic_id, provenance=provenance, scope=scope
+                )
             ),
             "quotes": str(
                 local_store_path(
-                    settings.export_dir, report_date, topic_id=topic_id, provenance=provenance
+                    settings.export_dir,
+                    report_date,
+                    topic_id=topic_id,
+                    provenance=provenance,
+                    scope=scope,
                 )
             ),
             "logs": str(settings.logs_dir / f"{run_id}.jsonl"),
@@ -145,8 +153,14 @@ def _audit_target_dir(
     settings: Settings,
     topic_id: str | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    scope: str | None = None,
 ) -> Path:
-    root = settings.audit_dir / "fixtures" if provenance == "fixture" else settings.audit_dir
+    if provenance == "fixture":
+        root = settings.audit_dir / "fixtures"
+    elif scope:
+        root = settings.audit_dir / "runs" / scope
+    else:
+        root = settings.audit_dir
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
         target = root / require_safe_id(topic_id, "topic_id")
     else:
@@ -160,6 +174,7 @@ def _write_audit(
     report: dict[str, Any],
     out_dir: Path | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    scope: str | None = None,
 ) -> tuple[Path, Path]:
     topic_id = str(report.get("topic_id", DEFAULT_TOPIC_ID))
     day = report["report_date"]
@@ -167,7 +182,7 @@ def _write_audit(
         json_path = out_dir
         md_path = out_dir.with_suffix(".md")
     else:
-        target_dir = out_dir or _audit_target_dir(settings, topic_id, provenance)
+        target_dir = out_dir or _audit_target_dir(settings, topic_id, provenance, scope)
         json_path = target_dir / f"audit-{day}.json"
         md_path = target_dir / f"audit-{day}.md"
     json_path.parent.mkdir(parents=True, exist_ok=True)

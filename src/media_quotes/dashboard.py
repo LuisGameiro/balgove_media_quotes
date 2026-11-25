@@ -92,15 +92,16 @@ def _audit_report_trees(audit_dir: Path) -> list[list[Path]]:
     A tree never includes another tree, so live and fixture counts are never mixed.
     """
     fixture_root = audit_dir / "fixtures"
+    excluded = (fixture_root, audit_dir / "runs")
     trees: list[list[Path]] = []
-    for root, exclude in ((audit_dir, fixture_root), (fixture_root, None)):
+    for root, skip in ((audit_dir, excluded), (fixture_root, ())):
         if not root.is_dir():
             continue
         trees.append(
             sorted(
                 path
                 for path in root.rglob("audit-*.json")
-                if exclude is None or not path.is_relative_to(exclude)
+                if all(not path.is_relative_to(other) for other in skip)
             )
         )
     return trees

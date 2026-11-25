@@ -591,6 +591,37 @@ def test_resume_ignores_fetched_articles_for_completed_middle_day(
     )
 
 
+def test_archive_backfill_days_are_scoped_away_from_live_daily_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from media_quotes.cli.common import run_scope
+
+    settings = _settings(tmp_path)
+    end = date(2026, 10, 2)
+    calls = _install(
+        monkeypatch,
+        settings,
+        candidates=[
+            ("https://www.example.com/a", "A", "2026-10-01"),
+            ("https://www.example.com/b", "B", "2026-10-02"),
+        ],
+        statuses=["succeeded", "succeeded"],
+    )
+
+    run_historical_backfill(settings, start=START, end=end, max_cost=10)
+
+    assert calls["pipeline"]
+    scopes = set()
+    for call in calls["pipeline"]:
+        scope = run_scope(
+            call["source_mode"], source_ids=call["source_ids"], provenance=call["provenance"]
+        )
+        assert scope is not None and scope.startswith("archive-")
+        assert scope != run_scope("live")  # a complete live run stays canonical
+        scopes.add(scope)
+    assert len(scopes) == 1  # same source filter yields a deterministic scope
+
+
 def test_source_ids_filter_limits_discovery_to_requested_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

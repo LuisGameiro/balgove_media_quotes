@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -37,6 +34,7 @@ from ..text_utils import require_safe_id
 from .common import (
     EXIT_FAILURE,
     EXIT_OK,
+    _queue_lock,  # compatibility alias: the lock now lives in cli.common
     _read_json,
     _write_json,
     load_review_flags,
@@ -55,36 +53,6 @@ def _load_queue(
 ) -> dict[str, Any]:
     payload = _read_json(_queue_path(settings, provenance))
     return payload if isinstance(payload, dict) else {"flags": []}
-
-
-@contextmanager
-def _queue_lock(path: Path) -> Iterator[None]:
-    """Keep the review-queue read-modify-write to one process at a time."""
-    lock = path.with_name(f".{path.name}.lock")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 5.0
-    while True:
-        try:
-            handle = lock.open("x", encoding="utf-8")
-            handle.write(str(time.time()) + "\n")
-            handle.flush()
-            break
-        except FileExistsError:
-            try:
-                mtime = lock.stat().st_mtime
-                if time.time() - mtime > 60.0:
-                    lock.unlink(missing_ok=True)
-                    continue
-            except OSError:
-                pass
-            if time.monotonic() >= deadline:
-                raise ConfigError("review queue is locked by another process") from None
-            time.sleep(0.05)
-    try:
-        yield
-    finally:
-        handle.close()
-        lock.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)

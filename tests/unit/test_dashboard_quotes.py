@@ -80,6 +80,22 @@ def test_dashboard_readers_prefer_live_artifacts_and_fall_back_to_fixtures(tmp_p
     assert latest_digests(digest_dir) == [("2026-11-19", "live")]
 
 
+def test_scoped_run_artifacts_are_not_browsed_as_canonical(tmp_path: Path) -> None:
+    export_dir = tmp_path / "quotes"
+    scoped_export = export_dir / "runs" / "live-t2"
+    scoped_export.mkdir(parents=True)
+    (scoped_export / "quotes-2026-11-19.jsonl").write_text(
+        json.dumps(_row("Q-SCOPED")) + "\n", encoding="utf-8"
+    )
+    assert browse_quotes(export_dir) == []
+
+    digest_dir = tmp_path / "digests"
+    scoped_digest = digest_dir / "runs" / "archive"
+    scoped_digest.mkdir(parents=True)
+    (scoped_digest / "2026-11-19.md").write_text("scoped", encoding="utf-8")
+    assert latest_digests(digest_dir) == []
+
+
 def test_filter_quotes_matches_text_source_section_and_obsolete_state() -> None:
     rows = [
         _row("Q-20261119-0001"),

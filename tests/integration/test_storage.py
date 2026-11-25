@@ -873,6 +873,70 @@ def test_sync_sources_with_empty_rows() -> None:
     session.commit.assert_not_called()
 
 
+@pytest.mark.integration
+def test_provenance_downgrade_keeps_deterministic_survivors() -> None:
+    """Needs a real Postgres: set MQ_TEST_DATABASE_URL to run this test."""
+    import os
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    from sqlalchemy import create_engine, text
+
+    from media_quotes.db.tables import metadata
+
+    url = os.environ.get("MQ_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("set MQ_TEST_DATABASE_URL to run the Postgres downgrade test")
+    path = Path(__file__).resolve().parents[2] / "migrations/versions/0010_article_provenance.py"
+    spec = spec_from_file_location("mq_0010_provenance", path)
+    assert spec is not None and spec.loader is not None
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    schema = "mq_downgrade_test"
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            conn.execute(text(f"CREATE SCHEMA {schema}"))
+            conn.execute(text(f"SET search_path TO {schema}, public"))
+            metadata.create_all(conn, tables=[digests_table])
+            rows = [
+                ("t1", "00000000-0000-0000-0000-000000000001", "fixture"),
+                ("t1", "00000000-0000-0000-0000-000000000002", "live_feed"),
+                ("t2", "00000000-0000-0000-0000-000000000003", "live_bing"),
+                ("t2", "00000000-0000-0000-0000-000000000004", "manual_sample"),
+                ("t3", "00000000-0000-0000-0000-000000000005", "live_bing"),
+                ("t3", "00000000-0000-0000-0000-000000000006", "live_feed"),
+            ]
+            for topic, digest_id, provenance in rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO digests (digest_id, digest_date, window_start, window_end, "
+                        "md_path, topic_id, provenance) VALUES "
+                        "(:digest_id, DATE '2026-11-19', DATE '2026-11-13', "
+                        "DATE '2026-11-19', 'digests/d.md', :topic, :provenance)"
+                    ),
+                    {"digest_id": digest_id, "topic": topic, "provenance": provenance},
+                )
+            for statement in module._DOWNGRADE_DEDUPE_SQL:
+                conn.execute(text(statement))
+            survivors = {
+                row[0]: row[1]
+                for row in conn.execute(
+                    text("SELECT topic_id, digest_id FROM digests ORDER BY topic_id")
+                ).all()
+            }
+            assert survivors == {
+                "t1": "00000000-0000-0000-0000-000000000002",  # live beats fixture
+                "t2": "00000000-0000-0000-0000-000000000003",  # lowest digest_id wins
+                "t3": "00000000-0000-0000-0000-000000000006",  # live_feed wins over lower id
+            }
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        engine.dispose()
+
+
 def test_sync_sources_upserts_rows_without_database() -> None:
     rows = load_sources_csv(SOURCES_CSV)[:2]
     assert all(isinstance(row, SourceRegistryRow) for row in rows)

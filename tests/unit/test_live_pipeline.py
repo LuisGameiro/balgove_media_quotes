@@ -15,7 +15,7 @@ import pytest
 
 from media_quotes import cli
 from media_quotes.adapters import BlobCache, FixtureSource
-from media_quotes.cli.common import EXIT_FAILURE, _load_registry, _run_id
+from media_quotes.cli.common import EXIT_FAILURE, _load_registry, _run_id, run_scope
 from media_quotes.cli.run import _do_run
 from media_quotes.config import Settings
 from media_quotes.exceptions import ConfigError
@@ -431,6 +431,7 @@ def test_archive_run_with_source_ids_covers_only_requested_sources(
         topic_id=result.topic_id,
         provenance="live_feed",
         source_mode="archive",
+        scope=run_scope("archive", source_ids=selected, provenance="live_feed"),
     )
 
 
@@ -623,3 +624,248 @@ def test_archive_failed_mandatory_sources_publish_no_digest(
     assert result.audit_json_path is not None
     report = json.loads(result.audit_json_path.read_text(encoding="utf-8"))
     assert report["artifacts"]["digest"] == ""
+
+
+def test_run_scope_is_canonical_only_for_complete_live_feed() -> None:
+    assert run_scope("fixtures") is None
+    assert run_scope("live") == "live-p-fixture"  # fixture provenance is never canonical
+    assert run_scope("live", provenance="live_feed") is None
+    assert run_scope("live", provenance="live_feed", tier=None, source_ids=set()) is None
+    assert run_scope("live", provenance="live_bing") == "live-p-live_bing"
+    assert run_scope("blobs", provenance="live_feed") == "blobs"
+    assert run_scope("archive", provenance="live_feed") == "archive"
+    assert run_scope("live", provenance="live_feed", tier=2) == "live-t2"
+    first = run_scope("archive", provenance="live_feed", source_ids={"reuters", "bbc"})
+    second = run_scope("archive", provenance="live_feed", source_ids={"bbc", "reuters"})
+    assert first == second and first is not None and first.startswith("archive-s-")
+    assert len(first.rsplit("-", 1)[-1]) == 8
+    assert first != run_scope("archive", provenance="live_feed", source_ids={"guardian"})
+
+
+def test_run_id_changes_with_scope_but_fixture_id_is_stable(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    baseline = _run_id(REPORT_DATE, settings)
+    assert baseline == _run_id(REPORT_DATE, settings, scope=None)
+    scoped = {
+        _run_id(REPORT_DATE, settings, scope=scope)
+        for scope in ("archive", "live-t2", "live-p-live_bing", "live-s-abcdef12")
+    }
+    assert baseline not in scoped
+    assert len(scoped) == 4
+
+
+def _canonical_paths(settings: Settings) -> dict[str, Path]:
+    day = REPORT_DATE.isoformat()
+    return {
+        "export": settings.export_dir / f"quotes-{day}.jsonl",
+        "digest": settings.digest_dir / f"{day}.md",
+        "audit_json": settings.audit_dir / f"audit-{day}.json",
+        "audit_md": settings.audit_dir / f"audit-{day}.md",
+    }
+
+
+def test_scoped_runs_never_touch_canonical_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    _install_collector(monkeypatch, {src: _success(cache, src) for src in _SOURCES})
+
+    canonical = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live")
+    assert canonical.artifact_scope is None
+    paths = _canonical_paths(settings)
+    assert all(path.is_file() for path in paths.values())
+    baseline = {name: path.read_bytes() for name, path in paths.items()}
+
+    seen_ids = {canonical.run_id}
+    day = REPORT_DATE.isoformat()
+
+    def check_scoped(result: Any, expected_scope: str) -> None:
+        assert result.artifact_scope == expected_scope
+        assert result.status != "failed"
+        assert result.run_id not in seen_ids
+        seen_ids.add(result.run_id)
+        assert (settings.export_dir / "runs" / expected_scope / f"quotes-{day}.jsonl").is_file()
+        assert (settings.digest_dir / "runs" / expected_scope / f"{day}.md").is_file()
+        assert (settings.audit_dir / "runs" / expected_scope / f"audit-{day}.json").is_file()
+        assert {name: path.read_bytes() for name, path in paths.items()} == baseline
+
+    cases: list[tuple[dict[str, Any], str]] = [
+        ({"tier": 2}, "live-t2"),
+        ({"source_ids": {"guardian"}}, "live-s-" + run_scope("live", source_ids={"guardian"})[-8:]),
+    ]
+    for kwargs, expected_scope in cases:
+        check_scoped(
+            run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live", **kwargs),
+            expected_scope,
+        )
+
+    bing_cache = BlobCache(settings.blob_dir)
+    _install_collector(
+        monkeypatch,
+        {src: _success(bing_cache, src, provenance="live_bing") for src in _SOURCES},
+    )
+    check_scoped(
+        run_daily_pipeline(
+            settings, report_date=REPORT_DATE, source_mode="live", provenance="live_bing"
+        ),
+        "live-p-live_bing",
+    )
+
+    _forbid_discovery(monkeypatch)
+    archive_scope = "archive"
+    archived = run_daily_pipeline(
+        settings,
+        report_date=REPORT_DATE,
+        source_mode="archive",
+        prefetched_refs={src: _archive_refs(cache, src) for src in _SOURCES},
+    )
+    assert archived.artifact_scope == archive_scope
+    assert (settings.export_dir / "runs" / archive_scope / f"quotes-{day}.jsonl").is_file()
+    assert {name: path.read_bytes() for name, path in paths.items()} == baseline
+
+
+def test_complete_live_run_missing_mandatory_coverage_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    coverage = [{"source_id": "guardian", "quotes": 1, "status": "degraded"}]
+
+    def collect(*args: object, **kwargs: object) -> tuple[list[Any], ...]:
+        return [], coverage, [], [], 0, {}
+
+    monkeypatch.setattr("media_quotes.cli.run._collect", collect)
+    result = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live")
+    assert result.status == "failed"
+    assert result.digest_path is None
+    assert result.artifact_scope is None
+
+
+def test_scoped_persistence_skips_digest_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    settings = _settings(tmp_path, persist_to_postgres=True)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    _install_collector(monkeypatch, {src: _success(cache, src) for src in _SOURCES})
+    digest_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "media_quotes.db.repository.persist_digest_manifest",
+        lambda *args, **kwargs: digest_calls.append(kwargs),
+    )
+
+    def constant(value: object):
+        return lambda *args, **kwargs: value
+
+    for name, value in (
+        ("persist_articles_and_quotes", (1, 1)),
+        ("persist_quote_classifications", 1),
+        ("persist_obsolescence_flags", 0),
+        ("start_pipeline_run", None),
+        ("append_audit_events", None),
+        ("finish_pipeline_run", None),
+    ):
+        monkeypatch.setattr(f"media_quotes.db.repository.{name}", constant(value))
+
+    @contextmanager
+    def fake_context(_settings: Settings):
+        yield MagicMock()
+
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", fake_context)
+
+    scoped = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live", tier=2)
+    assert scoped.artifact_scope is not None
+    assert scoped.persistence["digest_id"] == ""
+    assert digest_calls == []
+
+    canonical = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live")
+    assert canonical.artifact_scope is None
+    assert canonical.persistence["digest_id"] != ""
+    assert len(digest_calls) == 1
+
+
+def test_all_bing_live_run_is_scoped_and_rewrites_event_run_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import media_quotes.cli.run as cli_run
+
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    _install_collector(monkeypatch, {src: _success(cache, src) for src in _SOURCES})
+
+    canonical = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live")
+    assert canonical.artifact_scope is None
+    paths = _canonical_paths(settings)
+    baseline = {name: path.read_bytes() for name, path in paths.items()}
+    live_default_id = _run_id(
+        REPORT_DATE,
+        settings,
+        topic_id=canonical.topic_id,
+        provenance="live_feed",
+        source_mode="live",
+    )
+    assert canonical.run_id == live_default_id
+
+    bing_cache = BlobCache(settings.blob_dir)
+    _install_collector(
+        monkeypatch,
+        {src: _success(bing_cache, src, provenance="live_bing") for src in _SOURCES},
+    )
+    collected: dict[str, list[str]] = {"run_ids": [], "trace_ids": []}
+    real_collect = cli_run._collect
+
+    def spy_collect(settings_arg: Any, **kwargs: Any) -> Any:
+        result = real_collect(settings_arg, **kwargs)
+        collected["run_ids"] = [str(event.get("run_id")) for event in result[3]]
+        collected["trace_ids"] = [
+            str(event["trace_id"]) for event in result[3] if event.get("trace_id")
+        ]
+        return result
+
+    monkeypatch.setattr(cli_run, "_collect", spy_collect)
+
+    result = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live")
+
+    assert result.provenance == "live_bing"
+    assert result.artifact_scope == "live-p-live_bing"
+    assert result.run_id != live_default_id
+    assert result.status != "failed"
+    day = REPORT_DATE.isoformat()
+    assert (settings.export_dir / "runs" / result.artifact_scope / f"quotes-{day}.jsonl").is_file()
+    assert (settings.digest_dir / "runs" / result.artifact_scope / f"{day}.md").is_file()
+    assert (settings.audit_dir / "runs" / result.artifact_scope / f"audit-{day}.json").is_file()
+    assert {name: path.read_bytes() for name, path in paths.items()} == baseline
+
+    assert collected["run_ids"] and set(collected["run_ids"]) == {collected["run_ids"][0]}
+    assert collected["run_ids"][0] == live_default_id  # provisional id used only by _collect
+    assert collected["run_ids"][0] != result.run_id
+    assert {event["run_id"] for event in result.events} == {result.run_id}
+    assert collected["trace_ids"]
+    assert [
+        event["trace_id"]
+        for event in result.events
+        if event.get("trace_id") in collected["trace_ids"]
+    ] == collected["trace_ids"]
+
+
+def test_empty_explicit_source_selection_is_rejected_before_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    calls, _ = _install_collector(monkeypatch, {src: _success(cache, src) for src in _SOURCES})
+
+    with pytest.raises(ConfigError, match="source_ids cannot be empty"):
+        run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live", source_ids=set())
+
+    assert calls == []
+    assert not list(tmp_path.rglob("*.jsonl"))
+    assert not list(tmp_path.rglob("*.md"))
+    assert not list(tmp_path.rglob("audit-*.json"))
+    assert not (settings.export_dir / "runs").exists()

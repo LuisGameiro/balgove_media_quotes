@@ -27,9 +27,15 @@ def local_store_path(
     *,
     topic_id: str | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    scope: str | None = None,
 ) -> Path:
-    """Store path for one report date; fixtures are isolated, live stays canonical."""
-    root = export_dir / "fixtures" if provenance == "fixture" else export_dir
+    """Store path for one report date; fixtures and scoped runs are isolated."""
+    if provenance == "fixture":
+        root = export_dir / "fixtures"
+    elif scope:
+        root = export_dir / "runs" / scope
+    else:
+        root = export_dir
     name = f"quotes-{report_date.isoformat()}.jsonl"
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
         return root / require_safe_id(topic_id, "topic_id") / name

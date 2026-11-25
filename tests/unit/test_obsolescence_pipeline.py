@@ -178,3 +178,66 @@ def test_daily_pipeline_records_obsolescence_failure_without_blocking(
         for event in result.events
     )
     assert not (settings.audit_dir / "review-queue.json").exists()
+
+
+def test_new_and_interleaved_flags_survive_the_review_queue_merge(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    def flag(quote_id: str, state: str = "pending") -> ObsolescenceFlag:
+        return ObsolescenceFlag(
+            evidence=ObsolescenceEvidence(
+                old_quote_id=quote_id,
+                old_content_hash="a" * 64,
+                newer_article_id="art-2",
+                newer_content_hash="b" * 64,
+                newer_is_first_hand=True,
+                newer_rights_cleared=True,
+                superseding_span="A newer official statement.",
+                decision_id="dec-1",
+                rationale="Superseded by a first-hand statement.",
+            ),
+            confidence=0.9,
+            state=state,
+        )
+
+    settings = _settings(tmp_path)
+    older = _record(
+        "Q-20261118-0001", "Talks will continue tomorrow.", date(2026, 11, 18), "a" * 64
+    )
+    newer = _record("Q-20261119-0001", "Talks have been paused.", date(2026, 11, 19), "b" * 64)
+    offsets = {
+        older.quote_id: {"speaker": "Alex Morgan"},
+        newer.quote_id: {"speaker": "Alex Morgan"},
+    }
+    _patch_collection(monkeypatch, [older, newer], offsets)
+
+    settings.audit_dir.mkdir(parents=True)
+    queue_path = settings.audit_dir / "review-queue.json"
+    lock_path = queue_path.with_name(".review-queue.json.lock")
+    interleaved = flag("Q-INTERLEAVED")
+    decided = flag("Q-DECIDED", "confirmed")
+    proposed = flag("Q-PROPOSED")
+    queue_path.write_text(
+        json.dumps({"flags": [interleaved.model_dump(mode="json")]}), encoding="utf-8"
+    )
+
+    def propose(records: Any, *, now: Any, judge: Any, speakers: Any) -> list[ObsolescenceFlag]:
+        # Judge/provider work must never run while the review queue is locked.
+        assert not lock_path.exists()
+        payload = json.loads(queue_path.read_text(encoding="utf-8"))
+        payload["flags"].append(decided.model_dump(mode="json"))  # another operator's verdict
+        queue_path.write_text(json.dumps(payload), encoding="utf-8")
+        return [proposed]
+
+    monkeypatch.setattr("media_quotes.risk_controls.obsolescence.propose_obsolescence", propose)
+
+    result = run_daily_pipeline(settings, report_date=REPORT_DATE)
+
+    assert result.artifact_scope is None
+    assert not lock_path.exists()
+    expected = {"Q-INTERLEAVED", "Q-DECIDED", "Q-PROPOSED"}
+    assert expected <= {f.evidence.old_quote_id for f in result.review_flags}
+    payload = json.loads(queue_path.read_text(encoding="utf-8"))
+    states = {item["evidence"]["old_quote_id"]: item["state"] for item in payload["flags"]}
+    assert states["Q-DECIDED"] == "confirmed"
+    assert expected <= set(states)

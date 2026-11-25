@@ -469,6 +469,17 @@ def test_check_topic_never_treats_fixtures_as_topic(tmp_path: Path) -> None:
     assert orchestration._check_topic(settings, day, None) == "ai-policy"
 
 
+def test_check_topic_never_treats_runs_as_topic(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    scoped = tmp_path / "audit" / "runs" / "archive" / "ai-policy"
+    scoped.mkdir(parents=True)
+    (scoped / f"audit-{day.isoformat()}.json").write_text(
+        json.dumps(_audit_payload(day.isoformat(), topic_id="ai-policy")), encoding="utf-8"
+    )
+    assert orchestration._check_topic(settings, day, None) == "ukraine-war"
+
+
 def test_schema_check_reads_selected_provenance(tmp_path: Path) -> None:
     from media_quotes.pipeline import run_daily_pipeline
 

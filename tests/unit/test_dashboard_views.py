@@ -91,6 +91,31 @@ def test_live_audit_wins_over_fixture_audit(tmp_path: Path) -> None:
     assert _latest_audit(tmp_path, topic_id="ai-policy") == {}
 
 
+def test_scoped_runs_are_not_mistaken_for_canonical_audits(tmp_path: Path) -> None:
+    write_audit(
+        tmp_path / "runs" / "archive",
+        {
+            "topic_id": "ukraine-war",
+            "report_date": "2026-11-20",
+            "coverage": [{"source_id": "archive-news", "quotes": 7}],
+        },
+        day="audit-2026-11-20.json",
+    )
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "report_date": "2026-11-19",
+            "coverage": [{"source_id": "reuters", "quotes": 2}],
+        },
+        day="audit-2026-11-19.json",
+    )
+    assert _latest_audit(tmp_path)["report_date"] == "2026-11-19"
+    assert daily_source_coverage(tmp_path) == [
+        {"date": "2026-11-19", "source_id": "reuters", "quotes": 2}
+    ]
+
+
 def test_daily_source_coverage_does_not_double_count(tmp_path: Path) -> None:
     for day, quotes in (("2026-11-18", 2), ("2026-11-19", 3)):
         write_audit(

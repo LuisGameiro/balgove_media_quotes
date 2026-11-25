@@ -16,6 +16,25 @@ down_revision = "0009_source_availability"
 branch_labels = None
 depends_on = None
 
+# Downgrade must collapse provenance-scoped manifests to the legacy two-column key.
+# Survivors are deterministic: live_feed beats other provenances, and the lowest
+# digest_id wins any remaining tie. Kept as data so the opt-in Postgres test can run
+# the exact statements the downgrade executes.
+_DOWNGRADE_DEDUPE_SQL = (
+    "DELETE FROM digests AS fixture USING digests AS live "
+    "WHERE fixture.topic_id = live.topic_id "
+    "AND fixture.digest_date = live.digest_date "
+    "AND fixture.provenance = 'fixture' AND live.provenance <> 'fixture'",
+    "DELETE FROM digests AS other USING digests AS livefeed "
+    "WHERE other.topic_id = livefeed.topic_id "
+    "AND other.digest_date = livefeed.digest_date "
+    "AND other.provenance <> 'live_feed' AND livefeed.provenance = 'live_feed'",
+    "DELETE FROM digests AS loser USING digests AS keeper "
+    "WHERE loser.topic_id = keeper.topic_id "
+    "AND loser.digest_date = keeper.digest_date "
+    "AND loser.digest_id > keeper.digest_id",
+)
+
 
 def upgrade() -> None:
     op.execute(
@@ -54,12 +73,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Fixture manifests are test-only; discard them when a real manifest exists so the
     # legacy two-column uniqueness rule can be restored without destroying live data.
-    op.execute(
-        "DELETE FROM digests AS fixture USING digests AS live "
-        "WHERE fixture.topic_id = live.topic_id "
-        "AND fixture.digest_date = live.digest_date "
-        "AND fixture.provenance = 'fixture' AND live.provenance <> 'fixture'"
-    )
+    for statement in _DOWNGRADE_DEDUPE_SQL:
+        op.execute(statement)
     op.execute("ALTER TABLE digests DROP CONSTRAINT IF EXISTS digests_topic_date_unique")
     op.execute(
         "ALTER TABLE digests ADD CONSTRAINT digests_topic_date_unique "

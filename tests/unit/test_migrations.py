@@ -101,6 +101,22 @@ def test_provenance_migration_adds_columns_and_scopes_digest_unique() -> None:
     assert "UNIQUE (topic_id, digest_date, provenance)" in schema
 
 
+def test_provenance_downgrade_collapses_duplicates_deterministically() -> None:
+    module = _load("0010_article_provenance")
+    statements = module._DOWNGRADE_DEDUPE_SQL
+    assert len(statements) == 3
+    assert "fixture.provenance = 'fixture'" in statements[0]
+    assert "live.provenance <> 'fixture'" in statements[0]
+    assert "other.provenance <> 'live_feed'" in statements[1]
+    assert "livefeed.provenance = 'live_feed'" in statements[1]
+    assert "loser.digest_id > keeper.digest_id" in statements[2]
+    downgrade = inspect.getsource(module.downgrade)
+    assert "for statement in _DOWNGRADE_DEDUPE_SQL" in downgrade
+    assert downgrade.index("_DOWNGRADE_DEDUPE_SQL") < downgrade.index(
+        "DROP CONSTRAINT IF EXISTS digests_topic_date_unique"
+    )
+
+
 def test_initial_migration_executes_schema_sql() -> None:
     module = _load("0001_initial")
     sql = module._load_schema_sql()

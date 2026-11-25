@@ -392,6 +392,7 @@ class DailyPipelineResult:
     status: str
     topic_id: str = DEFAULT_TOPIC_ID
     provenance: AcquisitionProvenance = "fixture"
+    artifact_scope: str | None = None
     review_flags: tuple[ObsolescenceFlag, ...] = ()
     offsets: dict[str, dict[str, Any]] = field(default_factory=dict)
     store_path: Path | None = None
@@ -458,7 +459,7 @@ def _persist_result(
                 session, publishable, result.offsets, assigned_by=assigned_by, commit=False
             )
             digest_id = ""
-            if result.digest_path is not None:
+            if result.digest_path is not None and result.artifact_scope is None:
                 digest_id = persist_digest_manifest(
                     session,
                     digest_date=result.report_date,
@@ -522,6 +523,8 @@ def run_daily_pipeline(
     source_ids: set[str] | None = None,
 ) -> DailyPipelineResult:
     """Run one report date through the shared T0-gated offline pipeline."""
+    if source_ids is not None and not source_ids:
+        raise ConfigError("source_ids cannot be empty; pass None to select all sources")
     if source_mode in {"live", "blobs", "archive"} and provenance == "fixture":
         provenance = "live_feed"
     from .cli.audit import _audit_report, _write_audit
@@ -530,11 +533,14 @@ def run_daily_pipeline(
         _NOTICE,
         _digest_path,
         _event,
+        _load_registry,
         _load_topic_pack,
+        _queue_lock,
         _run_id,
         _window,
         _write_json,
         review_queue_path,
+        run_scope,
     )
     from .cli.run import _collect, _load_review_flags
     from .curation import dedupe_quotes, review_badge
@@ -543,20 +549,24 @@ def run_daily_pipeline(
     from .llm import make_provider
     from .rights_guard import apply_rights_limits
 
+    provisional_scope = run_scope(
+        source_mode, tier=tier, source_ids=source_ids, provenance=provenance
+    )
     active_topic_id = str(
         topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID) or DEFAULT_TOPIC_ID
     )
     topic_pack = _load_topic_pack(settings, active_topic_id, strict=topic_id is not None)
-    actual_run_id = run_id or _run_id(
+    provisional_run_id = run_id or _run_id(
         report_date,
         settings,
         topic_id=active_topic_id,
         provenance=provenance,
         source_mode=source_mode,
+        scope=provisional_scope,
     )
     records, coverage, gaps, events, rejected, offsets = _collect(
         settings,
-        run_id=actual_run_id,
+        run_id=provisional_run_id,
         report_date=report_date,
         topic_pack=topic_pack,
         source_mode=source_mode,
@@ -576,6 +586,22 @@ def run_daily_pipeline(
         if only_provenance != "fixture":
             provenance = only_provenance
 
+    # Collection may settle the run-level provenance (e.g. all live_bing records). Only
+    # then can the scope and default run ID be final; events carry the provisional ID.
+    scope = run_scope(source_mode, tier=tier, source_ids=source_ids, provenance=provenance)
+    actual_run_id = run_id or _run_id(
+        report_date,
+        settings,
+        topic_id=active_topic_id,
+        provenance=provenance,
+        source_mode=source_mode,
+        scope=scope,
+    )
+    if actual_run_id != provisional_run_id:
+        for event in events:
+            if event.get("run_id") == provisional_run_id:
+                event["run_id"] = actual_run_id
+
     publishable_records = [record for record in records if record.topic_status == "accepted"]
     rejected += len(records) - len(publishable_records)
     records = publishable_records
@@ -594,20 +620,32 @@ def run_daily_pipeline(
             status="dry-run",
             topic_id=active_topic_id,
             provenance=provenance,
+            artifact_scope=scope,
             offsets=offsets,
         )
 
-    mandatory_coverage = [cov for cov in coverage if cov.get("source_id") in _MANDATORY]
+    expected_mandatory = set(_MANDATORY)
+    if source_ids is not None:
+        expected_mandatory &= set(source_ids)
+    if tier is not None:
+        expected_mandatory &= {
+            row.source_id for row in _load_registry(settings) if row.tier == tier
+        }
+    quotes_by_source = {str(cov.get("source_id")): cov.get("quotes", 0) for cov in coverage}
     failed_live = (
         source_mode in {"live", "archive"}
-        and bool(mandatory_coverage)
-        and all(not cov.get("quotes") for cov in mandatory_coverage)
+        and bool(expected_mandatory)
+        and all(not quotes_by_source.get(source_id) for source_id in expected_mandatory)
     )
 
     rights = apply_rights_limits(records, max_quote_words=settings.max_quote_words)
     kept = dedupe_quotes(rights.kept, window_days=settings.report_window_days)
     store_path = local_store_path(
-        settings.export_dir, report_date, topic_id=active_topic_id, provenance=provenance
+        settings.export_dir,
+        report_date,
+        topic_id=active_topic_id,
+        provenance=provenance,
+        scope=scope,
     )
     write_jsonl(kept, store_path)
 
@@ -626,16 +664,19 @@ def run_daily_pipeline(
             if isinstance(meta, Mapping)
         }
         _new_flags = _propose_obsolescence(list(kept), now=now, judge=_judge, speakers=_speakers)
-        _existing_ids = {f.evidence.old_quote_id for f in review_flags}
-        _merged = list(review_flags)
-        for flag in _new_flags:
-            if flag.evidence.old_quote_id not in _existing_ids:
-                _merged.append(flag)
-                _existing_ids.add(flag.evidence.old_quote_id)
-        if _merged != list(review_flags):
-            _queue_path = review_queue_path(settings, provenance)
-            _write_json(_queue_path, {"flags": [f.model_dump(mode="json") for f in _merged]})
+        _queue_path = review_queue_path(settings, provenance)
+        with _queue_lock(_queue_path):
+            # Re-read under the lock: a concurrent operator's verdict/flag must survive.
+            _current_flags = _load_review_flags(settings, provenance)
+            _existing_ids = {f.evidence.old_quote_id for f in _current_flags}
+            _merged = list(_current_flags)
+            for flag in _new_flags:
+                if flag.evidence.old_quote_id not in _existing_ids:
+                    _merged.append(flag)
+                    _existing_ids.add(flag.evidence.old_quote_id)
             review_flags = _merged
+            if _merged != _current_flags:
+                _write_json(_queue_path, {"flags": [f.model_dump(mode="json") for f in _merged]})
     except Exception as exc:
         events.append(
             _event(
@@ -663,7 +704,11 @@ def run_daily_pipeline(
             window_start=_window(report_date, settings)[0],
             window_end=report_date,
             out_path=_digest_path(
-                settings, report_date, topic_id=active_topic_id, provenance=provenance
+                settings,
+                report_date,
+                topic_id=active_topic_id,
+                provenance=provenance,
+                scope=scope,
             ),
             sections_csv=settings.sections_csv,
             topic_pack=topic_pack,
@@ -696,11 +741,14 @@ def run_daily_pipeline(
         topic_id=active_topic_id,
         provenance=provenance,
         source_mode=source_mode,
+        scope=scope,
     )
     if failed_live:
         report["artifacts"]["digest"] = ""
-    audit_json_path, audit_md_path = _write_audit(settings, report, provenance=provenance)
-    _write_json(settings.audit_dir / f"{actual_run_id}.json", report)
+    audit_json_path, audit_md_path = _write_audit(
+        settings, report, provenance=provenance, scope=scope
+    )
+    _write_json(audit_json_path.parent / f"{actual_run_id}.json", report)
 
     status = "failed" if failed_live else ("partial" if gaps else "succeeded")
     result = DailyPipelineResult(
@@ -716,6 +764,7 @@ def run_daily_pipeline(
         status=status,
         topic_id=active_topic_id,
         provenance=provenance,
+        artifact_scope=scope,
         review_flags=tuple(review_flags),
         offsets=offsets,
         store_path=store_path,

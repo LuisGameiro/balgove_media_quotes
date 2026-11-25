@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -42,6 +43,44 @@ def test_malformed_review_flag_is_not_silently_dropped(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError):
         load_review_flags(settings)
+
+
+def test_queue_lock_lives_in_common_and_is_re_exported(tmp_path: Path) -> None:
+    from media_quotes.cli import common
+    from media_quotes.cli.maintenance import _queue_lock as maintenance_lock
+
+    assert maintenance_lock is common._queue_lock
+
+
+def test_concurrent_review_decisions_are_not_lost(tmp_path: Path) -> None:
+    settings = settings_for(tmp_path)
+    settings.audit_dir.mkdir(parents=True, exist_ok=True)
+    queue_file = settings.audit_dir / "review-queue.json"
+    queue_file.write_text(
+        json.dumps({"flags": [_flag_payload("Q-A"), _flag_payload("Q-B")]}), encoding="utf-8"
+    )
+    errors: list[Exception] = []
+
+    def decide(quote_id: str) -> None:
+        try:
+            _do_review(settings, action="decide", quote_id=quote_id)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=decide, args=(quote_id,)) for quote_id in ("Q-A", "Q-B")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert not errors
+    payload = json.loads(queue_file.read_text(encoding="utf-8"))
+    assert {flag["evidence"]["old_quote_id"]: flag["state"] for flag in payload["flags"]} == {
+        "Q-A": "confirmed",
+        "Q-B": "confirmed",
+    }
+    assert not queue_file.with_name(".review-queue.json.lock").exists()
 
 
 def test_queue_lock_is_released(tmp_path: Path) -> None:

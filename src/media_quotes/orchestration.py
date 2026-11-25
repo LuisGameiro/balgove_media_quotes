@@ -187,7 +187,7 @@ def _check_topic(
         candidates.extend(
             (sub / name, sub.name)
             for sub in sorted(root.iterdir())
-            if sub.is_dir() and sub.name != "fixtures"
+            if sub.is_dir() and sub.name not in {"fixtures", "runs"}
         )
         found = [(path.stat().st_mtime, topic) for path, topic in candidates if path.is_file()]
         if found:

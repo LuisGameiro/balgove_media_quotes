@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -116,6 +118,36 @@ def _read_json(path: Path) -> dict[str, Any]:  # pragma: no cover
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
+@contextmanager
+def _queue_lock(path: Path) -> Iterator[None]:
+    """Keep the review-queue read-modify-write to one process at a time."""
+    lock = path.with_name(f".{path.name}.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            handle = lock.open("x", encoding="utf-8")
+            handle.write(str(time.time()) + "\n")
+            handle.flush()
+            break
+        except FileExistsError:
+            try:
+                mtime = lock.stat().st_mtime
+                if time.time() - mtime > 60.0:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise ConfigError("review queue is locked by another process") from None
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        handle.close()
+        lock.unlink(missing_ok=True)
+
+
 def _registry_sha256(settings: Settings) -> str:  # pragma: no cover
     """Hash the registry the pipeline actually loads: JSON configs first, CSV as fallback."""
     sources_dir = getattr(settings, "sources_dir", None)
@@ -168,6 +200,32 @@ def _window(report_date: date, settings: Settings) -> tuple[date, date]:  # prag
     return report_date - timedelta(days=settings.report_window_days - 1), report_date
 
 
+def run_scope(
+    source_mode: str,
+    *,
+    tier: int | None = None,
+    source_ids: set[str] | frozenset[str] | Sequence[str] | None = None,
+    provenance: AcquisitionProvenance = "fixture",
+) -> str | None:
+    """Return a safe artifact scope for partial/non-canonical runs; None means canonical.
+
+    Only a complete live_feed live run uses the canonical daily paths. Fixtures keep
+    their separate ``fixtures`` tree, so they are never scoped either.
+    """
+    if source_mode == "fixtures":
+        return None
+    if source_mode == "live" and provenance == "live_feed" and tier is None and not source_ids:
+        return None
+    parts = [require_safe_id(source_mode, "source_mode")]
+    if provenance != "live_feed":
+        parts.append(f"p-{require_safe_id(provenance, 'provenance')}")
+    if tier is not None:
+        parts.append(f"t{tier}")
+    if source_ids:
+        parts.append(f"s-{content_hash(sorted(source_ids))[:8]}")
+    return require_safe_id("-".join(parts), "scope")
+
+
 def _run_id(
     report_date: date,
     settings: Settings,
@@ -175,6 +233,7 @@ def _run_id(
     topic_id: str | None = None,
     provenance: AcquisitionProvenance = "fixture",
     source_mode: str = "fixtures",
+    scope: str | None = None,
 ) -> str:  # pragma: no cover
     parts = [
         "run-v1",
@@ -188,6 +247,8 @@ def _run_id(
         parts.append(provenance)
     if source_mode != "fixtures":
         parts.append(source_mode)
+    if scope:
+        parts.append(scope)
     digest = content_hash(parts)
     return f"run-{digest[:12]}"
 
@@ -272,8 +333,14 @@ def _digest_path(
     *,
     topic_id: str | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    scope: str | None = None,
 ) -> Path:
-    root = settings.digest_dir / "fixtures" if provenance == "fixture" else settings.digest_dir
+    if provenance == "fixture":
+        root = settings.digest_dir / "fixtures"
+    elif scope:
+        root = settings.digest_dir / "runs" / scope
+    else:
+        root = settings.digest_dir
     name = f"{report_date.isoformat()}.md"
     if topic_id and topic_id != DEFAULT_TOPIC_ID:
         return root / require_safe_id(topic_id, "topic_id") / name
