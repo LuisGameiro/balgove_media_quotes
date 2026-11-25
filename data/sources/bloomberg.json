@@ -42,5 +42,8 @@
     "include_tables": false,
     "min_text_length": 200,
     "strip_selectors": []
-  }
+  },
+  "tier_block": true,
+  "blocker_reason": "Public article pages return only a short snippet (~452 characters), not full text. Licensed Bloomberg full-text access is required.",
+  "availability_status": "partial_body"
 }

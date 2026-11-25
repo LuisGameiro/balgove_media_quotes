@@ -8,6 +8,7 @@ from datetime import date
 from ..enums import (
     ACCESS_MODES,
     APPROVED_RIGHTS,
+    AVAILABILITY_STATUSES,
     BOOLEANS,
     DISCOVERY_METHODS,
     RIGHTS_STATUSES,
@@ -35,6 +36,9 @@ SOURCE_COLUMNS = [
     "discovery_method",
     "archive_start_date",
     "enabled",
+    "tier_block",
+    "blocker_reason",
+    "availability_status",
     "notes",
 ]
 
@@ -57,12 +61,10 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
         cadence = row["cadence_hours"]
         if not cadence.isdigit():
             errors.append(f"{where}: cadence_hours must be a non-negative integer")
-        elif row["tier"] == "4" and int(cadence) != 0:
-            errors.append(f"{where}: disabled tier must have cadence_hours 0")
-        elif row["tier"] != "4" and int(cadence) == 0:
-            errors.append(f"{where}: enabled tier needs a positive cadence_hours")
-        if row["tier"] == "4" and row["enabled"] != "false":
-            errors.append(f"{where}: tier 4 sources must be disabled")
+        elif row["enabled"] == "true" and int(cadence) == 0:
+            errors.append(f"{where}: enabled source needs a positive cadence_hours")
+        if row["tier"] == "4" and row["claim_only"] != "true":
+            errors.append(f"{where}: tier 4 sources must be claim_only")
         if row["source_type"] not in SOURCE_TYPES:
             errors.append(f"{where}: unknown source_type {row['source_type']!r}")
         if row["rights_status"] not in RIGHTS_STATUSES:
@@ -75,12 +77,20 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
             errors.append(f"{where}: T0 gate - enabled sources need approved rights_status")
         if row["enabled"] == "true" and row["discovery_method"] == "web":
             errors.append(f"{where}: T0 gate - enabled sources cannot use web discovery")
+        # check_columns already reports absent columns; never raise on legacy CSV rows.
+        availability = row.get("availability_status", "live")
+        tier_block = row.get("tier_block", "false")
+        blocker_reason = row.get("blocker_reason", "")
+        if availability not in AVAILABILITY_STATUSES:
+            errors.append(f"{where}: unknown availability_status {availability!r}")
+        if tier_block == "true" and not blocker_reason.strip():
+            errors.append(f"{where}: tier_block sources need a blocker_reason")
         if row["rights_status"] in APPROVED_RIGHTS and not row["license_reference"]:
             errors.append(f"{where}: approved rights need a license_reference")
         if row["source_type"] == "state-controlled" and row["claim_only"] != "true":
             errors.append(f"{where}: state-controlled sources must be claim_only")
-        for flag in ("claim_only", "requires_translation", "enabled"):
-            if row[flag] not in BOOLEANS:
+        for flag in ("claim_only", "requires_translation", "enabled", "tier_block"):
+            if row.get(flag, "") not in BOOLEANS:
                 errors.append(f"{where}: {flag} must be true or false")
         if row["paywalled"] not in {"true", "false", "unknown"}:
             errors.append(f"{where}: paywalled must be true, false or unknown")

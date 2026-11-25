@@ -22,7 +22,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import DEFAULT_TOPIC_ID, PROJECT_ROOT
-from .enums import AccessMode, DiscoveryMethod, RightsStatus, SourceType
+from .enums import AccessMode, AvailabilityStatus, DiscoveryMethod, RightsStatus, SourceType
 from .export import atomic_write_text
 from .registry import EXPECTED_COLUMNS, SourceRegistryRow, load_sources_csv
 from .source_topics import SourceTopicRoute, load_source_topic_routes
@@ -71,6 +71,7 @@ class ExtractorHints(BaseModel):
     include_comments: bool = False
     include_tables: bool = False
     min_text_length: int = Field(default=200, ge=0)
+    fallback_byline: str = ""
     strip_selectors: list[str] = Field(default_factory=list)
     render_js: bool = False  # opt-in to the optional browser fallback; off for every source today
 
@@ -131,6 +132,10 @@ class SourceConfig(BaseModel):
     discovery_method: DiscoveryMethod
     archive_start_date: date
     enabled: bool = False
+    tier_block: bool = False
+    blocker_reason: str = ""
+    availability_status: AvailabilityStatus = "live"
+    redirect_hosts: list[str] = Field(default_factory=list)
     notes: str = ""
     routes: list[SourceRouteConfig] = Field(default_factory=list)
     extractor_hints: ExtractorHints = Field(default_factory=ExtractorHints)
@@ -139,6 +144,14 @@ class SourceConfig(BaseModel):
     @classmethod
     def _parse_archive_date(cls, value: Any) -> Any:
         return date.fromisoformat(value) if isinstance(value, str) else value
+
+    @field_validator("redirect_hosts")
+    @classmethod
+    def _validate_redirect_hosts(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip().lower() for value in values]
+        if any(not re.fullmatch(r"[a-z0-9.-]+", value) for value in cleaned):
+            raise ValueError("redirect_hosts must contain hostnames only")
+        return cleaned
 
     def to_registry_row(self) -> SourceRegistryRow:
         """Project to the strict ``SourceRegistryRow`` used by T0 gates and Postgres sync."""
@@ -161,8 +174,38 @@ class SourceConfig(BaseModel):
             discovery_method=self.discovery_method,
             archive_start_date=self.archive_start_date,
             enabled=self.enabled,
+            tier_block=self.tier_block,
+            blocker_reason=self.blocker_reason,
+            availability_status=self.availability_status,
             notes=self.notes,
         )
+
+    def to_csv_row(self) -> dict[str, str]:
+        """Serialize every registry field exactly as the generated CSV expects."""
+        return {
+            "source_id": self.source_id,
+            "source_name": self.source_name,
+            "homepage_url": self.homepage_url,
+            "feed_url": self.feed_url,
+            "tier": str(self.tier),
+            "cadence_hours": str(self.cadence_hours),
+            "country_region": self.country_region,
+            "source_type": str(self.source_type),
+            "claim_only": _csv_bool_str(self.claim_only),
+            "language": self.language,
+            "requires_translation": _csv_bool_str(self.requires_translation),
+            "paywalled": _csv_paywalled_str(self.paywalled),
+            "rights_status": str(self.rights_status),
+            "access_mode": str(self.access_mode),
+            "license_reference": self.license_reference,
+            "discovery_method": str(self.discovery_method),
+            "archive_start_date": self.archive_start_date.isoformat(),
+            "enabled": _csv_bool_str(self.enabled),
+            "tier_block": _csv_bool_str(self.tier_block),
+            "blocker_reason": self.blocker_reason,
+            "availability_status": str(self.availability_status),
+            "notes": self.notes,
+        }
 
     def routes_for_topic(
         self,
@@ -356,29 +399,7 @@ def sync_sources_to_csv(
     writer = csv.DictWriter(sources_buffer, fieldnames=EXPECTED_COLUMNS, lineterminator="\n")
     writer.writeheader()
     for cfg in ordered_configs:
-        writer.writerow(
-            {
-                "source_id": cfg.source_id,
-                "source_name": cfg.source_name,
-                "homepage_url": cfg.homepage_url,
-                "feed_url": cfg.feed_url,
-                "tier": str(cfg.tier),
-                "cadence_hours": str(cfg.cadence_hours),
-                "country_region": cfg.country_region,
-                "source_type": cfg.source_type,
-                "claim_only": _csv_bool_str(cfg.claim_only),
-                "language": cfg.language,
-                "requires_translation": _csv_bool_str(cfg.requires_translation),
-                "paywalled": _csv_paywalled_str(cfg.paywalled),
-                "rights_status": cfg.rights_status,
-                "access_mode": cfg.access_mode,
-                "license_reference": cfg.license_reference,
-                "discovery_method": cfg.discovery_method,
-                "archive_start_date": cfg.archive_start_date.isoformat(),
-                "enabled": _csv_bool_str(cfg.enabled),
-                "notes": cfg.notes,
-            }
-        )
+        writer.writerow(cfg.to_csv_row())
     atomic_write_text(sources_csv, sources_buffer.getvalue())
 
     routes_written = 0

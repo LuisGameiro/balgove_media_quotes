@@ -20,6 +20,14 @@ AccessMode = Literal[
 ]
 DiscoveryMethod = Literal["sitemap", "rss", "web", "api", "gdelt", "licensed_database"]
 OriginalReportingFlag = Literal["first-hand", "relayed wire copy", "unknown"]
+AvailabilityStatus = Literal[
+    "live",
+    "partial_body",
+    "accessible_no_quotes",
+    "blocked",
+    "discovery_only",
+    "fixture_only",
+]
 SectionId = Literal[
     "war_intensity",
     "international_support",
@@ -60,4 +68,5 @@ ACCESS_MODES: Final[tuple[str, ...]] = (
     "scraped_prohibited",
 )
 DISCOVERY_METHODS: Final[tuple[str, ...]] = tuple(DiscoveryMethod.__args__)  # type: ignore[attr-defined]
+AVAILABILITY_STATUSES: Final[tuple[str, ...]] = tuple(AvailabilityStatus.__args__)  # type: ignore[attr-defined]
 SECTION_IDS: Final[tuple[str, ...]] = tuple(SectionId.__args__)  # type: ignore[attr-defined]

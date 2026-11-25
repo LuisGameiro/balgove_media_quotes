@@ -103,6 +103,7 @@ class ExportQuoteRecord(BaseModel):
     quote_text_original: str = Field(min_length=1)
     quote_html: str = ""
     quote_text_en: str = ""
+    speaker: str = ""
     source_id: str
     source_name: str
     publication_name: str = ""

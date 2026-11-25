@@ -17,7 +17,7 @@
   "discovery_method": "sitemap",
   "archive_start_date": "2026-10-01",
   "enabled": true,
-  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Robots User-agent * Disallow / except /plus/; notice requires written consent for all automated collection including feeds. T0: written licence via Factiva/Nexis/LSEG/Reuters Connect.",
+  "notes": "Written licence accepted 2026-11-23 covering retrieval, storage, RAG grounding, verbatim quotes and backfill. Enabled for all-source validation on 2026-11-24; the public sitemap currently returns HTTP 401 and remains a runtime coverage gap. Translation rights not confirmed.",
   "routes": [
     {
       "route_id": "route-reuters-ukraine-default",
@@ -30,7 +30,7 @@
       "approved": true,
       "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Written licence accepted 2026-11-23. Live sitemap discovery approved; translation rights not confirmed."
+      "notes": "Enabled for all-source validation on 2026-11-24. Public sitemap returned HTTP 401; route health is reported as a runtime gap. Translation rights not confirmed."
     }
   ],
   "extractor_hints": {
@@ -42,5 +42,8 @@
     "include_tables": false,
     "min_text_length": 200,
     "strip_selectors": []
-  }
+  },
+  "tier_block": true,
+  "blocker_reason": "Mandatory Reuters source; public sitemap and direct article pages return HTTP 401. Licensed Reuters text/API access or authorised article samples are required.",
+  "availability_status": "blocked"
 }

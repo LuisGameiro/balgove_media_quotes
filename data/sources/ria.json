@@ -2,9 +2,9 @@
   "source_id": "ria",
   "source_name": "RIA Novosti",
   "homepage_url": "https://ria.ru",
-  "feed_url": "",
+  "feed_url": "https://ria.ru/export/rss2/archive/index.xml",
   "tier": 4,
-  "cadence_hours": 0,
+  "cadence_hours": 24,
   "country_region": "Russia",
   "source_type": "state-controlled",
   "claim_only": true,
@@ -14,15 +14,15 @@
   "rights_status": "license_held",
   "access_mode": "licensed_database",
   "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
-  "discovery_method": "sitemap",
+  "discovery_method": "rss",
   "archive_start_date": "2026-10-01",
-  "enabled": false,
-  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Excluded by default.",
+  "enabled": true,
+  "notes": "Enabled by the owner for all-source validation on 2026-11-24. State-controlled material remains claim-only perspective and never establishes facts. Archive RSS is configured for broader sampling; translation rights remain unconfirmed.",
   "routes": [
     {
       "route_id": "route-ria-ukraine-default",
-      "route_type": "web",
-      "discovery_url": "https://ria.ru",
+      "route_type": "rss",
+      "discovery_url": "https://ria.ru/export/rss2/archive/index.xml",
       "topic_rule_id": "ukraine-war-v1",
       "topic_id": "ukraine-war",
       "priority": 90,
@@ -30,17 +30,20 @@
       "approved": true,
       "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Russian-language source excluded by default; claim-only; translation rights unverified."
+      "notes": "Enabled for all-source validation on 2026-11-24; claim-only perspective. Archive RSS configured for broader sampling; translation rights unverified. Full-text retrieval remains rights-gated."
     }
   ],
   "extractor_hints": {
     "adapter": null,
-    "default_feed_url": "",
+    "default_feed_url": "https://ria.ru/export/rss2/archive/index.xml",
     "favor_precision": false,
     "favor_recall": false,
     "include_comments": false,
     "include_tables": false,
     "min_text_length": 200,
     "strip_selectors": []
-  }
+  },
+  "tier_block": true,
+  "blocker_reason": "Archive RSS and article pages are reachable, but sampled state-controlled wire briefs paraphrase rather than quote directly. Blocked pending quote-bearing articles or an authorised feed.",
+  "availability_status": "blocked"
 }

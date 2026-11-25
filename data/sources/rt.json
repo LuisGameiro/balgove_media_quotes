@@ -2,9 +2,9 @@
   "source_id": "rt",
   "source_name": "RT",
   "homepage_url": "https://www.rt.com",
-  "feed_url": "",
+  "feed_url": "https://www.rt.com/rss/",
   "tier": 4,
-  "cadence_hours": 0,
+  "cadence_hours": 24,
   "country_region": "Russia",
   "source_type": "state-controlled",
   "claim_only": true,
@@ -14,15 +14,15 @@
   "rights_status": "license_held",
   "access_mode": "licensed_database",
   "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
-  "discovery_method": "sitemap",
+  "discovery_method": "rss",
   "archive_start_date": "2026-10-01",
-  "enabled": false,
-  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Excluded by default. Enable only as claim-only perspective material after T0 review.",
+  "enabled": true,
+  "notes": "Enabled by the owner for all-source validation on 2026-11-24. State-controlled material remains claim-only perspective and never establishes facts. The current web route is not a supported live discovery feed.",
   "routes": [
     {
       "route_id": "route-rt-ukraine-default",
-      "route_type": "web",
-      "discovery_url": "https://www.rt.com",
+      "route_type": "rss",
+      "discovery_url": "https://www.rt.com/rss/",
       "topic_rule_id": "ukraine-war-v1",
       "topic_id": "ukraine-war",
       "priority": 90,
@@ -30,17 +30,20 @@
       "approved": true,
       "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Excluded by default; claim-only perspective material; no live probe."
+      "notes": "Enabled for all-source validation on 2026-11-24; claim-only perspective. Current web route is unsupported for live feed discovery. Official public feed/sitemap configured for proof; full-text retrieval remains rights-gated."
     }
   ],
   "extractor_hints": {
     "adapter": null,
-    "default_feed_url": "",
+    "default_feed_url": "https://www.rt.com/rss/",
     "favor_precision": false,
     "favor_recall": false,
     "include_comments": false,
     "include_tables": false,
     "min_text_length": 200,
     "strip_selectors": []
-  }
+  },
+  "tier_block": true,
+  "blocker_reason": "Operator reports access is blocked by sanctions; technical probes also time out. No compliant live route is currently available.",
+  "availability_status": "blocked"
 }

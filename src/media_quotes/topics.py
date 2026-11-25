@@ -66,6 +66,7 @@ class TopicRelevanceConfig(BaseModel):
     anchors: dict[str, list[str]] = Field(default_factory=dict)
     supporting_terms: dict[str, list[str]] = Field(default_factory=dict)
     exclusions: dict[str, list[str]] = Field(default_factory=dict)
+    hard_exclusions: dict[str, list[str]] = Field(default_factory=dict)
     weights: dict[str, float] = Field(
         default_factory=lambda: {
             "anchor": 3.0,
@@ -149,16 +150,27 @@ class TopicPack(BaseModel):
         return tuple(dict.fromkeys(collected))
 
     def infer_section(self, text: str) -> str:
-        """Deterministic keyword-based fallback section assignment for a quote."""
+        """Deterministic weighted-phrase fallback section assignment for a quote.
+
+        Each matched keyword scores by its word count (longer phrases are more specific);
+        the highest score wins and section declaration order breaks ties.
+        """
         lowered = normalise_text(text).casefold()
         folded_text = _folded(text)
+        best_section = self.default_section
+        best_score = 0
         for section in self.sections:
             if section.section_id == self.default_section:
                 continue
-            for keyword in section.keywords:
-                if keyword and _matches(keyword, lowered, folded_text):
-                    return section.section_id
-        return self.default_section
+            score = sum(
+                len(keyword.split())
+                for keyword in section.keywords
+                if keyword and _matches(keyword, lowered, folded_text)
+            )
+            if score > best_score:
+                best_score = score
+                best_section = section.section_id
+        return best_section
 
     def evaluate_article(self, article: Mapping[str, Any]) -> TopicDecision:
         """Run the deterministic relevance rule engine against an article payload."""
@@ -181,7 +193,8 @@ class TopicPack(BaseModel):
         folded_combined = _folded(combined)
         exclusions = [
             term.strip()
-            for terms in self.relevance.exclusions.values()
+            for mapping in (self.relevance.exclusions, self.relevance.hard_exclusions)
+            for terms in mapping.values()
             for term in terms
             if term.strip()
         ]

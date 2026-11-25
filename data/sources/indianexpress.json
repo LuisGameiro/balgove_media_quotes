@@ -2,7 +2,7 @@
   "source_id": "indianexpress",
   "source_name": "The Indian Express",
   "homepage_url": "https://indianexpress.com",
-  "feed_url": "",
+  "feed_url": "https://indianexpress.com/feed/",
   "tier": 3,
   "cadence_hours": 24,
   "country_region": "India",
@@ -14,15 +14,15 @@
   "rights_status": "license_held",
   "access_mode": "licensed_database",
   "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
-  "discovery_method": "sitemap",
+  "discovery_method": "rss",
   "archive_start_date": "2026-10-01",
   "enabled": true,
-  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Partial paywall; rights review required.",
+  "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Partial paywall.",
   "routes": [
     {
       "route_id": "route-indianexpress-ukraine-default",
-      "route_type": "web",
-      "discovery_url": "https://indianexpress.com",
+      "route_type": "rss",
+      "discovery_url": "https://indianexpress.com/feed/",
       "topic_rule_id": "ukraine-war-v1",
       "topic_id": "ukraine-war",
       "priority": 90,
@@ -30,17 +30,20 @@
       "approved": true,
       "license_reference": "ALL-SOURCES-LICENSE-ATTESTED-2026-11-23",
       "translation_rights_confirmed": false,
-      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Not approved; rights review pending in registry; no live probe."
+      "notes": "Operator attested blanket licence 2026-11-23 for machine retrieval, storage, LLM grounding, verbatim quotes and backfill. Approved topic route; runtime health is reported separately. Official public feed/sitemap configured for proof; full-text retrieval remains rights-gated."
     }
   ],
   "extractor_hints": {
     "adapter": null,
-    "default_feed_url": "",
+    "default_feed_url": "https://indianexpress.com/feed/",
     "favor_precision": false,
     "favor_recall": false,
     "include_comments": false,
     "include_tables": false,
     "min_text_length": 200,
     "strip_selectors": []
-  }
+  },
+  "tier_block": false,
+  "blocker_reason": "",
+  "availability_status": "live"
 }

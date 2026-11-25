@@ -11,7 +11,7 @@ from ..source_configs import load_routes_from_sources, load_source_configs
 from ..source_topics import validate_topic_configuration
 from ..topics import load_all_topic_rules
 from .common import check_columns, read_csv
-from .modular import check_source_configs, check_topic_packs
+from .modular import check_source_configs, check_topic_packs, check_topic_rule_fallback
 from .quotes import check_quotes
 from .sections import SECTION_COLUMNS, check_sections
 from .sources import SOURCE_COLUMNS, check_sources
@@ -25,6 +25,7 @@ __all__ = [
     "check_source_configs",
     "check_sources",
     "check_topic_packs",
+    "check_topic_rule_fallback",
     "read_csv",
     "validate_data_dir",
 ]
@@ -38,7 +39,10 @@ def validate_data_dir(data_dir: Path) -> list[str]:
     by_id = check_sources(sources, errors)
     section_ids = check_sections(sections, errors)
     topic_packs = check_topic_packs(data_dir / "topics", errors)
-    check_source_configs(data_dir / "sources", by_id, topic_packs, errors)
+    check_topic_rule_fallback(data_dir / "topics", data_dir / "topic_rules.json", errors)
+    check_source_configs(
+        data_dir / "sources", by_id, topic_packs, errors, data_dir / "source_topic_routes.csv"
+    )
     try:
         configs = load_source_configs(data_dir / "sources")
         routes = load_routes_from_sources(

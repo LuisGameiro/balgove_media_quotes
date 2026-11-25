@@ -1,7 +1,8 @@
-"""Authoritative source registry.
+"""Authoritative source registry validation.
 
-data/sources.csv is the machine-readable source of truth (docs/07-sources.md explains it).
-This module validates every row into a strict model and syncs it into Postgres.
+data/sources/*.json is authoritative and data/sources.csv is its generated mirror
+(docs/03-sources.md explains the policy). This module validates CSV rows into strict models
+and syncs them into Postgres.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from .enums import (
     ENUMERABLE_DISCOVERY,
     PERMITTED_ACCESS,
     AccessMode,
+    AvailabilityStatus,
     DiscoveryMethod,
     RightsStatus,
     SourceType,
@@ -42,6 +44,9 @@ EXPECTED_COLUMNS = [
     "discovery_method",
     "archive_start_date",
     "enabled",
+    "tier_block",
+    "blocker_reason",
+    "availability_status",
     "notes",
 ]
 
@@ -67,9 +72,12 @@ class SourceRegistryRow(BaseModel):
     discovery_method: DiscoveryMethod
     archive_start_date: date
     enabled: bool = False
+    tier_block: bool = False
+    blocker_reason: str = ""
+    availability_status: AvailabilityStatus = "live"
     notes: str = ""
 
-    @field_validator("claim_only", "requires_translation", "enabled", mode="before")
+    @field_validator("claim_only", "requires_translation", "enabled", "tier_block", mode="before")
     @classmethod
     def _csv_bool(cls, value: Any) -> Any:
         if isinstance(value, bool):
@@ -103,7 +111,7 @@ class SourceRegistryRow(BaseModel):
     def _csv_date(cls, value: Any) -> Any:
         return date.fromisoformat(value) if isinstance(value, str) else value
 
-    @field_validator("feed_url", "license_reference", "notes", mode="before")
+    @field_validator("feed_url", "license_reference", "blocker_reason", "notes", mode="before")
     @classmethod
     def _empty_string(cls, value: Any) -> Any:
         return "" if value is None else value
