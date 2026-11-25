@@ -18,23 +18,13 @@ build/
 .tmp_dagster_home_*
 
 # Runtime artifacts
-var/blobs/*
-!var/blobs/.gitkeep
-var/audit/*
-!var/audit/.gitkeep
 var/dagster/*
 !var/dagster/.gitkeep
 !var/dagster/dagster.yaml
-var/export/*
-!var/export/.gitkeep
 var/output/*
 !var/output/.gitkeep
-var/logs/*
-!var/logs/.gitkeep
+var/test-output/*
+!var/test-output/.gitkeep
 var/tmp-*
-digests/*
-!digests/.gitkeep
-data/reports/*
-!data/reports/.gitkeep
 data/quotes.jsonl
 *.log
