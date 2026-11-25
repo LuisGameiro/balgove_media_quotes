@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-import os
 import re
 import tempfile
-import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
 from ..config import get_settings
+from ..export import safe_replace
 
 __all__ = ["BlobCache", "FixtureSource"]
 
@@ -21,23 +19,6 @@ _FIXTURE_SCHEME = "fixture://"
 _SAFE_ID = re.compile(r"^[a-z0-9_-]+$")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 _SAFE_SUFFIX = re.compile(r"^\.?[A-Za-z0-9]{1,16}$")
-
-
-def _safe_replace(temp: Path, target: Path) -> None:
-    """Atomically replace target with temp file; retry briefly on Windows file locks."""
-    for attempt in range(5):
-        try:
-            with contextlib.suppress(OSError):
-                temp.chmod(0o644)
-            os.replace(temp, target)
-            return
-        except PermissionError:
-            if attempt == 4:
-                if target.exists():
-                    temp.unlink(missing_ok=True)
-                    return
-                raise
-            time.sleep(0.05 * (attempt + 1))
 
 
 class BlobCache:
@@ -75,7 +56,7 @@ class BlobCache:
             temp_path = Path(f.name)
             f.write(raw)
         try:
-            _safe_replace(temp_path, target)
+            safe_replace(temp_path, target, tolerate_existing=True)
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise
@@ -116,7 +97,7 @@ class BlobCache:
             temp_path = Path(f.name)
             f.write(raw)
         try:
-            _safe_replace(temp_path, target)
+            safe_replace(temp_path, target, tolerate_existing=True)
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise

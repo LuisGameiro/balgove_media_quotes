@@ -7,9 +7,11 @@ Format: UTF-8, no BOM, one JSON object per line, newline-terminated, .jsonl exte
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
@@ -62,20 +64,31 @@ def content_hash(parts: Sequence[str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _safe_replace(temp: Path, target: Path) -> None:
-    """Atomically replace target with temp file; retry briefly on Windows locks."""
+def safe_replace(temp: Path, target: Path, *, tolerate_existing: bool = False) -> None:
+    """Atomically replace target with temp; retry briefly on Windows locks.
+
+    Strict by default: a final PermissionError propagates so a failed write is visible.
+    Content-addressed blobs set tolerate_existing=True: a concurrent writer that wins
+    the race leaves identical bytes, so keeping the existing target is success.
+    """
     for attempt in range(5):
         try:
-            # NamedTemporaryFile is 0600; the dashboard runs as a different UID.
-            temp.chmod(0o644)
+            with contextlib.suppress(OSError):
+                # NamedTemporaryFile is 0600; the dashboard runs as a different UID.
+                temp.chmod(0o644)
             os.replace(temp, target)
             return
         except PermissionError:
             if attempt == 4:
+                if tolerate_existing and target.exists():
+                    temp.unlink(missing_ok=True)
+                    return
                 raise
-            import time
-
             time.sleep(0.05 * (attempt + 1))
+
+
+# Backward-compatible import path for existing callers/tests.
+_safe_replace = safe_replace
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -95,7 +108,7 @@ def atomic_write_text(path: Path, text: str) -> None:
         temp_path = Path(f.name)
         f.write(text)
     try:
-        _safe_replace(temp_path, path)
+        safe_replace(temp_path, path)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
@@ -126,7 +139,7 @@ def write_jsonl(records: Iterable[ExportQuoteRecord], path: Path) -> int:
             f.write("\n")
             count += 1
     try:
-        _safe_replace(temp_path, path)
+        safe_replace(temp_path, path)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise

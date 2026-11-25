@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from media_quotes.dashboard import _latest_audit, coverage_by_day_matrix, daily_source_coverage
@@ -184,4 +185,50 @@ def test_daily_source_coverage_does_not_double_count(tmp_path: Path) -> None:
             "2026-11-18": 2,
             "total_quotes": 5,
         }
+    ]
+
+
+def test_daily_source_coverage_skips_files_outside_recent_window(tmp_path: Path) -> None:
+    today = date.today()
+    old_day = (today - timedelta(days=90)).isoformat()
+    fresh_day = today.isoformat()
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "report_date": old_day,
+            "provenance": "live_feed",
+            "coverage": [{"source_id": "stale-source", "quotes": 99}],
+        },
+        day=f"audit-{old_day}.json",
+    )
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "report_date": fresh_day,
+            "provenance": "live_feed",
+            "coverage": [{"source_id": "fresh-source", "quotes": 3}],
+        },
+        day=f"audit-{fresh_day}.json",
+    )
+
+    assert daily_source_coverage(tmp_path) == [
+        {"date": fresh_day, "source_id": "fresh-source", "quotes": 3}
+    ]
+
+
+def test_daily_source_coverage_fails_open_on_malformed_filename(tmp_path: Path) -> None:
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "report_date": "2020-01-01",
+            "provenance": "live_feed",
+            "coverage": [{"source_id": "handwritten", "quotes": 1}],
+        },
+        day="audit-handwritten.json",
+    )
+    assert daily_source_coverage(tmp_path) == [
+        {"date": "2020-01-01", "source_id": "handwritten", "quotes": 1}
     ]

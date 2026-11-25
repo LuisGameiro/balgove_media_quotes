@@ -252,6 +252,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="collect articles from configured feeds during --execute",
     )
+    backfill.add_argument(
+        "--retry-empty",
+        dest="retry_empty",
+        action="store_true",
+        help="re-enter days recorded as empty (no prefetched refs) on a resume",
+    )
     digest_parser = subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
     digest_parser.add_argument(
         "--provenance",
@@ -614,6 +620,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 backfill_kwargs["topic_id"] = topic_arg
             if getattr(args, "source_ids", None):
                 backfill_kwargs["source_ids"] = set(args.source_ids)
+            if getattr(args, "retry_empty", False):
+                backfill_kwargs["retry_empty"] = True
             if getattr(args, "live", False):
                 backfill_kwargs["source_mode"] = "live"
                 backfill_kwargs["provenance"] = "live_feed"

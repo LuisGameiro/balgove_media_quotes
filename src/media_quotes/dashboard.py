@@ -15,6 +15,7 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
+from datetime import date, timedelta
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -140,15 +141,42 @@ def _latest_audit(audit_dir: Path, topic_id: str | None = None) -> dict[str, Any
     return {}
 
 
-def daily_source_coverage(audit_dir: Path, topic_id: str | None = None) -> list[dict[str, Any]]:
+_AUDIT_DATED_NAME = re.compile(r"^audit-(\d{4}-\d{2}-\d{2})\.json$")
+
+
+def _within_window(path: Path, start: date, end: date) -> bool:
+    """Dated audit files must fall in [start, end]; malformed names fail open."""
+    match = _AUDIT_DATED_NAME.fullmatch(path.name)
+    if match is None:
+        return True
+    try:
+        day = date.fromisoformat(match.group(1))
+    except ValueError:
+        return True
+    return start <= day <= end
+
+
+def daily_source_coverage(
+    audit_dir: Path,
+    topic_id: str | None = None,
+    *,
+    report_window_days: int | None = None,
+) -> list[dict[str, Any]]:
     """Collect per-source coverage from the first provenance tree with matching reports.
 
     Live and fixture trees are never combined, so a source/day is not double counted.
+    Only filenames dated inside the recent window are opened; malformed names fail open.
     """
+    if report_window_days is None:
+        report_window_days = get_settings().report_window_days
+    today = date.today()
+    window_start = today - timedelta(days=max(report_window_days, 1) - 1)
     for reports in _audit_report_trees(audit_dir):
         records: list[dict[str, Any]] = []
         matched = False
         for path in reports:
+            if not _within_window(path, window_start, today):
+                continue
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -554,7 +582,9 @@ def _render_coverage(
         else:
             st.write("No coverage data found in latest audit.")
         st.subheader("Per-source coverage by day")
-        daily = daily_source_coverage_cached(cfg.audit_dir, topic_id=topic)
+        daily = daily_source_coverage_cached(
+            cfg.audit_dir, topic_id=topic, report_window_days=cfg.report_window_days
+        )
         if daily:
             st.dataframe(
                 coverage_by_day_matrix(daily),

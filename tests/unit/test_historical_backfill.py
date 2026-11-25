@@ -324,6 +324,102 @@ def test_failed_day_is_retried_and_succeeded_days_are_skipped(
     )
 
 
+def test_zero_ref_day_is_recorded_empty_without_pipeline_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    end = date(2026, 10, 2)
+    calls = _install(
+        monkeypatch,
+        settings,
+        candidates=[("https://www.example.com/a", "A", "2026-10-01")],
+        statuses=["succeeded", "succeeded"],
+    )
+
+    summary = run_historical_backfill(settings, start=START, end=end, max_cost=10)
+
+    assert [call["report_date"] for call in calls["pipeline"]] == [START]
+    manifest = json.loads(_manifest_path(settings, end).read_text(encoding="utf-8"))
+    assert manifest["completed"][end.isoformat()] == {
+        "status": "empty",
+        "quotes": 0,
+        "gaps": 0,
+        "run_id": "",
+    }
+    assert summary["statuses"] == {"succeeded": 1, "empty": 1}
+    assert summary["retry_empty"] is False
+    assert len(calls["writes"]) == 2
+
+
+def test_resume_skips_empty_days_without_network_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    end = date(2026, 10, 2)
+    path = _manifest_path(settings, end)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "completed": {
+                    START.isoformat(): {"status": "succeeded", "quotes": 1, "gaps": 0},
+                    end.isoformat(): {"status": "empty", "quotes": 0, "gaps": 0},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = _install(
+        monkeypatch,
+        settings,
+        candidates=[("https://www.example.com/b", "B", "2026-10-02")],
+        statuses=["succeeded"],
+    )
+
+    summary = run_historical_backfill(settings, start=START, end=end, max_cost=10)
+
+    assert summary["statuses"] == {"succeeded": 1, "empty": 1}
+    assert calls["discover"] == []
+    assert calls["fetch"] == []
+    assert calls["pipeline"] == []
+    assert calls["writes"] == []
+
+
+def test_retry_empty_re_enters_empty_days(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    end = date(2026, 10, 2)
+    path = _manifest_path(settings, end)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "completed": {
+                    START.isoformat(): {"status": "succeeded", "quotes": 1, "gaps": 0},
+                    end.isoformat(): {"status": "empty", "quotes": 0, "gaps": 0},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = _install(
+        monkeypatch,
+        settings,
+        candidates=[("https://www.example.com/b", "B", "2026-10-02")],
+        statuses=["succeeded"],
+    )
+
+    summary = run_historical_backfill(settings, start=START, end=end, max_cost=10, retry_empty=True)
+
+    assert [call["report_date"] for call in calls["pipeline"]] == [end]
+    assert len(calls["discover"]) == 1
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["completed"][end.isoformat()]["status"]
+        == "succeeded"
+    )
+    assert summary["statuses"] == {"succeeded": 2}
+    assert summary["retry_empty"] is True
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -383,7 +479,10 @@ def test_manifest_is_atomically_updated_after_each_day(
     calls = _install(
         monkeypatch,
         settings,
-        candidates=[("https://www.example.com/a", "A", "2026-10-01")],
+        candidates=[
+            ("https://www.example.com/a", "A", "2026-10-01"),
+            ("https://www.example.com/b", "B", "2026-10-02"),
+        ],
         statuses=["partial", "succeeded"],
     )
 

@@ -66,6 +66,7 @@ def _do_backfill(  # pragma: no cover
     source_mode: str = "fixtures",
     provenance: AcquisitionProvenance = "fixture",
     source_ids: set[str] | None = None,
+    retry_empty: bool = False,
 ) -> int:
     if end < start:
         raise ConfigError("--to must not precede --from")
@@ -144,6 +145,7 @@ def _do_backfill(  # pragma: no cover
                 max_cost=max_cost,
                 topic_id=topic_id,
                 source_ids=resolved_ids,
+                retry_empty=retry_empty,
             )
             print(f"Manifest: {summary['manifest']}")
             print(f"Backfill summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True)}")

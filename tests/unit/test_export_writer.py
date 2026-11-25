@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+from typing import Any
 
-from media_quotes.export import quote_record, write_jsonl
+import pytest
+
+from media_quotes.export import quote_record, safe_replace, write_jsonl
 
 
 def _record() -> object:
@@ -48,3 +53,39 @@ def test_write_jsonl_overwrites_existing_file(tmp_path) -> None:
     assert len(lines) == 1
     assert json.loads(lines[0])["quote_id"] == "Q-20261001-0001"
     assert json.loads(lines[0])["provenance"] == "fixture"
+
+
+def _deny_replace(*_args: Any) -> None:
+    raise PermissionError("Access is denied")
+
+
+def test_safe_replace_strict_raises_on_final_permission_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    temp = tmp_path / "temp.txt"
+    target = tmp_path / "target.txt"
+    temp.write_text("new", encoding="utf-8")
+    target.write_text("old", encoding="utf-8")
+    monkeypatch.setattr("media_quotes.export.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(os, "replace", _deny_replace)
+
+    with pytest.raises(PermissionError):
+        safe_replace(temp, target)
+
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+def test_safe_replace_tolerate_existing_keeps_old_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    temp = tmp_path / "temp.txt"
+    target = tmp_path / "target.txt"
+    temp.write_text("new", encoding="utf-8")
+    target.write_text("old", encoding="utf-8")
+    monkeypatch.setattr("media_quotes.export.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(os, "replace", _deny_replace)
+
+    safe_replace(temp, target, tolerate_existing=True)
+
+    assert target.read_text(encoding="utf-8") == "old"
+    assert not temp.exists()

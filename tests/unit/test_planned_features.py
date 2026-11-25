@@ -227,3 +227,23 @@ def test_backfill_rejects_span_over_max_days(
     rc = app.main(["backfill", "--from", "2025-01-01", "--to", "2026-11-19"])
     assert rc == 3
     assert "backfill span exceeds the 365-day limit" in capsys.readouterr().err
+
+
+def test_backfill_retry_empty_flag_is_forwarded(tmp_path: Path, monkeypatch: Any) -> None:
+    settings = _backfill_settings(tmp_path)
+    monkeypatch.setattr(app, "get_settings", lambda: settings)
+    captured: dict[str, Any] = {}
+
+    def fake_backfill(settings_arg: Settings, **kwargs: Any) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("media_quotes.cli._do_backfill", fake_backfill)
+    args = ["backfill", "--from", "2026-11-18", "--to", "2026-11-19", "--max-cost", "10"]
+
+    assert app.main([*args, "--retry-empty"]) == 0
+    assert captured["retry_empty"] is True
+
+    captured.clear()
+    assert app.main(args) == 0
+    assert "retry_empty" not in captured

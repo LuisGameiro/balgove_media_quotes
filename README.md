@@ -96,23 +96,29 @@ Exit code `2` is normal while sources disclose coverage gaps. The run writes eve
 
 ## See the data
 
+The default `mq run` replays fixtures, so its artifacts live under `fixtures/` subdirectories.
+A complete live run (`--live` with no tier or source filter) uses the canonical paths below.
+
 ```bash
 # Windows
 Get-ChildItem var/output
-Get-Content var/output/quotes/2026-11-23.jsonl -First 5
+Get-Content var/output/quotes/fixtures/quotes-2026-11-23.jsonl -First 5
 
 # macOS/Linux
 ls -R var/output
-head -n 5 var/output/quotes/2026-11-23.jsonl
+head -n 5 var/output/quotes/fixtures/quotes-2026-11-23.jsonl
 ```
 
-| Path | What it is |
-|---|---|
-| `var/output/digests/YYYY-MM-DD.md` | Human-readable digest |
-| `var/output/quotes/quotes-YYYY-MM-DD.jsonl` | Verified quotes |
-| `var/output/audit/audit-YYYY-MM-DD.json` | Gates, coverage gaps and version manifest |
-| `var/output/logs/<run-id>.jsonl` | Correlated run logs |
-| `var/output/raw/<source-id>/<sha>.html` | Immutable raw pages |
+| Artifact | Offline fixtures (default) | Complete live run |
+|---|---|---|
+| Human-readable digest | `var/output/digests/fixtures/YYYY-MM-DD.md` | `var/output/digests/YYYY-MM-DD.md` |
+| Verified quotes | `var/output/quotes/fixtures/quotes-YYYY-MM-DD.jsonl` | `var/output/quotes/quotes-YYYY-MM-DD.jsonl` |
+| Gates, coverage gaps and version manifest | `var/output/audit/fixtures/audit-YYYY-MM-DD.json` | `var/output/audit/audit-YYYY-MM-DD.json` |
+| Correlated run logs | `var/output/logs/<run-id>.jsonl` | `var/output/logs/<run-id>.jsonl` |
+| Raw pages | `data/fixtures/<source-id>/*.html` (read-only) | `var/output/raw/<source-id>/<sha>.html` |
+
+Scoped live runs (for example with `--tier` or `--source-id`) write under
+`var/output/*/runs/<scope>/` instead of the canonical paths.
 
 To inspect the registry: `uv run python -m media_quotes sources`.
 

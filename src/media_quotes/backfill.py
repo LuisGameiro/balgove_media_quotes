@@ -66,6 +66,7 @@ def _summarise(
     discovered: int,
     fetched: int,
     max_cost: float,
+    retry_empty: bool,
 ) -> dict[str, Any]:
     completed = dict(manifest.get("completed", {}))
     statuses = [str(completed.get(day.isoformat(), {}).get("status", "pending")) for day in days]
@@ -83,6 +84,7 @@ def _summarise(
         "fetched": fetched,
         "issues": list(manifest.get("issues", [])),
         "max_cost": max_cost,
+        "retry_empty": retry_empty,
         "paid_calls": 0,
         "completed": completed,
     }
@@ -96,6 +98,7 @@ def run_historical_backfill(
     max_cost: float,
     topic_id: str | None = None,
     source_ids: set[str] | None = None,
+    retry_empty: bool = False,
 ) -> dict[str, Any]:
     """Discover, fetch and run the archive pipeline for every day in ``start..end``."""
     if end < start:
@@ -131,14 +134,21 @@ def run_historical_backfill(
     completed: dict[str, Any] = manifest.setdefault("completed", {})
     issues: list[str] = manifest.setdefault("issues", [])
     days = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+    done_statuses = _DONE_STATUSES if retry_empty else _DONE_STATUSES | {"empty"}
     pending = [
-        day
-        for day in days
-        if completed.get(day.isoformat(), {}).get("status") not in _DONE_STATUSES
+        day for day in days if completed.get(day.isoformat(), {}).get("status") not in done_statuses
     ]
     if not pending:
         # Full resume: no discovery, no fetch, no pipeline calls.
-        return _summarise(manifest_path, manifest, days, discovered=0, fetched=0, max_cost=max_cost)
+        return _summarise(
+            manifest_path,
+            manifest,
+            days,
+            discovered=0,
+            fetched=0,
+            max_cost=max_cost,
+            retry_empty=retry_empty,
+        )
     pending_dates = {day.isoformat() for day in pending}
     discover_start, discover_end = min(pending), max(pending)
 
@@ -235,27 +245,38 @@ def run_historical_backfill(
 
     for day in days:
         key = day.isoformat()
-        if completed.get(key, {}).get("status") in _DONE_STATUSES:
+        if completed.get(key, {}).get("status") in done_statuses:
             continue
-        outcome = run_daily_pipeline(
-            settings,
-            report_date=day,
-            pipeline="mq-backfill-archive",
-            topic_id=active_topic_id,
-            source_mode="archive",
-            provenance="live_feed",
-            prefetched_refs=refs_by_date.get(key, {}),
-            source_ids=processed_source_ids,
-        )
-        completed[key] = {
-            "status": outcome.status,
-            "quotes": len(outcome.records),
-            "gaps": len(outcome.gaps),
-            "run_id": outcome.run_id,
-        }
+        refs = refs_by_date.get(key, {})
+        if not any(refs.values()):
+            # No prefetched refs: record the day as empty without a pipeline run.
+            completed[key] = {"status": "empty", "quotes": 0, "gaps": 0, "run_id": ""}
+        else:
+            outcome = run_daily_pipeline(
+                settings,
+                report_date=day,
+                pipeline="mq-backfill-archive",
+                topic_id=active_topic_id,
+                source_mode="archive",
+                provenance="live_feed",
+                prefetched_refs=refs,
+                source_ids=processed_source_ids,
+            )
+            completed[key] = {
+                "status": outcome.status,
+                "quotes": len(outcome.records),
+                "gaps": len(outcome.gaps),
+                "run_id": outcome.run_id,
+            }
         manifest["updated_at"] = datetime.now(UTC).isoformat()
         _save_manifest(manifest_path, manifest)
 
     return _summarise(
-        manifest_path, manifest, days, discovered=discovered, fetched=fetched, max_cost=max_cost
+        manifest_path,
+        manifest,
+        days,
+        discovered=discovered,
+        fetched=fetched,
+        max_cost=max_cost,
+        retry_empty=retry_empty,
     )
