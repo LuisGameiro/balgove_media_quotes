@@ -88,6 +88,10 @@ def _do_fetch(
         return EXIT_OK
 
     policy = fetch_policy_from(settings)
+    source_cfg = _load_source_configs(settings).get(source_id)
+    extra_hosts = frozenset(
+        [*source_cfg.content_hosts, *source_cfg.redirect_hosts] if source_cfg else []
+    )
     discovered, downloaded = fetch_feed_documents(
         row,
         feed_url,
@@ -95,9 +99,9 @@ def _do_fetch(
         topic_pack=pack,
         require_topic=True,
         limit=limit,
+        extra_hosts=extra_hosts,
     )
 
-    source_cfg = _load_source_configs(settings).get(source_id)
     adapter = build_adapter(
         row,
         replay=False,

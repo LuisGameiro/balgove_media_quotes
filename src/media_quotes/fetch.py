@@ -154,6 +154,12 @@ def assert_fetch_permitted(row: SourceRegistryRow, *, track_a_approved: bool) ->
 
 async def _read_response(response: httpx.Response, max_bytes: int) -> bytes:
     """Stream a response under a hard byte cap, before and during download."""
+    if 300 <= response.status_code < 400:
+        # httpx does not consistently treat 3xx as errors; reject explicitly.
+        raise ValueError(
+            f"redirect response (HTTP {response.status_code}) from {response.request.url} "
+            "was not followed; redirects are not permitted"
+        )
     response.raise_for_status()
     declared = response.headers.get("content-length")
     if declared:

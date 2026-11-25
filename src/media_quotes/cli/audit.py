@@ -133,6 +133,8 @@ def _audit_markdown(report: dict[str, Any]) -> str:  # pragma: no cover
         "## Deterministic checks",
         "",
     ]
+    if report.get("reconstructed"):
+        lines.insert(4, "- Reconstructed: true (no stored report; rebuilt from local artifacts)")
     lines.extend(f"- `{name}`: {value}" for name, value in sorted(checks.items()))
     lines.extend(["", "## Coverage gaps", ""])
     gaps = cast(list[dict[str, Any]], report["coverage_gaps"])
@@ -262,10 +264,13 @@ def _do_audit(  # pragma: no cover
             gaps=[_gap_record(row) for row in _load_registry(settings) if not row.usable],
             events=[],
             rejected=0,
-            review_queue=[flag.model_dump(mode="json") for flag in load_review_flags(settings)],
+            review_queue=[
+                flag.model_dump(mode="json") for flag in load_review_flags(settings, provenance)
+            ],
             topic_id=active_topic,
             provenance=provenance,
         )
+        report["reconstructed"] = True
     out_dir = Path(out) if out else None
     json_path, md_path = _write_audit(settings, report, out_dir, provenance)
     checks = cast(dict[str, Any], report["checks"])

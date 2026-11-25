@@ -133,7 +133,16 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument(
         "--live", action="store_true", help="actually fetch; without it the command only plans"
     )
-    subparsers.add_parser("audit", help="deterministic audit report (JSON + MD)", **shared)
+    audit_parser = subparsers.add_parser(
+        "audit", help="deterministic audit report (JSON + MD)", **shared
+    )
+    audit_parser.add_argument(
+        "--provenance",
+        dest="provenance",
+        choices=ACQUISITION_PROVENANCES,
+        default="fixture",
+        help="acquisition provenance of the audit to read (default: fixture)",
+    )
     missed_parser = subparsers.add_parser(
         "audit-quotes",
         help="AI shadow audit for quotes the deterministic rules may have missed (paid)",
@@ -243,8 +252,22 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="collect articles from configured feeds during --execute",
     )
-    subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
+    digest_parser = subparsers.add_parser("digest", help="regenerate the Markdown digest", **shared)
+    digest_parser.add_argument(
+        "--provenance",
+        dest="provenance",
+        choices=ACQUISITION_PROVENANCES,
+        default="fixture",
+        help="acquisition provenance of the quote store (default: fixture)",
+    )
     export_parser = subparsers.add_parser("export", help="derived JSONL export", **shared)
+    export_parser.add_argument(
+        "--provenance",
+        dest="provenance",
+        choices=ACQUISITION_PROVENANCES,
+        default="fixture",
+        help="acquisition provenance of the export (default: fixture)",
+    )
     export_parser.add_argument(
         "--from-db",
         action="store_true",
@@ -275,6 +298,13 @@ def _build_parser() -> argparse.ArgumentParser:
     prune.add_argument("--execute", action="store_true", help="delete files; without it only plan")
     subparsers.add_parser("retention", help="retention and lock readiness plan", **shared)
     drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
+    drill.add_argument(
+        "--provenance",
+        dest="provenance",
+        choices=ACQUISITION_PROVENANCES,
+        default="fixture",
+        help="acquisition provenance tree to drill (default: fixture)",
+    )
     drill.add_argument("--reference", dest="reference")
 
     graph_parser = subparsers.add_parser("graph", help="manage derived Neo4j graph projection")
@@ -419,6 +449,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_date=report_date,
                 reference=Path(reference) if reference else None,
                 topic_id=topic_arg,
+                provenance=cast(AcquisitionProvenance, str(getattr(args, "provenance", "fixture"))),
             )
         if command == "sources":
             action = str(getattr(args, "action", "list"))
@@ -486,6 +517,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if run_tier is not None:
                     run_kwargs["tier"] = int(run_tier)
                 return _do_run(settings, **run_kwargs)
+            provenance = cast(AcquisitionProvenance, str(getattr(args, "provenance", "fixture")))
             if command == "audit":
                 return _do_audit(
                     settings,
@@ -493,6 +525,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     run_id=getattr(args, "run_id", None),
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
+                    provenance=provenance,
                 )
             if topic_arg is not None:
                 return _do_digest(
@@ -500,8 +533,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     report_date=report_date,
                     out=getattr(args, "out", None),
                     topic_id=topic_arg,
+                    provenance=provenance,
                 )
-            return _do_digest(settings, report_date=report_date, out=getattr(args, "out", None))
+            return _do_digest(
+                settings,
+                report_date=report_date,
+                out=getattr(args, "out", None),
+                provenance=provenance,
+            )
         if command == "audit-quotes":
             report_date = _parse_report_date(getattr(args, "date", None), settings)
             return _do_audit_quotes(
@@ -540,24 +579,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if command == "export":
             report_date = _parse_report_date(getattr(args, "date", None), settings)
+            provenance = cast(AcquisitionProvenance, str(getattr(args, "provenance", "fixture")))
+            export_kwargs: dict[str, Any] = {
+                "report_date": report_date,
+                "out": getattr(args, "out", None),
+                "from_db": bool(getattr(args, "from_db", False)),
+                "context": getattr(args, "context", None),
+                "max_tokens": int(getattr(args, "max_tokens", 4000)),
+                "provenance": provenance,
+            }
             if topic_arg is not None:
-                return _do_export(
-                    settings,
-                    report_date=report_date,
-                    out=getattr(args, "out", None),
-                    topic_id=topic_arg,
-                    from_db=bool(getattr(args, "from_db", False)),
-                    context=getattr(args, "context", None),
-                    max_tokens=int(getattr(args, "max_tokens", 4000)),
-                )
-            return _do_export(
-                settings,
-                report_date=report_date,
-                out=getattr(args, "out", None),
-                from_db=bool(getattr(args, "from_db", False)),
-                context=getattr(args, "context", None),
-                max_tokens=int(getattr(args, "max_tokens", 4000)),
-            )
+                export_kwargs["topic_id"] = topic_arg
+            return _do_export(settings, **export_kwargs)
         if command == "backfill":
             start = (
                 _parse_report_date(args.from_date, settings)

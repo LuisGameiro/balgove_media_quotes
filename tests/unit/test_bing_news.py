@@ -6,8 +6,11 @@ import asyncio
 from urllib.parse import quote
 
 import httpx
+import pytest
 
 from media_quotes.bing_news import discover_bing_news
+from media_quotes.exceptions import RateLimitExceededError
+from media_quotes.fetch import TokenBucket
 
 
 def _feed(urls: list[str]) -> bytes:
@@ -52,3 +55,47 @@ def test_discover_bing_news_decodes_original_urls_and_filters_domain() -> None:
     ]
     assert requested[0].params["q"] == "site:reuters.com Ukraine"
     assert requested[0].params["format"] == "rss"
+
+
+def test_discover_bing_news_rejects_oversized_streamed_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 5_000_001)
+
+    with pytest.raises(ValueError, match="exceeds size limit"):
+        asyncio.run(
+            discover_bing_news(
+                "reuters.com",
+                transport=httpx.MockTransport(handler),
+                clock=10.0,
+            )
+        )
+
+
+def test_discover_bing_news_throttles_with_shared_bucket_without_sleeping() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_feed([]))
+
+    transport = httpx.MockTransport(handler)
+    bucket = TokenBucket(rate_per_second=1.0, last_refill=10.0)
+
+    assert (
+        asyncio.run(
+            discover_bing_news("reuters.com", transport=transport, bucket=bucket, clock=10.0)
+        )
+        == []
+    )
+    assert bucket.tokens == 0.0
+
+    # The same bucket is now empty: a second discovery is refused before any request.
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("transport must not be called while rate limited")
+
+    with pytest.raises(RateLimitExceededError):
+        asyncio.run(
+            discover_bing_news(
+                "reuters.com",
+                transport=httpx.MockTransport(forbidden),
+                bucket=bucket,
+                clock=10.0,
+            )
+        )

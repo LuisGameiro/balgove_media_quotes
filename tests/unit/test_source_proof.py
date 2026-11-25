@@ -21,6 +21,7 @@ def _row(source_id: str, **overrides: object) -> SimpleNamespace:
         "claim_only": False,
         "rights_status": "license_held",
         "access_mode": "licensed_database",
+        "usable": True,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -240,6 +241,79 @@ def test_live_entry_uses_bing_fallback_when_feed_has_no_quotes(
 
     assert entry["status"] == "live_verified"
     assert entry["collected"] is True
+    assert entry["quotes_verified"] == 2
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        SimpleNamespace(bing_discovery_enabled=False, redirect_hosts=[]),
+        None,
+    ],
+    ids=["disabled", "no-config"],
+)
+def test_live_entry_skips_bing_when_not_enabled(
+    monkeypatch: pytest.MonkeyPatch, config: SimpleNamespace | None
+) -> None:
+    calls: list[str] = []
+
+    async def fake_bing(domain: str, **kwargs: object) -> list[dict[str, str]]:
+        calls.append(domain)
+        return []
+
+    monkeypatch.setattr(source_proof.scraper, "_resolve_feed_url", lambda *a, **k: "")
+    monkeypatch.setattr(
+        source_proof.scraper, "_load_source_config_optional", lambda *a, **k: config
+    )
+    monkeypatch.setattr(source_proof, "discover_bing_news", fake_bing)
+
+    entry = source_proof._live_entry(
+        _row("ap"),  # type: ignore[arg-type]
+        MagicMock(),
+        MagicMock(),
+        topic_id="ukraine-war",
+        limit=1,
+    )
+
+    assert calls == []
+    assert entry["collected"] is False
+    assert entry["blocker"] == "bing_discovery_disabled"
+
+
+def test_live_entry_runs_bing_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    config = SimpleNamespace(bing_discovery_enabled=True, redirect_hosts=[])
+
+    async def fake_bing(domain: str, **kwargs: object) -> list[dict[str, str]]:
+        calls.append(domain)
+        return [{"url": "https://ap.example/article", "title": "Story", "published": ""}]
+
+    async def fake_fetch(url: str, **kwargs: object) -> tuple[bytes, None]:
+        return b"<html></html>", None
+
+    monkeypatch.setattr(source_proof.scraper, "_resolve_feed_url", lambda *a, **k: "")
+    monkeypatch.setattr(
+        source_proof.scraper, "_load_source_config_optional", lambda *a, **k: config
+    )
+    monkeypatch.setattr(source_proof, "discover_bing_news", fake_bing)
+    monkeypatch.setattr(source_proof, "fetch_bytes", fake_fetch)
+    monkeypatch.setattr(
+        source_proof,
+        "_inspect_bytes",
+        lambda *a, **k: {"quotes_verified_publishable": 2, "metadata": {}},
+    )
+
+    entry = source_proof._live_entry(
+        _row("ap"),  # type: ignore[arg-type]
+        MagicMock(),
+        MagicMock(),
+        topic_id="ukraine-war",
+        limit=1,
+    )
+
+    assert calls and all(domain == "ap.example" for domain in calls)
+    assert entry["collected"] is True
+    assert entry["status"] == "live_verified"
     assert entry["quotes_verified"] == 2
 
 

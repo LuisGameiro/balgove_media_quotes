@@ -196,31 +196,39 @@ def run_historical_backfill(
                 extraction_fallback=settings.extraction_fallback,
             )
             for article in articles:
-                if article.error or not article.blob_path:
-                    issues.append(
-                        f"{row.source_id}: fetch failed for {article.url}: "
-                        f"{article.error or 'no blob path'}"
-                    )
-                    continue
-                raw = article.raw or Path(article.blob_path).read_bytes()
-                metadata = adapter.parse_metadata(raw, source_url=article.url)
-                published = str(metadata.get("publication_date") or "")[:10]
                 try:
-                    day = date.fromisoformat(published)
-                except ValueError:
-                    issues.append(f"{row.source_id}: undated article {article.url}")
+                    if article.error or not article.blob_path:
+                        issues.append(
+                            f"{row.source_id}: fetch failed for {article.url}: "
+                            f"{article.error or 'no blob path'}"
+                        )
+                        continue
+                    raw = article.raw or Path(article.blob_path).read_bytes()
+                    metadata = adapter.parse_metadata(raw, source_url=article.url)
+                    published = str(metadata.get("publication_date") or "")[:10]
+                    try:
+                        day = date.fromisoformat(published)
+                    except ValueError:
+                        issues.append(f"{row.source_id}: undated article {article.url}")
+                        continue
+                    if day.isoformat() not in pending_dates:
+                        issues.append(
+                            f"{row.source_id}: out-of-window or completed article "
+                            f"{article.url} published {day}"
+                        )
+                        continue
+                    ref = f"fixture://{row.source_id}/{Path(article.blob_path).name}"
+                    refs_by_date.setdefault(day.isoformat(), {}).setdefault(
+                        row.source_id, []
+                    ).append(ref)
+                    fetched += 1
+                except ConfigError:
+                    raise
+                except Exception as exc:
+                    issues.append(f"{row.source_id}: article {article.url} failed: {exc}")
                     continue
-                if day.isoformat() not in pending_dates:
-                    issues.append(
-                        f"{row.source_id}: out-of-window or completed article "
-                        f"{article.url} published {day}"
-                    )
-                    continue
-                ref = f"fixture://{row.source_id}/{Path(article.blob_path).name}"
-                refs_by_date.setdefault(day.isoformat(), {}).setdefault(row.source_id, []).append(
-                    ref
-                )
-                fetched += 1
+        except ConfigError:
+            raise
         except Exception as exc:
             issues.append(f"{row.source_id}: archive discovery/fetch failed: {exc}")
             continue

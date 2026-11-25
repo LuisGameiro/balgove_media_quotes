@@ -377,6 +377,7 @@ def _process_source(  # pragma: no cover
     records: list[ExportQuoteRecord] = []
     offsets: dict[str, dict[str, Any]] = {}
     rejected = 0
+    failed_refs: list[str] = []
 
     if not row.usable and not replay:
         # T0 gate: never call discovery/fetch for a disabled source with no fixture.
@@ -478,332 +479,359 @@ def _process_source(  # pragma: no cover
     route = discovery_route
 
     for ref in article_refs:
-        trace_id = _trace_id(row.source_id, ref)
-        raw = adapter.fetch(ref)
-        sidecar_meta: dict[str, Any] = {}
-        if blob_cache is not None:
-            ref_stem = Path(ref.rsplit("/", 1)[-1]).stem
-            sidecar_meta = blob_cache.read_meta(row.source_id, ref_stem)
-        sidecar_url = str(sidecar_meta.get("url") or "") or None
-        route = discovery_route or str(sidecar_meta.get("discovered_via") or "")
-        metadata = (
-            adapter.parse_metadata(raw, source_url=sidecar_url)
-            if sidecar_url is not None
-            else adapter.parse_metadata(raw)
-        )
-        if sidecar_meta:
-            if not metadata.get("title") and sidecar_meta.get("title"):
-                metadata["title"] = str(sidecar_meta["title"])
-            if not metadata.get("canonical_url") and sidecar_meta.get("url"):
-                metadata["canonical_url"] = str(sidecar_meta["url"])
-        if metadata.get("quality_ok") is False:
-            rejected += 1
-            continue
-        text = str(metadata.get("article_text") or "")
-        canonical_url = str(metadata.get("canonical_url") or "")
-        article_ref_name = str(metadata.get("title") or ref)
-        raw_hash = hashlib.sha256(raw).hexdigest()
-        extraction_method = str(metadata.get("extraction_method") or "fixture_html_v1")
-        extractor_version = str(metadata.get("extractor_version") or "fixture-replay-v1")
-        events.append(
-            _event(
-                run_id=run_id,
-                trace_id=trace_id,
-                source_id=row.source_id,
-                step="fetch_parse",
-                status="fixture_replay" if replay else "ok",
-                mode=adapter.mode,
-                content_hash=raw_hash,
-                canonical_url=canonical_url,
-                provenance=provenance,
-                discovery_route=route,
-                license_reference=row.license_reference or "(none)",
+        try:
+            trace_id = _trace_id(row.source_id, ref)
+            raw = adapter.fetch(ref)
+            sidecar_meta: dict[str, Any] = {}
+            if blob_cache is not None:
+                ref_stem = Path(ref.rsplit("/", 1)[-1]).stem
+                sidecar_meta = blob_cache.read_meta(row.source_id, ref_stem)
+            sidecar_url = str(sidecar_meta.get("url") or "") or None
+            route = discovery_route or str(sidecar_meta.get("discovered_via") or "")
+            metadata = (
+                adapter.parse_metadata(raw, source_url=sidecar_url)
+                if sidecar_url is not None
+                else adapter.parse_metadata(raw)
             )
-        )
-
-        # Topic gate runs immediately after metadata parsing and before any candidate is built.
-        outcome = _gate_article(
-            settings,
-            gate,
-            source_id=row.source_id,
-            metadata=metadata,
-            text=text,
-            canonical_url=canonical_url,
-            title=article_ref_name,
-            ref=ref,
-            judge=judge,
-            allow_default_rule=replay,
-        )
-        if outcome is None:
-            topic_counts["skipped"] += 1
-            gap = _gap_record(row, "topic_gate unavailable: no approved route or rule")
-            gap.update({"license_reference": row.license_reference or "(none)"})
-            add_gap(gap)
-            rejected += 1
-            events.append(
-                _event(
-                    run_id=run_id,
-                    trace_id=trace_id,
-                    source_id=row.source_id,
-                    step="topic_gate",
-                    status="config_error",
-                    license_reference=row.license_reference or "(none)",
-                    message="topic gate refused unrouted article; no quote extracted",
-                )
-            )
-            current_route = None
-            continue
-        else:
-            current_route = outcome.route
-            assessment = outcome.assessment
-            event_fields = _topic_event_fields(outcome, row)
-            events.append(
-                _event(
-                    run_id=run_id,
-                    trace_id=trace_id,
-                    source_id=row.source_id,
-                    step="topic_gate",
-                    status=assessment.status,
-                    **event_fields,
-                )
-            )
-            topic_counts[assessment.status] += 1
-            topic_terms.update(assessment.matched_terms)
-            topic_rule_version = assessment.rule_version
-            topic_score = assessment.score
-            if assessment.status != "accepted":
-                gap = _gap_record(
-                    row,
-                    f"topic_gate {assessment.status}: "
-                    + ("; ".join(assessment.reasons) or "no reasons recorded"),
-                )
-                gap.update(
-                    {
-                        "topic_status": assessment.status,
-                        "topic_rule_id": assessment.rule_id,
-                        "topic_rule_version": assessment.rule_version,
-                        "topic_score": assessment.score,
-                        "matched_terms": list(assessment.matched_terms),
-                        "escalated": assessment.escalated,
-                        "license_reference": row.license_reference or "(none)",
-                    }
-                )
-                add_gap(gap)
+            if sidecar_meta:
+                if not metadata.get("title") and sidecar_meta.get("title"):
+                    metadata["title"] = str(sidecar_meta["title"])
+                if not metadata.get("canonical_url") and sidecar_meta.get("url"):
+                    metadata["canonical_url"] = str(sidecar_meta["url"])
+            if metadata.get("quality_ok") is False:
                 rejected += 1
                 continue
-
-        spans_raw = metadata.get("quote_spans", [])
-        spans = [s for s in spans_raw if isinstance(s, dict)] if isinstance(spans_raw, list) else []
-        spans_by_text: dict[str, list[dict[str, Any]]] = {}
-        for span in spans:
-            norm = normalise_text(str(span.get("quote_text") or ""))
-            spans_by_text.setdefault(norm, []).append(span)
-        by_text = {normalise_text(str(span.get("quote_text") or "")): span for span in spans}
-
-        candidates: list[QuoteCandidate] = []
-        for found in adapter.extract_quotes(text):
-            quote_text = str(found.get("quote_text") or "")
-            norm = normalise_text(quote_text)
-            matching_spans = spans_by_text.get(norm)
-            span = matching_spans.pop(0) if matching_spans else {}
-            candidates.append(
-                QuoteCandidate(
-                    quote_text=quote_text,
-                    article_id=uuid5(NAMESPACE_URL, ref),
-                    char_start=int(found.get("char_start", 0)),
-                    char_end=int(found.get("char_end", 0)),
-                    dom_path=str(found.get("dom_path") or span.get("dom_path") or ""),
-                    speaker=str(span.get("speaker") or found.get("speaker") or "") or None,
-                    attribution_span=str(
-                        span.get("attribution_span") or found.get("attribution_span") or ""
-                    )
-                    or None,
+            text = str(metadata.get("article_text") or "")
+            canonical_url = str(metadata.get("canonical_url") or "")
+            article_ref_name = str(metadata.get("title") or ref)
+            raw_hash = hashlib.sha256(raw).hexdigest()
+            extraction_method = str(metadata.get("extraction_method") or "fixture_html_v1")
+            extractor_version = str(metadata.get("extractor_version") or "fixture-replay-v1")
+            events.append(
+                _event(
+                    run_id=run_id,
+                    trace_id=trace_id,
+                    source_id=row.source_id,
+                    step="fetch_parse",
+                    status="fixture_replay" if replay else "ok",
+                    mode=adapter.mode,
+                    content_hash=raw_hash,
+                    canonical_url=canonical_url,
+                    provenance=provenance,
+                    discovery_route=route,
+                    license_reference=row.license_reference or "(none)",
                 )
             )
 
-        article_policy = dict(policy_flags)
-        article_policy["original_reporting_flag"] = (
-            metadata.get("original_reporting_flag")
-            or sidecar_meta.get("original_reporting_flag")
-            or "first-hand"
-        )
-        pipeline_outcome = verify_pipeline(
-            candidates,
-            text=text,
-            source_row=row,
-            policy_flags=article_policy,
-            metadata=metadata,
-            window_start=window_start,
-            window_end=report_date,
-            max_quote_words=settings.max_quote_words,
-            now=verified_at,
-        )
-        rejected += sum(pipeline_outcome.prefilter.rejected.values())
-        for v_res in pipeline_outcome.results:
-            if v_res.status != "verified":
+            # Topic gate runs immediately after metadata parsing and before any candidate is built.
+            outcome = _gate_article(
+                settings,
+                gate,
+                source_id=row.source_id,
+                metadata=metadata,
+                text=text,
+                canonical_url=canonical_url,
+                title=article_ref_name,
+                ref=ref,
+                judge=judge,
+                allow_default_rule=replay,
+            )
+            if outcome is None:
+                topic_counts["skipped"] += 1
+                gap = _gap_record(row, "topic_gate unavailable: no approved route or rule")
+                gap.update({"license_reference": row.license_reference or "(none)"})
+                add_gap(gap)
                 rejected += 1
                 events.append(
                     _event(
                         run_id=run_id,
                         trace_id=trace_id,
                         source_id=row.source_id,
-                        step="verify",
-                        status=v_res.status,
-                        quote_id="",
-                        reasons=v_res.reasons,
+                        step="topic_gate",
+                        status="config_error",
                         license_reference=row.license_reference or "(none)",
+                        message="topic gate refused unrouted article; no quote extracted",
+                    )
+                )
+                current_route = None
+                continue
+            else:
+                current_route = outcome.route
+                assessment = outcome.assessment
+                event_fields = _topic_event_fields(outcome, row)
+                events.append(
+                    _event(
+                        run_id=run_id,
+                        trace_id=trace_id,
+                        source_id=row.source_id,
+                        step="topic_gate",
+                        status=assessment.status,
+                        **event_fields,
+                    )
+                )
+                topic_counts[assessment.status] += 1
+                topic_terms.update(assessment.matched_terms)
+                topic_rule_version = assessment.rule_version
+                topic_score = assessment.score
+                if assessment.status != "accepted":
+                    gap = _gap_record(
+                        row,
+                        f"topic_gate {assessment.status}: "
+                        + ("; ".join(assessment.reasons) or "no reasons recorded"),
+                    )
+                    gap.update(
+                        {
+                            "topic_status": assessment.status,
+                            "topic_rule_id": assessment.rule_id,
+                            "topic_rule_version": assessment.rule_version,
+                            "topic_score": assessment.score,
+                            "matched_terms": list(assessment.matched_terms),
+                            "escalated": assessment.escalated,
+                            "license_reference": row.license_reference or "(none)",
+                        }
+                    )
+                    add_gap(gap)
+                    rejected += 1
+                    continue
+
+            spans_raw = metadata.get("quote_spans", [])
+            spans = (
+                [s for s in spans_raw if isinstance(s, dict)] if isinstance(spans_raw, list) else []
+            )
+            spans_by_text: dict[str, list[dict[str, Any]]] = {}
+            for span in spans:
+                norm = normalise_text(str(span.get("quote_text") or ""))
+                spans_by_text.setdefault(norm, []).append(span)
+            by_text = {normalise_text(str(span.get("quote_text") or "")): span for span in spans}
+
+            candidates: list[QuoteCandidate] = []
+            for found in adapter.extract_quotes(text):
+                quote_text = str(found.get("quote_text") or "")
+                norm = normalise_text(quote_text)
+                matching_spans = spans_by_text.get(norm)
+                span = matching_spans.pop(0) if matching_spans else {}
+                candidates.append(
+                    QuoteCandidate(
+                        quote_text=quote_text,
+                        article_id=uuid5(NAMESPACE_URL, ref),
+                        char_start=int(found.get("char_start", 0)),
+                        char_end=int(found.get("char_end", 0)),
+                        dom_path=str(found.get("dom_path") or span.get("dom_path") or ""),
+                        speaker=str(span.get("speaker") or found.get("speaker") or "") or None,
+                        attribution_span=str(
+                            span.get("attribution_span") or found.get("attribution_span") or ""
+                        )
+                        or None,
                     )
                 )
 
-        for candidate in pipeline_outcome.publishable:
-            language = _detect_language_safe(candidate.quote_text)
-            translation = _translation_for_quote(
-                settings,
-                quote_text=candidate.quote_text,
-                language=language,
-                route=current_route,
-                run_id=run_id,
-                trace_id=trace_id,
-                row=row,
-                events=events,
+            article_policy = dict(policy_flags)
+            article_policy["original_reporting_flag"] = (
+                metadata.get("original_reporting_flag")
+                or sidecar_meta.get("original_reporting_flag")
+                or "first-hand"
             )
-            span = by_text.get(normalise_text(candidate.quote_text), {})
-            publication_date = str(metadata.get("publication_date") or report_date.isoformat())[:10]
-            id_seed = hashlib.sha256(
-                "|".join(
-                    (
-                        row.source_id,
-                        canonical_url,
-                        candidate.quote_text,
-                        str(candidate.char_start),
-                        str(candidate.char_end),
-                        raw_hash,
+            pipeline_outcome = verify_pipeline(
+                candidates,
+                text=text,
+                source_row=row,
+                policy_flags=article_policy,
+                metadata=metadata,
+                window_start=window_start,
+                window_end=report_date,
+                max_quote_words=settings.max_quote_words,
+                now=verified_at,
+            )
+            rejected += sum(pipeline_outcome.prefilter.rejected.values())
+            for v_res in pipeline_outcome.results:
+                if v_res.status != "verified":
+                    rejected += 1
+                    events.append(
+                        _event(
+                            run_id=run_id,
+                            trace_id=trace_id,
+                            source_id=row.source_id,
+                            step="verify",
+                            status=v_res.status,
+                            quote_id="",
+                            reasons=v_res.reasons,
+                            license_reference=row.license_reference or "(none)",
+                        )
                     )
-                ).encode("utf-8")
-            ).hexdigest()
-            sequence = int(id_seed[:8], 16) % 10000
-            first_sequence = sequence
-            while (
-                quote_id := f"Q-{publication_date.replace('-', '')}-{sequence:04d}"
-            ) in used_quote_ids:
-                sequence = (sequence + 1) % 10000
-                if sequence == first_sequence:
-                    raise ConfigError(f"quote id space exhausted for {publication_date}")
-            used_quote_ids.add(quote_id)
-            offsets[quote_id] = {
-                "char_start": candidate.char_start,
-                "char_end": candidate.char_end,
-                "dom_path": candidate.dom_path,
-                "speaker": candidate.speaker,
-                "attribution_span": candidate.attribution_span,
-                "content_hash": raw_hash,
-                "raw_blob_ref": ref,
-                "extracted_text": text,
-                "extraction_method": extraction_method,
-                "extractor_version": extractor_version,
-                "article_metadata": {
-                    "fixture_replay": replay,
-                    "mode": adapter.mode,
-                    "topic_id": active_topic_id,
-                },
-            }
-            section_id = str(span.get("section_id") or default_section)
-            if topic_pack is not None and section_id not in topic_pack.section_ids():
-                # A fixture may carry a section from a different topic pack; keep the
-                # record consistent with the topic it was admitted under.
-                section_id = default_section
-            accepted_topic = (
-                outcome.assessment
-                if outcome is not None and outcome.assessment.status == "accepted"
-                else None
-            )
-            topic_updates: dict[str, Any] = {
-                "quote_language": language.language,
-                "language_confidence": language.confidence,
-            }
-            if accepted_topic is not None:
-                topic_updates.update(
-                    {
-                        "topic_status": "accepted",
-                        "topic_rule_version": accepted_topic.rule_version,
-                        "topic_score": accepted_topic.score,
-                        "matched_terms": list(accepted_topic.matched_terms),
-                    }
+
+            for candidate in pipeline_outcome.publishable:
+                language = _detect_language_safe(candidate.quote_text)
+                translation = _translation_for_quote(
+                    settings,
+                    quote_text=candidate.quote_text,
+                    language=language,
+                    route=current_route,
+                    run_id=run_id,
+                    trace_id=trace_id,
+                    row=row,
+                    events=events,
                 )
-            if translation is not None:
-                topic_updates.update(
-                    {
-                        "quote_text_en": translation.text if translation.usable else "",
-                        "translation_model_snapshot": translation.model_snapshot,
-                        "translation_prompt_version": translation.prompt_version,
-                        "translation_hash": translation.content_hash,
-                        "translation_status": (
-                            "translated" if translation.usable else translation.status or "failed"
-                        ),
-                    }
-                )
-            records.append(
-                quote_record(
-                    quote_id=quote_id,
-                    quote_text_original=candidate.quote_text,
-                    source_id=row.source_id,
-                    source_name=row.source_name,
-                    source_tier=row.tier,
-                    source_country_region=row.country_region,
-                    source_type=str(row.source_type),
-                    rights_status=str(row.rights_status),
-                    access_mode=str(row.access_mode),
-                    license_reference=row.license_reference,
-                    discovery_method=str(row.discovery_method),
-                    claim_only=row.claim_only,
-                    original_reporting_flag=str(article_policy["original_reporting_flag"]),
-                    source_language=row.language,
-                    publication_date=publication_date,
-                    article_name=article_ref_name,
-                    article_author=str(metadata.get("byline") or ""),
-                    article_url=canonical_url,
-                    extraction_date=verified_at.isoformat(),
-                    section_id=section_id,
-                    is_obsolete=False,
-                    content_hash=content_hash(
-                        [
+                span = by_text.get(normalise_text(candidate.quote_text), {})
+                publication_date = str(metadata.get("publication_date") or report_date.isoformat())[
+                    :10
+                ]
+                id_seed = hashlib.sha256(
+                    "|".join(
+                        (
                             row.source_id,
                             canonical_url,
                             candidate.quote_text,
                             str(candidate.char_start),
+                            str(candidate.char_end),
                             raw_hash,
-                        ]
-                    ),
-                    verification={
-                        "verbatim_match": True,
-                        "metadata_verified": True,
-                        "method": "nfc_exact_span_v1",
-                        "verified_at": verified_at.isoformat(),
+                        )
+                    ).encode("utf-8")
+                ).hexdigest()
+                sequence = int(id_seed[:8], 16) % 10000
+                first_sequence = sequence
+                while (
+                    quote_id := f"Q-{publication_date.replace('-', '')}-{sequence:04d}"
+                ) in used_quote_ids:
+                    sequence = (sequence + 1) % 10000
+                    if sequence == first_sequence:
+                        raise ConfigError(f"quote id space exhausted for {publication_date}")
+                used_quote_ids.add(quote_id)
+                offsets[quote_id] = {
+                    "char_start": candidate.char_start,
+                    "char_end": candidate.char_end,
+                    "dom_path": candidate.dom_path,
+                    "speaker": candidate.speaker,
+                    "attribution_span": candidate.attribution_span,
+                    "content_hash": raw_hash,
+                    "raw_blob_ref": ref,
+                    "extracted_text": text,
+                    "extraction_method": extraction_method,
+                    "extractor_version": extractor_version,
+                    "article_metadata": {
+                        "fixture_replay": replay,
+                        "mode": adapter.mode,
+                        "topic_id": active_topic_id,
                     },
-                    publication_name=str(metadata.get("publication_name") or row.source_name),
-                    notes=(
-                        "synthetic fixture replay"
-                        if replay
-                        else ("live blob ingest" if use_blobs else "offline replay")
-                    ),
-                    topic_id=active_topic_id,
-                    provenance=provenance,
-                ).model_copy(update=topic_updates)
-            )
+                }
+                section_id = str(span.get("section_id") or default_section)
+                if topic_pack is not None and section_id not in topic_pack.section_ids():
+                    # A fixture may carry a section from a different topic pack; keep the
+                    # record consistent with the topic it was admitted under.
+                    section_id = default_section
+                accepted_topic = (
+                    outcome.assessment
+                    if outcome is not None and outcome.assessment.status == "accepted"
+                    else None
+                )
+                topic_updates: dict[str, Any] = {
+                    "quote_language": language.language,
+                    "language_confidence": language.confidence,
+                }
+                if accepted_topic is not None:
+                    topic_updates.update(
+                        {
+                            "topic_status": "accepted",
+                            "topic_rule_version": accepted_topic.rule_version,
+                            "topic_score": accepted_topic.score,
+                            "matched_terms": list(accepted_topic.matched_terms),
+                        }
+                    )
+                if translation is not None:
+                    topic_updates.update(
+                        {
+                            "quote_text_en": translation.text if translation.usable else "",
+                            "translation_model_snapshot": translation.model_snapshot,
+                            "translation_prompt_version": translation.prompt_version,
+                            "translation_hash": translation.content_hash,
+                            "translation_status": (
+                                "translated"
+                                if translation.usable
+                                else translation.status or "failed"
+                            ),
+                        }
+                    )
+                records.append(
+                    quote_record(
+                        quote_id=quote_id,
+                        quote_text_original=candidate.quote_text,
+                        source_id=row.source_id,
+                        source_name=row.source_name,
+                        source_tier=row.tier,
+                        source_country_region=row.country_region,
+                        source_type=str(row.source_type),
+                        rights_status=str(row.rights_status),
+                        access_mode=str(row.access_mode),
+                        license_reference=row.license_reference,
+                        discovery_method=str(row.discovery_method),
+                        claim_only=row.claim_only,
+                        original_reporting_flag=str(article_policy["original_reporting_flag"]),
+                        source_language=row.language,
+                        publication_date=publication_date,
+                        article_name=article_ref_name,
+                        article_author=str(metadata.get("byline") or ""),
+                        article_url=canonical_url,
+                        extraction_date=verified_at.isoformat(),
+                        section_id=section_id,
+                        is_obsolete=False,
+                        content_hash=content_hash(
+                            [
+                                row.source_id,
+                                canonical_url,
+                                candidate.quote_text,
+                                str(candidate.char_start),
+                                raw_hash,
+                            ]
+                        ),
+                        verification={
+                            "verbatim_match": True,
+                            "metadata_verified": True,
+                            "method": "nfc_exact_span_v1",
+                            "verified_at": verified_at.isoformat(),
+                        },
+                        publication_name=str(metadata.get("publication_name") or row.source_name),
+                        notes=(
+                            "synthetic fixture replay"
+                            if replay
+                            else ("live blob ingest" if use_blobs else "offline replay")
+                        ),
+                        topic_id=active_topic_id,
+                        provenance=provenance,
+                    ).model_copy(update=topic_updates)
+                )
+                events.append(
+                    _event(
+                        run_id=run_id,
+                        trace_id=trace_id,
+                        source_id=row.source_id,
+                        step="verify",
+                        status="verified",
+                        quote_id=quote_id,
+                        fixture_replay=replay,
+                        provenance=provenance,
+                        discovery_route=route,
+                        license_reference=row.license_reference or "(none)",
+                    )
+                )
+        except ConfigError:
+            raise
+        except Exception as exc:
+            rejected += 1
+            failed_refs.append(ref)
+            add_gap(_gap_record(row, f"fetch_parse error for {ref}: {exc}"))
             events.append(
                 _event(
                     run_id=run_id,
-                    trace_id=trace_id,
+                    trace_id=_trace_id(row.source_id, ref),
                     source_id=row.source_id,
-                    step="verify",
-                    status="verified",
-                    quote_id=quote_id,
-                    fixture_replay=replay,
-                    provenance=provenance,
-                    discovery_route=route,
+                    step="fetch_parse",
+                    status="error",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    canonical_url=ref,
                     license_reference=row.license_reference or "(none)",
                 )
             )
+            continue
     if not article_refs and row.usable:
         detail = (
             f"no articles were supplied by the {provenance} collector"
@@ -820,13 +848,15 @@ def _process_source(  # pragma: no cover
         "source_id": row.source_id,
         "expected_articles": len(article_refs),
         "discovered": len(article_refs),
-        "processed": len(article_refs),
+        "processed": len(article_refs) - len(failed_refs),
         "quotes": sum(1 for record in records if record.source_id == row.source_id),
         "last_check_at": verified_at.isoformat(),
         "provenance": provenance,
         "discovery_route": route,
         "status": (
-            "degraded" if replay or not row.usable or (use_blobs and not article_refs) else "ok"
+            "degraded"
+            if replay or not row.usable or (use_blobs and not article_refs) or failed_refs
+            else "ok"
         ),
         "gap_reason": "rights_blocked" if replay else "",
         "mandatory": row.source_id in _MANDATORY,

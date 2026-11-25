@@ -134,6 +134,50 @@ def test_failed_robots_fetch_fails_closed_for_sample(tmp_path: Path) -> None:
     assert any("robots.txt could not be fetched" in error for error in report["errors"])
 
 
+def test_robots_redirect_fails_closed(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(301, headers={"location": "/robots-final.txt"})
+        body = {"/feed.xml": _FEED_XML, "/article": _ARTICLE_HTML}.get(request.url.path)
+        return httpx.Response(200, text=body) if body is not None else httpx.Response(404)
+
+    report = probe_source_live(
+        _config(),
+        settings=_settings(tmp_path),
+        topic_id=TOPIC,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert report["robots_txt_ok"] is False
+    assert report["admission_ready"] is False
+    assert report["network_calls"] == 2  # robots + feed; the redirect target was not followed
+    assert report["sample_url"] == ""
+    assert any("unexpected redirect" in error for error in report["errors"])
+
+
+def test_failed_feed_fetch_is_not_admission_ready(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/feed.xml":
+            return httpx.Response(503)
+        body = {"/robots.txt": "User-agent: *\nAllow: /\n", "/article": _ARTICLE_HTML}.get(
+            request.url.path
+        )
+        return httpx.Response(200, text=body) if body is not None else httpx.Response(404)
+
+    report = probe_source_live(
+        _config(),
+        settings=_settings(tmp_path),
+        topic_id=TOPIC,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert report["robots_txt_ok"] is True
+    assert report["feed_depth_ok"] is False
+    assert report["admission_ready"] is False
+    assert report["sample_url"] == ""
+    assert any("/feed.xml" in error for error in report["errors"])
+
+
 def test_feed_and_sample_success(tmp_path: Path) -> None:
     report = probe_source_live(
         _config(),

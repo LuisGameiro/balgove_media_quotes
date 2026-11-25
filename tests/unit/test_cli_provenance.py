@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from media_quotes.cli.audit import _do_audit
 from media_quotes.cli.common import _run_id
@@ -75,3 +79,109 @@ def test_reconstructed_live_audit_uses_live_run_id(tmp_path: Path) -> None:
     expected_fixture = _run_id(day, settings, topic_id="ukraine-war", provenance="fixture")
     assert payload["run_id"] == expected_live
     assert payload["run_id"] != expected_fixture
+
+
+def test_live_audit_uses_stored_report_and_labels_reconstruction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from media_quotes.cli.app import main
+
+    repo_root = Path(__file__).resolve().parents[2]
+    settings = _settings(tmp_path, repo_root)
+    monkeypatch.setattr("media_quotes.cli.app.get_settings", lambda: settings)
+    day = date(2026, 11, 19)
+    _live_export_from_fixture(settings, day)
+
+    # No stored live report: the audit is rebuilt and must say so.
+    assert _do_audit(settings, report_date=day, run_id=None, out=None, provenance="live_feed") in (
+        0,
+        2,
+    )
+    stored = settings.audit_dir / f"audit-{day.isoformat()}.json"
+    md_path = stored.with_suffix(".md")
+    payload = json.loads(stored.read_text(encoding="utf-8"))
+    assert payload["reconstructed"] is True
+    assert "Reconstructed: true" in md_path.read_text(encoding="utf-8")
+
+    # A stored live report wins unchanged: no reconstruction flag, no label.
+    marker = {
+        "topic_id": "ukraine-war",
+        "provenance": "live_feed",
+        "report_date": day.isoformat(),
+        "mode": "stored live report",
+        "run_id": "stored-live-run",
+        "verified_quotes": 999,
+        "rejected_candidates": 0,
+        "coverage_gaps": [],
+        "artifacts": {},
+        "checks": {"gates_pass": True},
+    }
+    stored.write_text(json.dumps(marker), encoding="utf-8")
+    assert main(["audit", "--date", day.isoformat(), "--provenance", "live_feed"]) == 0
+    preserved = json.loads(stored.read_text(encoding="utf-8"))
+    assert preserved["run_id"] == "stored-live-run"
+    assert preserved["verified_quotes"] == 999
+    assert "reconstructed" not in preserved
+    assert "Reconstructed" not in md_path.read_text(encoding="utf-8")
+
+
+def test_digest_loads_review_flags_with_selected_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import media_quotes.cli.common as common
+
+    repo_root = Path(__file__).resolve().parents[2]
+    settings = _settings(tmp_path, repo_root)
+    day = date(2026, 11, 19)
+    _live_export_from_fixture(settings, day)
+
+    seen: list[str] = []
+    real_load = common.load_review_flags
+
+    def spy(settings_arg: Any, provenance: Any = "fixture") -> Any:
+        seen.append(str(provenance))
+        return real_load(settings_arg, provenance)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(common, "load_review_flags", spy)
+    out = tmp_path / "live-flags.md"
+    assert _do_digest(settings, report_date=day, out=str(out), provenance="live_feed") == 0
+    assert seen == ["live_feed"]
+
+
+def test_provenance_option_reaches_audit_digest_export_and_drill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import media_quotes.cli as cli
+    from media_quotes.cli.app import main
+
+    repo_root = Path(__file__).resolve().parents[2]
+    settings = _settings(tmp_path, repo_root)
+    monkeypatch.setattr("media_quotes.cli.app.get_settings", lambda: settings)
+
+    calls: dict[str, dict[str, Any]] = {}
+
+    def make_spy(name: str) -> Any:
+        def spy(_settings: Settings, **kwargs: Any) -> int:
+            calls[name] = kwargs
+            return 0
+
+        return spy
+
+    for name in ("_do_audit", "_do_digest", "_do_export", "_do_restore_drill"):
+        monkeypatch.setattr(cli, name, make_spy(name))
+
+    assert main(["audit", "--provenance", "live_feed"]) == 0
+    assert calls["_do_audit"]["provenance"] == "live_feed"
+
+    assert main(["digest"]) == 0
+    assert calls["_do_digest"]["provenance"] == "fixture"
+
+    assert main(["export", "--provenance", "live_feed", "--from-db"]) == 0
+    assert calls["_do_export"]["provenance"] == "live_feed"
+    assert calls["_do_export"]["from_db"] is True
+
+    assert main(["restore-drill", "--provenance", "live_bing"]) == 0
+    assert calls["_do_restore_drill"]["provenance"] == "live_bing"
+
+    with pytest.raises(SystemExit):
+        main(["digest", "--provenance", "not-a-provenance"])

@@ -111,3 +111,28 @@ def test_write_digest_and_load_sections(tmp_path: Path) -> None:
     )
     assert written.is_file()
     assert "_No verified quotes in this window._" in written.read_text(encoding="utf-8")
+
+
+def test_render_digest_discloses_inference_failure_without_local_substitute() -> None:
+    from media_quotes.digest import _INFERENCE_FAILURE_MARKER
+
+    settings = Settings(_env_file=None)
+
+    class RaisingProvider:
+        def infer(self, *, section_id: str, section_name: str, quote_texts: object) -> str:
+            raise RuntimeError("provider down")
+
+    failures: list[str] = []
+    markdown = render_digest(
+        [],
+        report_date=settings.report_date,
+        window_start=settings.report_date,
+        window_end=settings.report_date,
+        sections_csv=settings.sections_csv,
+        provider=RaisingProvider(),
+        inference_failures=failures,
+    )
+    section_ids = [section_id for section_id, _ in load_sections(settings.sections_csv)]
+    assert failures == section_ids
+    assert markdown.count(_INFERENCE_FAILURE_MARKER) == len(section_ids)
+    assert "STAND-IN INFERENCE" not in markdown

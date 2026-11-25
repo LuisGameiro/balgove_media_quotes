@@ -113,12 +113,13 @@ def parse_pdf_document(
                 }
             )
 
+    # No invented metadata: absent fields stay empty so verification fails closed.
     return {
-        "canonical_url": source_url or "https://thinktank.example.org/report.pdf",
-        "publication_date": meta.get("publication_date", "2026-11-19"),
-        "title": meta.get("title", "Policy Research Report"),
-        "byline": meta.get("byline", "Think Tank Analyst"),
-        "publication_name": "Policy Institute",
+        "canonical_url": source_url or "",
+        "publication_date": meta.get("publication_date", ""),
+        "title": meta.get("title", ""),
+        "byline": meta.get("byline", ""),
+        "publication_name": meta.get("publication_name", ""),
         "article_text": body_text,
         "quote_spans": quotes,
         "extraction_method": "pdf_document_v1",

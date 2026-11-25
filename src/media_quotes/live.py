@@ -65,6 +65,7 @@ def fetch_feed_documents(
     extra_hosts: frozenset[str] = frozenset(),
     cache: BlobCache | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    bucket: TokenBucket | None = None,
 ) -> tuple[list[dict[str, str]], list[FetchedArticle]]:
     """Fetch a feed and the first N articles; return discovered entries and downloaded bytes."""
     if not row.usable:
@@ -87,7 +88,7 @@ def fetch_feed_documents(
         track_a_approved = bool(row.usable and row.license_reference)
 
         # Share one bucket across the feed and every article so the rate limit applies.
-        bucket = TokenBucket(policy.requests_per_second)
+        effective_bucket = bucket or TokenBucket(policy.requests_per_second)
         # One client for the feed and every article, so the policy's connection limit applies.
         client_kwargs = policy.client_kwargs()
         if transport is not None:
@@ -99,7 +100,7 @@ def fetch_feed_documents(
                 policy=policy,
                 track_a_approved=track_a_approved,
                 check_dns=True,
-                bucket=bucket,
+                bucket=effective_bucket,
                 allowed_hosts=effective_hosts,
                 client=client,
             )
@@ -113,8 +114,8 @@ def fetch_feed_documents(
                     items = parse_rss_feed(
                         feed_text, topic_pack=topic_pack, require_topic=require_topic
                     )
-            except (ParseError, DefusedXmlException):
-                items = []
+            except (ParseError, DefusedXmlException) as exc:
+                raise ValueError(f"invalid feed XML from {feed_url}: {exc}") from exc
 
             results: list[FetchedArticle] = []
             target_items = items[:limit] if limit > 0 else []
@@ -127,7 +128,7 @@ def fetch_feed_documents(
                         policy=policy,
                         track_a_approved=track_a_approved,
                         check_dns=True,
-                        bucket=bucket,
+                        bucket=effective_bucket,
                         allowed_hosts=effective_hosts,
                         client=client,
                     )
@@ -180,6 +181,7 @@ def fetch_url_documents(
     transport: httpx.AsyncBaseTransport | None = None,
     provenance: AcquisitionProvenance = "live_bing",
     discovered_via: str = "bing_news",
+    bucket: TokenBucket | None = None,
 ) -> list[FetchedArticle]:
     """Fetch original publisher URLs through the rights gate, one error per article.
 
@@ -193,7 +195,7 @@ def fetch_url_documents(
     async def run() -> list[FetchedArticle]:
         permitted_hosts = allowed_hosts_for(row) | extra_hosts
         track_a_approved = bool(row.usable and row.license_reference)
-        bucket = TokenBucket(policy.requests_per_second)
+        effective_bucket = bucket or TokenBucket(policy.requests_per_second)
         client_kwargs = policy.client_kwargs()
         if transport is not None:
             client_kwargs["transport"] = transport
@@ -208,7 +210,7 @@ def fetch_url_documents(
                         policy=policy,
                         track_a_approved=track_a_approved,
                         check_dns=True,
-                        bucket=bucket,
+                        bucket=effective_bucket,
                         allowed_hosts=permitted_hosts,
                         client=client,
                     )
@@ -279,6 +281,7 @@ def collect_live_source(
         hosts = frozenset([*source_config.content_hosts, *source_config.redirect_hosts])
 
     errors: list[str] = []
+    bucket = TokenBucket(policy.requests_per_second)
     try:
         discovered, articles = fetch_feed_documents(
             row,
@@ -290,6 +293,7 @@ def collect_live_source(
             extra_hosts=hosts,
             cache=cache,
             transport=transport,
+            bucket=bucket,
         )
         errors.extend(article.error for article in articles if article.error)
     except Exception as exc:  # a failed feed still qualifies for the configured fallback
@@ -314,7 +318,9 @@ def collect_live_source(
         candidates: list[dict[str, str]] = []
     else:
         try:
-            candidates = asyncio.run(discover_bing_news(domain, limit=limit, transport=transport))
+            candidates = asyncio.run(
+                discover_bing_news(domain, limit=limit, transport=transport, bucket=bucket)
+            )
         except Exception as exc:
             bing_errors.append(f"Bing discovery failed: {exc}")
             candidates = []
@@ -347,6 +353,7 @@ def collect_live_source(
         cache=cache,
         extra_hosts=hosts,
         transport=transport,
+        bucket=bucket,
     )
     errors.extend(bing_errors)
     errors.extend(article.error for article in bing_articles if article.error)

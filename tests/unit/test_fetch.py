@@ -19,6 +19,7 @@ from media_quotes.fetch import (
     assert_url_permitted,
     fetch_bytes,
 )
+from media_quotes.live import fetch_url_documents
 from media_quotes.registry import load_sources_csv
 
 CSV = Path(__file__).resolve().parents[2] / "data/sources.csv"
@@ -128,6 +129,64 @@ def test_feed_documents_resolve_relative_article_urls(monkeypatch: pytest.Monkey
     )
 
     assert seen == ["https://example.invalid/feed", "https://example.invalid/article"]
+
+
+@pytest.mark.parametrize("status", [301, 302])
+def test_fetch_bytes_rejects_redirect_by_default(status: int) -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status, headers={"location": "/elsewhere"})
+
+    with pytest.raises(ValueError, match="redirect"):
+        asyncio.run(
+            fetch_bytes(
+                "https://example.invalid/start",
+                row=APPROVED,
+                policy=FetchPolicy(),  # follow_redirects defaults to False
+                track_a_approved=True,
+                transport=httpx.MockTransport(handler),
+                clock=lambda: 10.0,
+                allowed_hosts=frozenset({"example.invalid"}),
+            )
+        )
+    assert len(calls) == 1  # no follow-up request was made
+
+
+def test_redirect_response_caches_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def resolve(host: str, port: int, **kwargs: object) -> list[tuple[object, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+
+    class RecordingCache:
+        def __init__(self) -> None:
+            self.stored: list[bytes] = []
+
+        def store(self, source_id: str, raw: bytes) -> tuple[str, Path]:
+            self.stored.append(raw)
+            return "abc", Path("blob.html")
+
+        def store_meta(self, source_id: str, digest: str, metadata: object) -> Path:
+            return Path("blob.meta")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "/elsewhere"})
+
+    cache = RecordingCache()
+    articles = fetch_url_documents(
+        APPROVED,
+        [{"url": "https://example.invalid/article", "title": "Story"}],
+        policy=FetchPolicy(),
+        cache=cache,
+        extra_hosts=frozenset({"example.invalid"}),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert cache.stored == []
+    assert len(articles) == 1
+    assert "redirect" in articles[0].error
 
 
 def test_fetch_bytes_can_follow_same_host_redirects_when_enabled() -> None:

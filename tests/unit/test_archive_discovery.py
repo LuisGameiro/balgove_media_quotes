@@ -236,6 +236,47 @@ def test_child_sitemap_host_is_rejected_before_fetch() -> None:
     assert any("child sitemap" in error and "evil.example.org" in error for error in result.errors)
 
 
+def test_private_ip_discovery_url_is_rejected_before_transport_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def private_dns(host: str, port: int, **kwargs: object) -> list[tuple[object, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.7", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", private_dns)
+    feed = "https://feeds.example.com/archive.xml"
+    requested: list[str] = []
+
+    result = _discover(_config([_route("rss-main", feed)]), _transport({}, requested))
+
+    assert requested == []
+    assert result.candidates == []
+    assert any("non-global IP" in error for error in result.errors)
+
+
+def test_private_ip_child_sitemap_is_not_fetched(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = f"{HOME}/sitemap.xml"
+    child = "https://feeds.example.com/sitemap-private.xml"
+
+    def dns(host: str, port: int, **kwargs: object) -> list[tuple[object, ...]]:
+        ip = "93.184.216.34" if host == "www.example.com" else "10.0.0.7"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", dns)
+    requested: list[str] = []
+    pages = {
+        index: _sitemapindex(child),
+        child: _urlset(("https://www.example.com/news/x", "2026-10-05")),
+    }
+    config = _config([_route("sitemap-main", index, route_type="sitemap")])
+
+    result = _discover(config, _transport(pages, requested))
+
+    assert index in requested
+    assert child not in requested
+    assert result.sitemaps_fetched == 1
+    assert any("child sitemap" in error and "non-global IP" in error for error in result.errors)
+
+
 def test_dedupe_and_limit() -> None:
     sitemap = f"{HOME}/sitemap.xml"
     pages = {

@@ -316,8 +316,19 @@ def _bing_entry(
     cache: BlobCache,
     *,
     limit: int,
+    bing_enabled: bool = False,
 ) -> dict[str, Any]:
     entry = _base_entry(row, "bing_discovery")
+    if not bing_enabled:
+        entry.update(
+            {
+                "status": "blocked",
+                "collected": False,
+                "blocker": "bing_discovery_disabled",
+                "detail": "Bing discovery is not enabled for this source.",
+            }
+        )
+        return entry
     domain = (urlparse(row.homepage_url).hostname or "").lower()
     if not domain:
         return _fixture_entry(
@@ -471,7 +482,14 @@ def _live_entry(
         )
         return entry
 
-    bing = _bing_entry(row, context, cache, limit=limit)
+    config = scraper._load_source_config_optional(row.source_id)
+    bing = _bing_entry(
+        row,
+        context,
+        cache,
+        limit=limit,
+        bing_enabled=config is not None and config.bing_discovery_enabled,
+    )
     if bing["collected"]:
         return bing
     if bing["articles_fetched"] and bing["status"] in {"partial_body", "accessible_no_quotes"}:

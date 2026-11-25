@@ -6,13 +6,20 @@ publisher through the normal rights gate.
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 from defusedxml.ElementTree import ParseError, fromstring
 
+from .exceptions import RateLimitExceededError
+from .fetch import TokenBucket
+
 _DISCOVERY_URL = "https://www.bing.com/news/search"
+_MAX_BYTES = 5_000_000
 
 
 def _local_tag(tag: str) -> str:
@@ -34,6 +41,8 @@ async def discover_bing_news(
     query: str = "Ukraine",
     limit: int = 5,
     transport: httpx.AsyncBaseTransport | None = None,
+    bucket: TokenBucket | None = None,
+    clock: Callable[[], float] | float | None = None,
 ) -> list[dict[str, str]]:
     """Return current original-publisher URLs discovered through Bing News RSS."""
     if limit < 1:
@@ -42,22 +51,50 @@ async def discover_bing_news(
     if not normalized_domain:
         raise ValueError("domain must not be empty")
 
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(30.0),
-        follow_redirects=False,
-        transport=transport,
-        headers={"User-Agent": "MediaQuotesProof/1.0"},
-    ) as client:
-        response = await client.get(
+    effective_bucket = bucket or TokenBucket(1.0)
+    if callable(clock):
+        now = clock()
+    elif clock is not None:
+        now = float(clock)
+    else:
+        now = time.monotonic()
+    if not effective_bucket.allow(now):
+        if clock is not None:
+            raise RateLimitExceededError("rate limit exceeded")
+        # Real fetches wait for a token; injected clocks stay deterministic.
+        deadline = time.monotonic() + max(1.0, 2.0 / effective_bucket.rate_per_second)
+        while time.monotonic() < deadline:
+            await asyncio.sleep(min(0.05, 1.0 / effective_bucket.rate_per_second))
+            if effective_bucket.allow(time.monotonic()):
+                break
+        else:
+            raise RateLimitExceededError("rate limit exceeded")
+
+    async with (
+        httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            follow_redirects=False,
+            transport=transport,
+            headers={"User-Agent": "MediaQuotesProof/1.0"},
+        ) as client,
+        client.stream(
+            "GET",
             _DISCOVERY_URL,
             params={"q": f"site:{normalized_domain} {query}", "format": "rss"},
-        )
+        ) as response,
+    ):
         response.raise_for_status()
-        if len(response.content) > 5_000_000:
-            raise ValueError("Bing News RSS response exceeds size limit")
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > _MAX_BYTES:
+                raise ValueError("Bing News RSS response exceeds size limit")
+            chunks.append(chunk)
+        content = b"".join(chunks)
 
     try:
-        root: Any = fromstring(response.content)
+        root: Any = fromstring(content)
     except ParseError as exc:
         raise ValueError("Bing News returned invalid XML") from exc
 

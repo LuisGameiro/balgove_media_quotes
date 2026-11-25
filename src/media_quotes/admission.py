@@ -107,6 +107,10 @@ def probe_source_live(
             network_calls += 1
             try:
                 async with client.stream("GET", url, follow_redirects=False) as response:
+                    if 300 <= response.status_code < 400:
+                        raise ValueError(
+                            f"unexpected redirect (HTTP {response.status_code}) from {url}"
+                        )
                     response.raise_for_status()
                     declared = response.headers.get("content-length")
                     if declared and int(declared) > policy.max_bytes:
@@ -184,6 +188,10 @@ def probe_source_live(
     if robots_text is None:
         # A robots.txt that could not be fetched is never an allow-all: fail closed.
         probe["robots_txt_ok"] = False
+        probe["admission_ready"] = False
+    if feed_url and feed_text is None:
+        # A configured feed that could not be fetched is never a depth pass.
+        probe["feed_depth_ok"] = False
         probe["admission_ready"] = False
     report_path = (
         settings.audit_dir

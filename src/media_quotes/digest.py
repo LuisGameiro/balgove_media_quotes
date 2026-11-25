@@ -21,6 +21,10 @@ from .risk_controls import ObsolescenceFlag
 if TYPE_CHECKING:
     from .topics import TopicPack
 
+_INFERENCE_FAILURE_MARKER = (
+    "_Section inference unavailable (provider error); quotes above are unaffected._"
+)
+
 __all__ = ["load_sections", "render_digest", "write_digest"]
 
 
@@ -49,6 +53,7 @@ def render_digest(
     review_badges: Mapping[str, str] | None = None,
     notice: str = "",
     now: datetime | None = None,
+    inference_failures: list[str] | None = None,
 ) -> str:
     """Render the Markdown for digests/REPORT_DATE.md without changing quote text."""
     if sections is not None:
@@ -140,13 +145,18 @@ def render_digest(
         else:
             lines.append("_No verified quotes in this window._")
         lines.append("")
-        lines.append(
-            inference_provider.infer(
+        try:
+            inference = inference_provider.infer(
                 section_id=section_id,
                 section_name=section_name,
                 quote_texts=[item.quote_text_original for item in selected],
             )
-        )
+        except Exception:
+            # A failed paid call is disclosed once; never retry or fall back to local text.
+            if inference_failures is not None:
+                inference_failures.append(section_id)
+            inference = _INFERENCE_FAILURE_MARKER
+        lines.append(inference)
         lines.append("")
     return "\n".join(lines).strip() + "\n"
 
@@ -166,6 +176,7 @@ def write_digest(
     review_badges: Mapping[str, str] | None = None,
     notice: str = "",
     now: datetime | None = None,
+    inference_failures: list[str] | None = None,
 ) -> Path:
     """Render and write the canonical MD file (UTF-8, no BOM, deterministic bytes)."""
     markdown = render_digest(
@@ -181,6 +192,7 @@ def write_digest(
         review_badges=review_badges,
         notice=notice,
         now=now,
+        inference_failures=inference_failures,
     )
     from .export import atomic_write_text
 

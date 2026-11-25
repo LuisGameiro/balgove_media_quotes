@@ -644,3 +644,66 @@ def test_source_ids_filter_limits_discovery_to_requested_sources(
     assert all(set(call["prefetched_refs"]) == {SOURCE_ID} for call in calls["pipeline"])
     assert summary["discovered"] == 1
     assert summary["fetched"] == 1
+
+
+def test_one_article_parse_failure_does_not_skip_later_articles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    urls = [f"https://www.example.com/{number}" for number in (1, 2, 3)]
+    candidates = [(url, f"Article {url[-1]}", "2026-10-01") for url in urls]
+    calls = _install(monkeypatch, settings, candidates=candidates, statuses=["succeeded"])
+    real_build = backfill.build_adapter
+
+    class PartlyBrokenAdapter:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def parse_metadata(self, raw: bytes, *, source_url: str = "") -> dict[str, Any]:
+            if source_url.endswith("/2"):
+                raise RuntimeError("parse rejected")
+            return self.inner.parse_metadata(raw, source_url=source_url)
+
+    def failing_build(row_arg: Any, fixture: Any, **kwargs: Any) -> Any:
+        return PartlyBrokenAdapter(real_build(row_arg, fixture, **kwargs))
+
+    monkeypatch.setattr(backfill, "build_adapter", failing_build)
+
+    summary = run_historical_backfill(settings, start=START, end=START, max_cost=10)
+
+    refs = calls["pipeline"][0]["prefetched_refs"][SOURCE_ID]
+    assert len(refs) == 2  # articles #1 and #3, despite #2 raising
+    assert summary["discovered"] == 3
+    assert summary["fetched"] == 2
+    assert any("/2" in issue and "parse rejected" in issue for issue in summary["issues"])
+    manifest = json.loads(_manifest_path(settings, START).read_text(encoding="utf-8"))
+    assert manifest["completed"][START.isoformat()]["status"] == "succeeded"
+
+
+def test_article_config_error_still_aborts_backfill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    calls = _install(
+        monkeypatch,
+        settings,
+        candidates=[("https://www.example.com/a", "A", "2026-10-01")],
+        statuses=["succeeded"],
+    )
+    real_build = backfill.build_adapter
+
+    class ConfigBrokenAdapter:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def parse_metadata(self, raw: bytes, *, source_url: str = "") -> dict[str, Any]:
+            raise ConfigError("invalid extractor configuration")
+
+    def failing_build(row_arg: Any, fixture: Any, **kwargs: Any) -> Any:
+        return ConfigBrokenAdapter(real_build(row_arg, fixture, **kwargs))
+
+    monkeypatch.setattr(backfill, "build_adapter", failing_build)
+
+    with pytest.raises(ConfigError, match="invalid extractor configuration"):
+        run_historical_backfill(settings, start=START, end=START, max_cost=10)
+    assert calls["pipeline"] == []

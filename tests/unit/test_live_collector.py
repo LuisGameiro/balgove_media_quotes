@@ -16,6 +16,7 @@ from media_quotes.live import (
     FetchedArticle,
     LiveSourceResult,
     collect_live_source,
+    fetch_feed_documents,
     fetch_url_documents,
 )
 from media_quotes.registry import SourceRegistryRow
@@ -235,6 +236,77 @@ def test_unregistered_bing_candidate_is_dropped_and_recorded(
     assert [item["url"] for item in fetched[0]] == ["https://www.bbc.co.uk/news/kept"]
     assert result.provenance == "live_bing"
     assert any("news.bbc.co.uk" in error for error in result.errors)
+
+
+def test_malformed_feed_xml_is_disclosed_as_collector_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<rss><channel><item></rss>")
+
+    transport = httpx.MockTransport(handler)
+    with pytest.raises(ValueError, match="invalid feed XML"):
+        fetch_feed_documents(
+            ROW,
+            BBC.feed_url,
+            policy=POLICY,
+            topic_pack=None,
+            require_topic=False,
+            limit=1,
+            transport=transport,
+        )
+
+    result = collect_live_source(
+        ROW,
+        feed_url=BBC.feed_url,
+        topic_pack=None,
+        policy=POLICY,
+        limit=1,
+        source_config=BBC.model_copy(update={"bing_discovery_enabled": False}),
+        transport=transport,
+    )
+    assert result.errors
+    assert "invalid feed XML" in result.errors[0]
+
+
+def test_collect_live_source_shares_one_bucket_across_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[object] = []
+
+    def fake_feed(
+        *args: object, **kwargs: object
+    ) -> tuple[list[dict[str, str]], list[FetchedArticle]]:
+        seen.append(kwargs["bucket"])
+        return [], []
+
+    async def fake_bing(domain: str, **kwargs: object) -> list[dict[str, str]]:
+        seen.append(kwargs["bucket"])
+        return [
+            {
+                "title": "Bing story",
+                "url": "https://www.bbc.co.uk/news/bing",
+                "published": "2026-11-24",
+            }
+        ]
+
+    def fake_url_docs(*args: object, **kwargs: object) -> list[FetchedArticle]:
+        seen.append(kwargs["bucket"])
+        return []
+
+    monkeypatch.setattr(live, "fetch_feed_documents", fake_feed)
+    monkeypatch.setattr(live, "discover_bing_news", fake_bing)
+    monkeypatch.setattr(live, "fetch_url_documents", fake_url_docs)
+
+    collect_live_source(
+        ROW,
+        feed_url=BBC.feed_url,
+        topic_pack=None,
+        policy=POLICY,
+        limit=5,
+        source_config=BBC.model_copy(update={"bing_discovery_enabled": True}),
+    )
+
+    assert len(seen) == 3
+    assert seen[0] is seen[1] is seen[2]
 
 
 def test_unusable_row_raises_source_not_permitted() -> None:

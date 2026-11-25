@@ -696,6 +696,7 @@ def run_daily_pipeline(
             review_badges[flag.evidence.old_quote_id] = badge
 
     digest_path = None
+    digest_inference_failures: list[str] = []
     if not failed_live:
         # A failed live run must not publish a digest that looks like normal output.
         digest_path = write_digest(
@@ -717,7 +718,21 @@ def run_daily_pipeline(
             review_badges=review_badges,
             notice=_LIVE_NOTICE if provenance != "fixture" else _NOTICE,
             now=now,
+            inference_failures=digest_inference_failures,
         )
+        # Quotes are already written; a provider failure is disclosed, never retried.
+        for section_id in digest_inference_failures:
+            events.append(
+                _event(
+                    run_id=actual_run_id,
+                    trace_id=actual_run_id,
+                    source_id="pipeline",
+                    step="digest_inference",
+                    status="failed",
+                    section_id=section_id,
+                    error_type="InferenceProviderError",
+                )
+            )
 
     logs_path = settings.logs_dir / f"{actual_run_id}.jsonl"
     atomic_write_text(

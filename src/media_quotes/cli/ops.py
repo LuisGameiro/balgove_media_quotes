@@ -17,6 +17,7 @@ from ..enums import AcquisitionProvenance
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, local_store_path, read_jsonl, write_jsonl
 from ..llm import make_provider
+from ..registry import SourceRegistryRow
 from ..risk_controls import budget_gate, estimate_backfill
 from ..source_configs import scaffold_source_config, sync_sources_to_csv
 from ..topics import list_topic_packs, load_topic_pack, scaffold_topic_pack
@@ -39,6 +40,20 @@ from .common import (
 )
 
 
+def _resolve_backfill_rows(
+    settings: Settings, source_ids: set[str] | None
+) -> list[SourceRegistryRow]:
+    """Resolve backfill rows: explicit ids win at any tier; otherwise exclude tier 4."""
+    rows = _load_registry(settings)
+    if source_ids is None:
+        return [row for row in rows if row.tier < 4]
+    by_id = {row.source_id: row for row in rows}
+    unknown = source_ids - by_id.keys()
+    if unknown:
+        raise ConfigError(f"unknown --source-id: {', '.join(sorted(unknown))}")
+    return [by_id[source_id] for source_id in sorted(source_ids)]
+
+
 def _do_backfill(  # pragma: no cover
     settings: Settings,
     *,
@@ -54,12 +69,11 @@ def _do_backfill(  # pragma: no cover
 ) -> int:
     if end < start:
         raise ConfigError("--to must not precede --from")
-    span = min((end - start).days + 1, _MAX_BACKFILL_DAYS)
-    rows = [
-        row
-        for row in _load_registry(settings)
-        if row.tier < 4 and (source_ids is None or row.source_id in source_ids)
-    ]
+    span = (end - start).days + 1
+    if span > _MAX_BACKFILL_DAYS:
+        raise ConfigError(f"backfill span exceeds the {_MAX_BACKFILL_DAYS}-day limit")
+    rows = _resolve_backfill_rows(settings, source_ids)
+    resolved_ids = {row.source_id for row in rows}
     base = estimate_backfill(
         articles_per_source_day=_ARTICLES_PER_SOURCE_DAY,
         sources=max(1, len(rows)),
@@ -129,7 +143,7 @@ def _do_backfill(  # pragma: no cover
                 end=end,
                 max_cost=max_cost,
                 topic_id=topic_id,
-                source_ids=source_ids,
+                source_ids=resolved_ids,
             )
             print(f"Manifest: {summary['manifest']}")
             print(f"Backfill summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True)}")
@@ -151,6 +165,7 @@ def _do_backfill(  # pragma: no cover
                 topic_id=topic_id,
                 source_mode=source_mode,
                 provenance=provenance,
+                source_ids=resolved_ids,
             )
             total_quotes += len(result.records)
             total_gaps += len(result.gaps)
@@ -439,7 +454,7 @@ def _do_digest(
     from ..pipeline import _LIVE_NOTICE
     from .common import load_review_flags
 
-    review_flags = load_review_flags(settings)
+    review_flags = load_review_flags(settings, provenance)
     now = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
     review_badges: dict[str, str] = {}
     for flag in review_flags:

@@ -15,8 +15,8 @@ import pytest
 
 from media_quotes import cli
 from media_quotes.adapters import BlobCache, FixtureSource
-from media_quotes.cli.common import EXIT_FAILURE, _load_registry, _run_id, run_scope
-from media_quotes.cli.run import _do_run
+from media_quotes.cli.common import EXIT_FAILURE, _load_registry, _run_id, _window, run_scope
+from media_quotes.cli.run import _do_run, _process_source
 from media_quotes.config import Settings
 from media_quotes.exceptions import ConfigError
 from media_quotes.fetch import FetchPolicy
@@ -869,3 +869,137 @@ def test_empty_explicit_source_selection_is_rejected_before_writes(
     assert not list(tmp_path.rglob("*.md"))
     assert not list(tmp_path.rglob("audit-*.json"))
     assert not (settings.export_dir / "runs").exists()
+
+
+def test_one_malformed_ref_does_not_drop_later_articles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    good_ref = _archive_refs(cache, "guardian")[0]
+    missing_ref = "fixture://guardian/does-not-exist.html"
+    _forbid_discovery(monkeypatch)
+
+    result = run_daily_pipeline(
+        settings,
+        report_date=REPORT_DATE,
+        source_mode="archive",
+        prefetched_refs={"guardian": [missing_ref, good_ref]},
+        source_ids={"guardian"},
+    )
+
+    assert any(record.source_id == "guardian" for record in result.records)
+    assert any(
+        gap["source_id"] == "guardian"
+        and "fetch_parse error" in gap.get("detail", "")
+        and missing_ref in gap["detail"]
+        for gap in result.gaps
+    )
+    error_events = [
+        event
+        for event in result.events
+        if event.get("step") == "fetch_parse" and event.get("status") == "error"
+    ]
+    assert len(error_events) == 1
+    assert error_events[0]["error_type"] == "FileNotFoundError"
+    cov = next(item for item in result.coverage if item["source_id"] == "guardian")
+    assert cov["expected_articles"] == 2
+    assert cov["processed"] == 1
+    assert cov["status"] == "degraded"
+
+
+def test_article_config_error_is_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    row = next(item for item in _load_registry(settings) if item.source_id == "guardian")
+    window_start, _ = _window(REPORT_DATE, settings)
+
+    class BadAdapter:
+        mode = "live"
+
+        def fetch(self, ref: str) -> bytes:
+            raise ConfigError("quote id space exhausted")
+
+        def policy_flags(self) -> dict[str, Any]:
+            return {}
+
+    monkeypatch.setattr("media_quotes.cli.run.build_adapter", lambda *args, **kwargs: BadAdapter())
+    with pytest.raises(ConfigError, match="quote id space exhausted"):
+        _process_source(
+            row,
+            settings=settings,
+            run_id="r",
+            window_start=window_start,
+            report_date=REPORT_DATE,
+            used_quote_ids=set(),
+            source_mode="blobs",
+            refs=["fixture://guardian/broken.html"],
+        )
+
+
+def test_digest_inference_failure_does_not_block_artifacts_or_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    settings = _settings(tmp_path, persist_to_postgres=True)
+    _only_sources(monkeypatch, settings)
+    cache = BlobCache(settings.blob_dir)
+    _install_collector(monkeypatch, {src: _success(cache, src) for src in _SOURCES})
+
+    seen_sections: list[str] = []
+
+    class RaisingProvider:
+        def infer(self, *, section_id: str, section_name: str, quote_texts: Any) -> str:
+            seen_sections.append(section_id)
+            raise RuntimeError("provider down")
+
+    monkeypatch.setattr("media_quotes.llm.make_provider", lambda *args, **kwargs: RaisingProvider())
+
+    def constant(value: object):
+        return lambda *args, **kwargs: value
+
+    for name, value in (
+        ("persist_articles_and_quotes", (1, 1)),
+        ("persist_quote_classifications", 1),
+        ("persist_obsolescence_flags", 0),
+        ("start_pipeline_run", None),
+        ("append_audit_events", None),
+        ("finish_pipeline_run", None),
+    ):
+        monkeypatch.setattr(f"media_quotes.db.repository.{name}", constant(value))
+
+    @contextmanager
+    def fake_context(_settings: Settings):
+        yield MagicMock()
+
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", fake_context)
+
+    result = run_daily_pipeline(settings, report_date=REPORT_DATE, source_mode="live")
+
+    assert result.status != "failed"
+    assert result.digest_path is not None and result.digest_path.is_file()
+    digest = result.digest_path.read_text(encoding="utf-8")
+    marker = "_Section inference unavailable (provider error); quotes above are unaffected._"
+    assert marker in digest
+    assert "STAND-IN INFERENCE" not in digest
+    assert seen_sections and len(seen_sections) == len(set(seen_sections))  # no retry
+
+    assert result.logs_path is not None and result.logs_path.is_file()
+    logs = [
+        json.loads(line)
+        for line in result.logs_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    failed = [event for event in logs if event.get("step") == "digest_inference"]
+    assert len(failed) == len(seen_sections)
+    assert all(event["status"] == "failed" and "error_type" in event for event in failed)
+    assert any(event.get("step") == "digest_inference" for event in result.events)
+
+    assert result.audit_json_path is not None and result.audit_json_path.is_file()
+    audit = json.loads(result.audit_json_path.read_text(encoding="utf-8"))
+    assert audit["checks"]
+    assert result.persistence["digest_id"] != ""

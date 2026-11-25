@@ -6,10 +6,14 @@ import json
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from media_quotes.cli import app, ops
+from media_quotes.cli.common import _load_registry
 from media_quotes.config import Settings
 from media_quotes.llm_cache import DbDecisionCache
 from media_quotes.llm_live import LLMDecision, LLMRequest
@@ -127,3 +131,99 @@ def test_backfill_persists_estimate(tmp_path: Path, monkeypatch: Any) -> None:
         == 0
     )
     assert calls == ["start", "finish"]
+
+
+def _backfill_settings(tmp_path: Path) -> Settings:
+    return _settings(tmp_path, persist_to_postgres=False, report_date=date(2026, 11, 19))
+
+
+def _spy_backfill_pipeline(
+    tmp_path: Path, monkeypatch: Any
+) -> tuple[Settings, list[dict[str, Any]]]:
+    settings = _backfill_settings(tmp_path)
+    monkeypatch.setattr(app, "get_settings", lambda: settings)
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(settings_arg: Settings, **kwargs: Any) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(records=[], gaps=[], persistence={})
+
+    monkeypatch.setattr("media_quotes.pipeline.run_daily_pipeline", fake_run)
+    return settings, calls
+
+
+def test_backfill_rejects_unknown_source_id_before_estimate(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = _backfill_settings(tmp_path)
+    monkeypatch.setattr(app, "get_settings", lambda: settings)
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("estimate must not run for an unknown source id")
+
+    monkeypatch.setattr(ops, "estimate_backfill", forbidden)
+    rc = app.main(["backfill", "--source-id", "does-not-exist"])
+    assert rc == 3
+    assert "unknown --source-id: does-not-exist" in capsys.readouterr().err
+
+
+def test_backfill_accepts_explicit_tier4_source_id(tmp_path: Path, monkeypatch: Any) -> None:
+    _, calls = _spy_backfill_pipeline(tmp_path, monkeypatch)
+    rc = app.main(
+        [
+            "backfill",
+            "--from",
+            "2026-11-18",
+            "--to",
+            "2026-11-19",
+            "--source-id",
+            "rt",
+            "--max-cost",
+            "500",
+            "--execute",
+        ]
+    )
+    assert rc in (0, 2)
+    assert len(calls) == 2
+    assert all(call["source_ids"] == {"rt"} for call in calls)
+    assert all(call["source_mode"] == "fixtures" for call in calls)
+
+
+def test_backfill_without_ids_excludes_tier4_and_passes_resolved_ids(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    settings, calls = _spy_backfill_pipeline(tmp_path, monkeypatch)
+    expected = {row.source_id for row in _load_registry(settings) if row.tier < 4}
+    rc = app.main(
+        [
+            "backfill",
+            "--from",
+            "2026-11-18",
+            "--to",
+            "2026-11-19",
+            "--max-cost",
+            "500",
+            "--execute",
+        ]
+    )
+    assert rc in (0, 2)
+    assert len(calls) == 2
+    assert all(call["source_ids"] == expected for call in calls)
+    assert not any(
+        row.source_id in calls[0]["source_ids"] for row in _load_registry(settings) if row.tier == 4
+    )
+
+
+def test_backfill_rejects_span_over_max_days(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = _backfill_settings(tmp_path)
+    monkeypatch.setattr(app, "get_settings", lambda: settings)
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("estimate must not run for an over-long span")
+
+    monkeypatch.setattr(ops, "estimate_backfill", forbidden)
+    rc = app.main(["backfill", "--from", "2025-01-01", "--to", "2026-11-19"])
+    assert rc == 3
+    assert "backfill span exceeds the 365-day limit" in capsys.readouterr().err

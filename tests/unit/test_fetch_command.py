@@ -13,6 +13,7 @@ from media_quotes.cli.common import EXIT_CONFIG, EXIT_OK, _translation_readiness
 from media_quotes.cli.fetch import _do_fetch
 from media_quotes.config import Settings
 from media_quotes.fetch import FetchPolicy, fetch_policy_from
+from media_quotes.source_configs import load_source_config
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT_DATE = date(2026, 11, 19)
@@ -133,6 +134,33 @@ def test_fetch_live_report_contains_topic_and_articles(
     assert report["articles_discovered"] == 1
     assert report["articles_fetched"] == 1
     assert report["articles"][0]["quotes"] >= 1
+
+
+def test_fetch_live_passes_configured_hosts_as_extra_hosts(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from media_quotes.cli import fetch as fetch_cli
+
+    seen: dict[str, Any] = {}
+
+    def fake_fetch(row: Any, feed_url: str, **kwargs: Any) -> Any:
+        seen["extra_hosts"] = kwargs.get("extra_hosts")
+        return [], []
+
+    config = load_source_config("guardian").model_copy(
+        update={
+            "content_hosts": ["cdn.guardian.test"],
+            "redirect_hosts": ["redirect.guardian.test"],
+        }
+    )
+    monkeypatch.setattr(fetch_cli, "fetch_feed_documents", fake_fetch)
+    monkeypatch.setattr(fetch_cli, "_load_source_configs", lambda settings: {"guardian": config})
+
+    assert (
+        _do_fetch(_settings(tmp_path), source_id="guardian", report_date=REPORT_DATE, dry_run=False)
+        == EXIT_OK
+    )
+    assert seen["extra_hosts"] == frozenset({"cdn.guardian.test", "redirect.guardian.test"})
 
 
 def test_translation_warning_only_when_translate_is_on(tmp_path: Path) -> None:

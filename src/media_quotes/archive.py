@@ -147,7 +147,7 @@ def discover_historical_articles(
 
         def permitted(url: str, *, child: bool) -> bool:
             try:
-                assert_url_permitted(url, row, extra_hosts=allowed_hosts)
+                assert_url_permitted(url, row, extra_hosts=allowed_hosts, check_dns=True)
             except ValueError as exc:
                 label = "child sitemap" if child else "discovery URL"
                 errors.append(f"{label} {url!r} rejected: {exc}")
@@ -164,6 +164,7 @@ def discover_historical_articles(
                     bucket=bucket,
                     allowed_hosts=allowed_hosts,
                     client=client,
+                    check_dns=True,
                 )
             except Exception as exc:  # one bad document must not abort the rest
                 errors.append(f"failed to fetch {url!r}: {exc}")
