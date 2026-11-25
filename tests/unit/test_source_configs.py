@@ -56,6 +56,17 @@ def test_reuters_does_not_enable_bing_discovery() -> None:
     assert config.content_hosts == []
 
 
+def test_original_reporting_flag_defaults_to_first_hand_for_legacy_configs() -> None:
+    # Legacy configs predate the field, so the model default keeps them first-hand.
+    assert _config().original_reporting_flag == "first-hand"
+    assert load_source_config("guardian").original_reporting_flag == "first-hand"
+
+
+def test_original_reporting_flag_rejects_unknown_values() -> None:
+    with pytest.raises(ValidationError):
+        _config(original_reporting_flag="misreported")
+
+
 def test_scaffold_serializes_new_fields(tmp_path: Path) -> None:
     path = scaffold_source_config(
         "newsource",
@@ -66,3 +77,5 @@ def test_scaffold_serializes_new_fields(tmp_path: Path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["bing_discovery_enabled"] is False
     assert payload["content_hosts"] == []
+    # A scaffolded source is never assumed to be first-hand; rights review must opt in.
+    assert payload["original_reporting_flag"] == "unknown"

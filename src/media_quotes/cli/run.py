@@ -63,6 +63,13 @@ _DEFAULT_LOAD_SOURCE_TOPIC_ROUTES = load_source_topic_routes
 _DEFAULT_LOAD_TOPIC_RULES = load_topic_rules
 
 
+class _Unset:
+    """Marker for lazily built parameters so explicit ``None`` stays distinguishable."""
+
+
+_UNSET = _Unset()
+
+
 def _load_review_flags(
     settings: Settings, provenance: AcquisitionProvenance = "fixture"
 ) -> list[ObsolescenceFlag]:
@@ -343,6 +350,8 @@ def _process_source(  # pragma: no cover
     refs: list[str] | None = None,
     provenance: AcquisitionProvenance = "fixture",
     discovery_route: str = "",
+    gate: TopicGate | _Unset | None = _UNSET,
+    judge: JudgeProvider | _Unset | None = _UNSET,
 ) -> tuple[
     list[ExportQuoteRecord],
     dict[str, Any],
@@ -469,8 +478,10 @@ def _process_source(  # pragma: no cover
     policy_flags = dict(adapter.policy_flags())
     policy_flags["fixture_replay"] = replay
     verified_at = datetime.combine(report_date, time(12, 0), tzinfo=UTC)
-    gate = _topic_gate(settings, topic_pack=topic_pack)
-    judge = _topic_judge(settings)
+    if isinstance(gate, _Unset):
+        gate = _topic_gate(settings, topic_pack=topic_pack)
+    if isinstance(judge, _Unset):
+        judge = _topic_judge(settings)
     topic_counts = {"accepted": 0, "uncertain": 0, "rejected": 0, "skipped": 0}
     current_route: SourceTopicRoute | None = None
     topic_terms: set[str] = set()
@@ -629,6 +640,7 @@ def _process_source(  # pragma: no cover
             article_policy["original_reporting_flag"] = (
                 metadata.get("original_reporting_flag")
                 or sidecar_meta.get("original_reporting_flag")
+                or (source_config.original_reporting_flag if source_config is not None else None)
                 or "first-hand"
             )
             pipeline_outcome = verify_pipeline(
@@ -905,6 +917,8 @@ def _collect(  # pragma: no cover
     offsets: dict[str, dict[str, Any]] = {}
     source_configs = _load_source_configs(settings)
     active_pack = topic_pack if topic_pack is not None else _load_topic_pack(settings)
+    gate = _topic_gate(settings, topic_pack=active_pack)
+    judge = _topic_judge(settings)
     topic_id = (
         active_pack.topic_id
         if active_pack is not None
@@ -966,6 +980,8 @@ def _collect(  # pragma: no cover
             refs=refs,
             provenance=row_provenance,
             discovery_route=discovery_route,
+            gate=gate,
+            judge=judge,
         )
         for error in collector_errors:
             gap = _gap_record(row, f"live collector error: {error}")

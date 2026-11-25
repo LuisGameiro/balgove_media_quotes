@@ -272,6 +272,30 @@ def test_live_gold_set_eval_reads_blob_and_reports_provenance(
     assert metrics["topic_decisions"][0]["article_ref"].startswith("blob://")
 
 
+def test_eval_uses_source_config_reporting_flag(tmp_path: Path, monkeypatch: Any) -> None:
+    settings, _quote = _write_live_blob_gold_set(tmp_path, human_label=True)
+    seen: list[Any] = []
+    real_verify = eval_cli.verify_quote
+
+    def spy(candidate: Any, text: Any, row: Any, policy_flags: Any, **kwargs: Any) -> Any:
+        seen.append(policy_flags.get("original_reporting_flag"))
+        return real_verify(candidate, text, row, policy_flags, **kwargs)
+
+    monkeypatch.setattr(eval_cli, "verify_quote", spy)
+    monkeypatch.setattr(
+        eval_cli,
+        "_load_source_configs",
+        lambda _settings: {
+            "guardian": SimpleNamespace(original_reporting_flag="relayed wire copy")
+        },
+    )
+    metrics = eval_cli.evaluate_gold_set_report(settings, gold_set="live-blob-v1")
+
+    assert seen == ["relayed wire copy"]
+    # Relayed wire copy is not first-hand, so the labelled quote is withheld from recall.
+    assert metrics["quote_recall"] == 0.0
+
+
 def test_live_blob_ref_source_mismatch_fails_closed(tmp_path: Path) -> None:
     settings, _quote = _write_live_blob_gold_set(tmp_path, human_label=True)
     gold_path = settings.gold_set_dir / "live-blob-v1.json"

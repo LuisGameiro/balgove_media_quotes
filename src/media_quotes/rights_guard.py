@@ -43,7 +43,7 @@ def apply_rights_limits(
         reasons: list[str] = []
         if record.rights_status not in APPROVED_RIGHTS:
             reasons.append(f"rights_blocked:{record.rights_status}")
-        words = max(_word_count(record.quote_text_original), _word_count(record.quote_text_en))
+        words = _word_count(record.quote_text_original)
         if words > max_quote_words:
             reasons.append(f"over_word_limit:{words}>{max_quote_words}")
         if attribution_required and not record.article_author.strip():

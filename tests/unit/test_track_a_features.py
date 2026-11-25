@@ -210,6 +210,7 @@ def test_dashboard_daily_source_coverage_matrix(tmp_path: Path) -> None:
     ):
         payload: dict[str, Any] = {
             "report_date": day,
+            "provenance": "live_feed",
             "coverage": [
                 {"source_id": sid, "quotes": q, "discovered": q, "status": "ok"}
                 for sid, q in counts

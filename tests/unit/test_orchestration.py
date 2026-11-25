@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -237,6 +238,9 @@ def test_materialize_governance_job_in_process(
 
     ret_out = result.output_for_node("retention_readiness_report")
     assert ret_out["audit_rows_dropped"] is False
+    assert ret_out["partitions_to_detach"] == []
+    assert ret_out["partitions_hot"] == []
+    assert "longest_txn_ok" not in ret_out  # lock duration is never measured here
 
     check_evals = result.get_asset_check_evaluations()
     assert any(ev.check_name == "gold_set_thresholds_met" and ev.passed for ev in check_evals)
@@ -248,6 +252,70 @@ def test_materialize_governance_job_in_process(
         mat_events["gold_set_evaluation"]["summary_preview"], dg.MarkdownMetadataValue
     )
     assert isinstance(mat_events["retention_readiness_report"]["plan_json"], dg.JsonMetadataValue)
+
+
+def test_observed_retention_months_helper_gates_on_persistence(tmp_path: Path) -> None:
+    from media_quotes.db.resources import DatabaseResourceHandle
+
+    class _MonthRows:
+        def __init__(self, months: list[datetime]) -> None:
+            self._months = months
+
+        def scalars(self) -> _MonthRows:
+            return self
+
+        def all(self) -> list[datetime]:
+            return self._months
+
+    class _ObservedSession:
+        def execute(self, statement: object) -> _MonthRows:
+            return _MonthRows([datetime(2026, 10, 6, 9, 0), datetime(2026, 11, 3, 9, 0)])
+
+    @contextmanager
+    def session_factory(_settings: Settings):  # type: ignore[no-untyped-def]
+        yield _ObservedSession()
+
+    database = DatabaseResourceHandle(session_factory)
+    offline = _make_settings(tmp_path)  # persist_to_postgres=False
+    assert orchestration._observed_retention_months(offline, database) == []
+    live = offline.model_copy(update={"persist_to_postgres": True})
+    assert orchestration._observed_retention_months(live, database) == [
+        date(2026, 10, 6),
+        date(2026, 11, 3),
+    ]
+
+
+def test_retention_uses_observed_months_when_persisting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import media_quotes.restore_drill as restore_drill
+
+    settings = _make_settings(tmp_path).model_copy(update={"persist_to_postgres": True})
+    monkeypatch.setattr(orchestration, "get_settings", lambda: settings)
+
+    observed = [date(2026, 10, 1), date(2026, 11, 1)]
+    monkeypatch.setattr(orchestration, "_observed_retention_months", lambda s, d: observed)
+
+    readiness_calls: list[list[date]] = []
+    real_readiness = restore_drill.retention_readiness
+
+    def spy_readiness(policy, today, partitions, **kwargs):  # type: ignore[no-untyped-def]
+        readiness_calls.append(list(partitions))
+        return real_readiness(policy, today, partitions, **kwargs)
+
+    monkeypatch.setattr(restore_drill, "retention_readiness", spy_readiness)
+
+    defs = build_definitions()
+    result = defs.resolve_job_def("governance_audit_job").execute_in_process()
+    assert result.success
+
+    ret_out = result.output_for_node("retention_readiness_report")
+    assert ret_out["partitions_to_detach"] == ["audit_events_2026_10"]
+    assert ret_out["partitions_hot"] == ["audit_events_2026_11"]
+    assert ret_out["partition_months_observed"] is True
+    # The asset and its index-bloat check both plan from the observed months.
+    assert len(readiness_calls) >= 2
+    assert all(months == observed for months in readiness_calls)
 
 
 def test_review_queue_sla_sensor_healthy_and_overdue(

@@ -23,7 +23,7 @@ from pydantic import SecretStr
 from media_quotes import cli
 from media_quotes.config import Settings
 from media_quotes.context_pack import build_graph_context_pack
-from media_quotes.dashboard import graph_insights, graph_projection_summary
+from media_quotes.dashboard import graph_projection_summary
 from media_quotes.graph import (
     CONSTRAINTS,
     INDEXES,
@@ -355,41 +355,3 @@ def test_dashboard_graph_projection_summary(monkeypatch: pytest.MonkeyPatch) -> 
     assert res_enabled["relationship_count"] == 84
     assert res_enabled["last_synced_at"] == "2026-11-24T09:00:00+00:00"
     assert res_enabled["quotes_projected"] == 40
-
-
-def test_dashboard_graph_insights(monkeypatch: pytest.MonkeyPatch) -> None:
-    mock_session = MockSession(
-        {
-            "count(n) AS node_count": [{"node_count": 42}],
-            "count(r) AS rel_count": [{"rel_count": 84}],
-            "ProjectionMetadata": [
-                {
-                    "last_synced_at": "2026-11-24T09:00:00+00:00",
-                    "quotes_projected": 40,
-                    "error_count": 0,
-                }
-            ],
-            "count(q) AS quote_count": [
-                {"tier": 1, "country_region": "United Kingdom", "quote_count": 3}
-            ],
-            "q.is_obsolete = false": [{"quote_id": "Q-1", "quote_text": "Active", "speaker": "S1"}],
-            "sp.speaker_key": [{"speaker": "S1", "quote_id": "Q-1", "quote_text": "Active"}],
-            "canonical_quote_id: $quote_id": [{"quote_id": "Q-1", "quote_text": "Active"}],
-        }
-    )
-    monkeypatch.setattr("media_quotes.graph.get_driver", lambda _: MockDriver(mock_session))
-    settings = Settings(
-        _env_file=None,
-        sync_to_neo4j=True,
-        neo4j_uri="bolt://127.0.0.1:7688",
-        neo4j_password=SecretStr("pass123"),
-    )
-
-    result = graph_insights(settings, "ukraine-war", speaker="S1", quote_id="Q-1")
-
-    assert result["status"] == "connected"
-    assert result["summary"]["last_synced_at"] == "2026-11-24T09:00:00+00:00"
-    assert result["divergence"][0]["quote_count"] == 3
-    assert result["active_quotes"][0]["quote_id"] == "Q-1"
-    assert result["speaker_rows"][0]["speaker"] == "S1"
-    assert result["lineage"]["quote_id"] == "Q-1"

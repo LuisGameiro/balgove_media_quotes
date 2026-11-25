@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .adapters import BlobCache, FixtureSource, build_adapter
 from .config import DEFAULT_TOPIC_ID, Settings
-from .enums import AcquisitionProvenance
+from .enums import AcquisitionProvenance, OriginalReportingFlag
 from .exceptions import ConfigError
 from .export import atomic_write_text, local_store_path, read_jsonl
 from .llm_live import (
@@ -86,6 +86,7 @@ class _Article:
     ref: str
     metadata: dict[str, Any]
     text: str
+    original_reporting_flag: OriginalReportingFlag = "first-hand"
 
 
 def _audit_path(
@@ -152,13 +153,23 @@ def _load_articles(
             continue
         for ref in refs:
             try:
-                raw = adapter.fetch(ref)
+                sidecar: dict[str, Any] = {}
+                sidecar_date: date | None = None
                 if blob_cache is not None:
                     ref_stem = Path(ref.rsplit("/", 1)[-1]).stem
                     sidecar = blob_cache.read_meta(row.source_id, ref_stem)
                     if str(sidecar.get("provenance") or "") != provenance:
                         skipped.append(f"{row.source_id}: sidecar provenance != {provenance}")
                         continue
+                    try:
+                        sidecar_date = date.fromisoformat(str(sidecar.get("published") or "")[:10])
+                    except ValueError:
+                        sidecar_date = None
+                    if sidecar_date is not None and not (start <= sidecar_date <= end):
+                        skipped.append(f"{row.source_id}: {ref}: sidecar outside report window")
+                        continue
+                raw = adapter.fetch(ref)
+                if blob_cache is not None:
                     source_url = str(sidecar.get("url") or "")
                     metadata = (
                         adapter.parse_metadata(raw, source_url=source_url)
@@ -167,14 +178,16 @@ def _load_articles(
                     )
                     if not metadata.get("canonical_url") and sidecar.get("url"):
                         metadata["canonical_url"] = str(sidecar["url"])
-                    published_raw = str(metadata.get("publication_date") or "")[:10]
-                    try:
-                        published = date.fromisoformat(published_raw)
-                    except ValueError:
-                        published = None
-                    if published is None or not (start <= published <= end):
-                        skipped.append(f"{row.source_id}: {ref}: blob outside report window")
-                        continue
+                    if sidecar_date is None:
+                        # No usable sidecar date: keep the metadata date check as the fallback.
+                        published_raw = str(metadata.get("publication_date") or "")[:10]
+                        try:
+                            published = date.fromisoformat(published_raw)
+                        except ValueError:
+                            published = None
+                        if published is None or not (start <= published <= end):
+                            skipped.append(f"{row.source_id}: {ref}: blob outside report window")
+                            continue
                 else:
                     metadata = adapter.parse_metadata(raw)
                 text = str(metadata.get("article_text") or "")
@@ -184,7 +197,18 @@ def _load_articles(
                 if contains_instruction_override(text):
                     skipped.append(f"{row.source_id}: instruction override in article")
                     continue
-                articles.append(_Article(row=row, ref=ref, metadata=metadata, text=text))
+                config = configs.get(row.source_id)
+                articles.append(
+                    _Article(
+                        row=row,
+                        ref=ref,
+                        metadata=metadata,
+                        text=text,
+                        original_reporting_flag=(
+                            config.original_reporting_flag if config else "first-hand"
+                        ),
+                    )
+                )
                 if len(articles) >= limit:
                     return articles, skipped
             except Exception as exc:
@@ -273,7 +297,7 @@ def _verify_candidate(
         dom_path="ai-shadow-audit",
     )
     policy_flags = dict(article.row.policy_flags)
-    policy_flags["original_reporting_flag"] = "first-hand"
+    policy_flags["original_reporting_flag"] = article.original_reporting_flag
     outcome = verify_pipeline(
         [quote_candidate],
         text=article.text,

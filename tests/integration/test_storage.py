@@ -873,6 +873,52 @@ def test_sync_sources_with_empty_rows() -> None:
     session.commit.assert_not_called()
 
 
+def test_observed_audit_months_and_sync_storage_partitions() -> None:
+    from sqlalchemy.sql import Insert, Select
+
+    from media_quotes.db.repository import observed_audit_months, sync_storage_partitions
+
+    class _Result:
+        rowcount = -1  # psycopg ON CONFLICT DO NOTHING -> fall back to attempted count
+
+        def __init__(self, months: list[datetime]) -> None:
+            self._months = months
+
+        def scalars(self) -> _Result:
+            return self
+
+        def all(self) -> list[datetime]:
+            return self._months
+
+    class _PartitionSession:
+        def __init__(self, months: list[datetime]) -> None:
+            self.months = months
+            self.executed: list[object] = []
+            self.commits = 0
+
+        def execute(self, statement: object) -> _Result:
+            self.executed.append(statement)
+            return _Result(self.months if isinstance(statement, Select) else [])
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    months = [datetime(2026, 10, 1, 9, 0), datetime(2026, 11, 1, 9, 0)]
+    session = _PartitionSession(months)
+    assert observed_audit_months(session) == [date(2026, 10, 1), date(2026, 11, 1)]
+
+    assert sync_storage_partitions(session) == 2
+    inserts = [stmt for stmt in session.executed if isinstance(stmt, Insert)]
+    assert len(inserts) == 1
+    assert inserts[0].table.name == "storage_partitions"
+    assert session.commits == 1
+
+    empty = _PartitionSession([])
+    assert observed_audit_months(empty) == []
+    assert sync_storage_partitions(empty) == 0
+    assert empty.commits == 0
+
+
 @pytest.mark.integration
 def test_provenance_downgrade_keeps_deterministic_survivors() -> None:
     """Needs a real Postgres: set MQ_TEST_DATABASE_URL to run this test."""

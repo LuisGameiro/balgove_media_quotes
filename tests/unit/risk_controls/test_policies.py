@@ -281,13 +281,12 @@ def test_cache_reduces_billed_calls() -> None:
     assert cached.cost < no_cache.cost
 
 
-def test_budget_gate_warns_blocks_and_allows_forced() -> None:
+def test_budget_gate_warns_and_blocks() -> None:
     est = BackfillEstimate(articles=10, calls=20, cost=85.0, duration_hours=1)
     assert "warning" in budget_gate(est, 100.0)
     assert "within budget" in budget_gate(est, 200.0)
-    with pytest.raises(BudgetExceededError):
+    with pytest.raises(BudgetExceededError, match="raise --max-cost or narrow the span"):
         budget_gate(est, 50.0)
-    assert "FORCED" in budget_gate(est, 50.0, force=True)
 
 
 # --- CHK-17: retention and lock bounds -----------------------------------------------------

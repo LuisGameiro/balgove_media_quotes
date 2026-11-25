@@ -866,15 +866,11 @@ def read_export_records(
     return records
 
 
-def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
-    """Register observed audit_event months in storage_partitions as hot.
-
-    No DDL and no data movement: this only records which partitions exist so the
-    retention planner and operator have one source of truth.
-    """
+def observed_audit_months(session: Session) -> list[date]:
+    """Return the distinct UTC months that actually have audit_event rows."""
     from sqlalchemy import func
 
-    months = (
+    rows = (
         session.execute(
             select(
                 func.date_trunc(
@@ -885,13 +881,19 @@ def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
         .scalars()
         .all()
     )
+    return [month.date() for month in rows if month is not None]
+
+
+def sync_storage_partitions(session: Session, *, commit: bool = True) -> int:
+    """Register observed audit_event months in storage_partitions as hot.
+
+    No DDL and no data movement: this only records which partitions exist so the
+    retention planner and operator have one source of truth.
+    """
+    months = observed_audit_months(session)
     if not months:
         return 0
-    rows = [
-        {"table_name": "audit_events", "month": month.date(), "state": "hot"}
-        for month in months
-        if month is not None
-    ]
+    rows = [{"table_name": "audit_events", "month": month, "state": "hot"} for month in months]
     statement = pg_insert(storage_partitions_table).values(rows)
     statement = statement.on_conflict_do_nothing(index_elements=["table_name", "month"])
     result = session.execute(statement)

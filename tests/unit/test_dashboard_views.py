@@ -1,17 +1,11 @@
-"""E2 — dashboard coverage and review views read the latest audit report."""
+"""E2 — dashboard coverage and review data come from the latest canonical audit report."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from media_quotes.dashboard import (
-    _latest_audit,
-    coverage_by_day_matrix,
-    coverage_summary,
-    daily_source_coverage,
-    review_queue_view,
-)
+from media_quotes.dashboard import _latest_audit, coverage_by_day_matrix, daily_source_coverage
 
 
 def write_audit(
@@ -21,15 +15,12 @@ def write_audit(
     (audit_dir / day).write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_views_return_empty_when_no_audit(tmp_path: Path) -> None:
-    assert coverage_summary(tmp_path) == []
-    assert review_queue_view(tmp_path) == []
-
-
-def test_views_read_latest_report(tmp_path: Path) -> None:
+def test_latest_audit_selects_newest_report(tmp_path: Path) -> None:
+    assert _latest_audit(tmp_path) == {}
     write_audit(
         tmp_path,
         {
+            "provenance": "live_feed",
             "coverage": [{"source_id": "reuters", "status": "blocked"}],
             "review_queue": [{"quote_id": "Q"}],
         },
@@ -38,13 +29,15 @@ def test_views_read_latest_report(tmp_path: Path) -> None:
     write_audit(
         tmp_path,
         {
+            "provenance": "live_feed",
             "coverage": [{"source_id": "bbc", "status": "blocked"}],
             "review_queue": [{"quote_id": "Q2", "state": "pending"}],
         },
         day="audit-2026-11-19.json",
     )
-    assert coverage_summary(tmp_path) == [{"source_id": "bbc", "status": "blocked"}]
-    assert review_queue_view(tmp_path) == [{"quote_id": "Q2", "state": "pending"}]
+    latest = _latest_audit(tmp_path)
+    assert latest["coverage"] == [{"source_id": "bbc", "status": "blocked"}]
+    assert latest["review_queue"] == [{"quote_id": "Q2", "state": "pending"}]
 
 
 def test_audit_report_includes_review_queue_key(tmp_path: Path) -> None:
@@ -81,14 +74,53 @@ def test_live_audit_wins_over_fixture_audit(tmp_path: Path) -> None:
         {
             "topic_id": "ukraine-war",
             "provenance": "live_feed",
+            "report_date": "2026-11-19",
             "coverage": [{"source_id": "bbc", "quotes": 9}],
         },
     )
     assert _latest_audit(tmp_path)["provenance"] == "live_feed"
-    assert coverage_summary(tmp_path) == [{"source_id": "bbc", "quotes": 9}]
+    assert daily_source_coverage(tmp_path) == [
+        {"date": "2026-11-19", "source_id": "bbc", "quotes": 9}
+    ]
 
     # Topic isolation still holds on the live tree.
     assert _latest_audit(tmp_path, topic_id="ai-policy") == {}
+
+
+def test_canonical_audit_tree_skips_legacy_payloads(tmp_path: Path) -> None:
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "report_date": "2026-11-18",
+            "coverage": [{"source_id": "legacy-no-provenance", "quotes": 1}],
+        },
+        day="audit-2026-11-18.json",
+    )
+    write_audit(
+        tmp_path,
+        {
+            "topic_id": "ukraine-war",
+            "report_date": "2026-11-19",
+            "provenance": "fixture",
+            "coverage": [{"source_id": "legacy-fixture", "quotes": 2}],
+        },
+        day="audit-2026-11-19.json",
+    )
+    assert _latest_audit(tmp_path) == {}
+    assert daily_source_coverage(tmp_path) == []
+
+    # Fixtures remain a fallback and are not filtered there.
+    fixture_payload = {
+        "topic_id": "ukraine-war",
+        "report_date": "2026-11-17",
+        "coverage": [{"source_id": "fixture-source", "quotes": 3}],
+    }
+    write_audit(tmp_path / "fixtures", fixture_payload, day="audit-2026-11-17.json")
+    assert _latest_audit(tmp_path)["report_date"] == "2026-11-17"
+    assert daily_source_coverage(tmp_path) == [
+        {"date": "2026-11-17", "source_id": "fixture-source", "quotes": 3}
+    ]
 
 
 def test_scoped_runs_are_not_mistaken_for_canonical_audits(tmp_path: Path) -> None:
@@ -106,6 +138,7 @@ def test_scoped_runs_are_not_mistaken_for_canonical_audits(tmp_path: Path) -> No
         {
             "topic_id": "ukraine-war",
             "report_date": "2026-11-19",
+            "provenance": "live_feed",
             "coverage": [{"source_id": "reuters", "quotes": 2}],
         },
         day="audit-2026-11-19.json",
@@ -123,6 +156,7 @@ def test_daily_source_coverage_does_not_double_count(tmp_path: Path) -> None:
             {
                 "topic_id": "ukraine-war",
                 "report_date": day,
+                "provenance": "live_feed",
                 "coverage": [{"source_id": "guardian", "quotes": quotes}],
             },
             day=f"audit-{day}.json",

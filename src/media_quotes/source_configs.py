@@ -25,7 +25,14 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import DEFAULT_TOPIC_ID, PROJECT_ROOT
-from .enums import AccessMode, AvailabilityStatus, DiscoveryMethod, RightsStatus, SourceType
+from .enums import (
+    AccessMode,
+    AvailabilityStatus,
+    DiscoveryMethod,
+    OriginalReportingFlag,
+    RightsStatus,
+    SourceType,
+)
 from .export import atomic_write_text
 from .registry import EXPECTED_COLUMNS, SourceRegistryRow, load_sources_csv
 from .source_topics import SourceTopicRoute, load_source_topic_routes
@@ -221,6 +228,8 @@ class SourceConfig(BaseModel):
     rights_status: RightsStatus
     access_mode: AccessMode
     license_reference: str = ""
+    # Legacy configs predate this field and were approved as first-hand; new scaffolds opt out.
+    original_reporting_flag: OriginalReportingFlag = "first-hand"
     discovery_method: DiscoveryMethod
     archive_start_date: date
     enabled: bool = False
@@ -564,6 +573,7 @@ def scaffold_source_config(
         rights_status="pending_counsel_review",
         access_mode="pending_review",
         license_reference="",
+        original_reporting_flag="unknown",
         discovery_method="web",
         archive_start_date=date(2026, 10, 1),
         enabled=False,

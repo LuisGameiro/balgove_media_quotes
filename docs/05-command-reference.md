@@ -24,7 +24,7 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 | `dagster` | Print Dagster asset, partition and schedule guidance |
 | `review` | List or decide obsolescence review flags |
 | `blob-prune` | Plan or execute (`--execute`) tombstone-gated pruning of aged raw blobs |
-| `retention` | Print retention and lock readiness plan; with persistence on and no `--dry-run`, register observed partitions |
+| `retention` | Print retention and lock readiness plan; with persistence on and no `--dry-run`, report observed audit months |
 | `restore-drill` | Compare two exports by quote id and content hash |
 | `batch` | OpenRouter batch dry-run, submit, status and apply |
 | `graph` | Manage derived Neo4j projection (`init`, `status`, `sync`, `lineage`, `speaker`, `divergence`, `context`) |
@@ -114,10 +114,9 @@ uv run python -m media_quotes graph divergence
 uv run python -m media_quotes graph context --max-tokens 4000
 ```
 
-With `SYNC_TO_NEO4J=true`, the dashboard's **Graph insights** tab shows connection status, last
-sync time, cross-tier/region divergence, speaker timelines, immediate supersession links and
-active quote context. Enabling the setting alone does not populate the graph; run `graph init`
-and `graph sync` first.
+With `SYNC_TO_NEO4J=true`, the dashboard's **Data** tab includes a *Graph projection summary*
+(Neo4j) section showing connection status, node and relationship counts and last sync metadata.
+Enabling the setting alone does not populate the graph; run `graph init` and `graph sync` first.
 
 ## Configuration
 

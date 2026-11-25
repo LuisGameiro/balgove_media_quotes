@@ -24,6 +24,7 @@ from .common import (
     EXIT_FAILURE,
     EXIT_OK,
     _load_registry,
+    _load_source_configs,
     _window,
     _write_json,
     load_review_flags,
@@ -102,6 +103,7 @@ def evaluate_gold_set_report(
     )
     splits = split_articles(gold_data)
     rows = {row.source_id: row for row in _load_registry(settings)}
+    source_configs = _load_source_configs(settings)
     blob_cache = None if is_fixture else BlobCache(settings.blob_dir)
     window_start, _ = _window(effective_date, settings)
     now = datetime.combine(effective_date, time(12, 0), tzinfo=UTC)
@@ -292,7 +294,10 @@ def evaluate_gold_set_report(
                 attribution_span=span.get("attribution_span"),
             )
             policy_flags = dict(adapter.policy_flags())
-            policy_flags["original_reporting_flag"] = "first-hand"
+            source_config = source_configs.get(source_id)
+            policy_flags["original_reporting_flag"] = (
+                source_config.original_reporting_flag if source_config else "first-hand"
+            )
             result = verify_quote(
                 candidate,
                 text,

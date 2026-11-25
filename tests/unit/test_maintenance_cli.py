@@ -6,7 +6,10 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -225,25 +228,72 @@ def test_review_cli_provenance_option_reaches_queue(
         main(["review", "--provenance", "not-a-provenance"])
 
 
+def _retention_report(out: str) -> dict[str, Any]:
+    lines = out.splitlines()
+    start = next(i for i, line in enumerate(lines) if line == "{")
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+    return json.loads("\n".join(lines[start : end + 1]))
+
+
 def test_retention_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert _do_retention(settings_for(tmp_path), dry_run=True) == 0
     out = capsys.readouterr().out
-    assert "partitions_to_detach" in out
+    report = _retention_report(out)
+    assert report["partitions_to_detach"] == []
+    assert report["partitions_hot"] == []
+    assert "no detach plan is fabricated" in out
 
 
 def test_retention_live_attempt(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert _do_retention(settings_for(tmp_path), dry_run=False) == 0
     out = capsys.readouterr().out
+    report = _retention_report(out)
+    assert report["partitions_to_detach"] == []
+    assert "no detach plan is fabricated" in out
     assert "Live retention job is not available" in out
 
 
-def test_retention_dry_run_never_writes_partitions(tmp_path: Path, monkeypatch) -> None:
+def test_retention_dry_run_never_opens_db(tmp_path: Path, monkeypatch) -> None:
     def forbid_db(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise AssertionError("dry-run must not write storage_partitions")
+        raise AssertionError("dry-run must not open a DB session")
 
-    monkeypatch.setattr("media_quotes.db.repository.sync_storage_partitions", forbid_db)
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", forbid_db)
+    monkeypatch.setattr("media_quotes.db.repository.observed_audit_months", forbid_db)
     settings = settings_for(tmp_path).model_copy(update={"persist_to_postgres": True})
     assert _do_retention(settings, dry_run=True) == 0
+
+
+def test_retention_live_uses_observed_months(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _MonthRows:
+        def __init__(self, months: list[datetime]) -> None:
+            self._months = months
+
+        def scalars(self) -> _MonthRows:
+            return self
+
+        def all(self) -> list[datetime]:
+            return self._months
+
+    class _ObservedSession:
+        def execute(self, statement: object) -> _MonthRows:
+            return _MonthRows([datetime(2026, 10, 6, 9, 0), datetime(2026, 11, 3, 9, 0)])
+
+    @contextmanager
+    def fake_session_context(_settings: Settings):  # type: ignore[no-untyped-def]
+        yield _ObservedSession()
+
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", fake_session_context)
+    settings = settings_for(tmp_path).model_copy(
+        update={"persist_to_postgres": True, "report_date": date(2026, 11, 19)}
+    )
+    assert _do_retention(settings, dry_run=False) == 0
+    out = capsys.readouterr().out
+    report = _retention_report(out)
+    assert report["partitions_to_detach"] == ["audit_events_2026_10"]
+    assert report["partitions_hot"] == ["audit_events_2026_11"]
+    assert report["partition_months_observed"] is True
 
 
 def test_restore_drill_needs_two_exports(

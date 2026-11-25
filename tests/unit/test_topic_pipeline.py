@@ -426,3 +426,74 @@ def test_seed_and_list_still_work_when_judge_is_off(tmp_path: Path, capsys: Any)
     payload = json.loads((settings.audit_dir / "review-queue.json").read_text(encoding="utf-8"))
     assert payload["flags"][0]["state"] == "pending"
     assert "ai_judge" not in capsys.readouterr().out
+
+
+def test_collect_builds_topic_gate_once_for_multiple_sources(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    settings = _settings(tmp_path)
+    gate_calls: list[Any] = []
+    judge_calls: list[Any] = []
+
+    def spy_gate(settings_arg: Any, *, topic_pack: Any = None) -> None:
+        gate_calls.append(topic_pack)
+        return None
+
+    def spy_judge(settings_arg: Any) -> None:
+        judge_calls.append(settings_arg)
+        return None
+
+    monkeypatch.setattr(run, "_topic_gate", spy_gate)
+    monkeypatch.setattr(run, "_topic_judge", spy_judge)
+    rows = [
+        _row().model_copy(update={"source_id": source_id})
+        for source_id in ("reuters", "guardian", "bbc")
+    ]
+    monkeypatch.setattr(run, "_load_registry", lambda _settings: rows)
+    passed_kwargs: list[dict[str, Any]] = []
+
+    def spy_process(row: Any, **kwargs: Any) -> tuple[Any, ...]:
+        passed_kwargs.append(kwargs)
+        return ([], {}, [], [], 0, {})
+
+    monkeypatch.setattr(run, "_process_source", spy_process)
+
+    run._collect(settings, run_id="run-once", report_date=REPORT_DATE)
+
+    assert len(rows) > 1
+    assert len(gate_calls) == 1
+    assert len(judge_calls) == 1
+    assert len(passed_kwargs) == len(rows)
+    assert all("gate" in kwargs and "judge" in kwargs for kwargs in passed_kwargs)
+
+
+def test_bare_process_source_still_builds_gate_and_judge(tmp_path: Path, monkeypatch: Any) -> None:
+    settings = _settings(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        run, "_topic_gate", lambda settings_arg, *, topic_pack=None: calls.append("gate")
+    )
+    monkeypatch.setattr(run, "_topic_judge", lambda settings_arg: calls.append("judge"))
+
+    class EmptyAdapter:
+        mode = "fixture_replay"
+
+        def discover(self, start: date, end: date) -> list[str]:
+            return []
+
+        def policy_flags(self) -> dict[str, Any]:
+            return {}
+
+    monkeypatch.setattr(run, "build_adapter", lambda *args, **kwargs: EmptyAdapter())
+
+    run._process_source(
+        _row(),
+        settings=settings,
+        run_id="run-bare",
+        window_start=REPORT_DATE - timedelta(days=13),
+        report_date=REPORT_DATE,
+        used_quote_ids=set(),
+    )
+
+    assert calls == ["gate", "judge"]

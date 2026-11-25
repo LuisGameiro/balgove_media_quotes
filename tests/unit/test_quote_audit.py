@@ -245,6 +245,89 @@ def test_audit_verifies_earlier_articles_using_the_report_window(tmp_path: Path)
     assert report["articles"][0]["candidates"][0]["status"] == "verified"
 
 
+def test_verify_candidate_uses_article_reporting_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import timedelta
+
+    text = (
+        "Officials confirmed that talks continued in Kyiv on Thursday. "
+        "A minister said “Every additional air defence battery protects civilian heating networks "
+        "across our cities.” The report continued with more detail."
+    )
+    quote = (
+        "Every additional air defence battery protects civilian heating networks across our cities."
+    )
+    row = type(
+        "Row",
+        (),
+        {
+            "source_id": "guardian",
+            "source_name": "Guardian",
+            "claim_only": False,
+            "requires_translation": False,
+            "policy_flags": {"source_id": "guardian"},
+        },
+    )()
+    article = quote_audit._Article(
+        row=row,
+        ref="fixture://guardian/relayed.json",
+        metadata={
+            "canonical_url": "https://example.invalid/a",
+            "publication_date": DAY.isoformat(),
+        },
+        text=text,
+        original_reporting_flag="relayed wire copy",
+    )
+    candidate = quote_audit._Candidate(quote_text=quote, speaker="A minister")
+    seen: list[str] = []
+    real_verify = quote_audit.verify_pipeline
+
+    def spy(candidates: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs["policy_flags"]["original_reporting_flag"])
+        return real_verify(candidates, **kwargs)
+
+    monkeypatch.setattr(quote_audit, "verify_pipeline", spy)
+    result = quote_audit._verify_candidate(
+        article,
+        candidate,
+        settings=_settings(tmp_path),
+        window_start=DAY - timedelta(days=13),
+        window_end=DAY,
+    )
+    assert seen == ["relayed wire copy"]
+    # A relayed source is not first-hand, so the deterministic verifier withholds it.
+    assert result["status"] == "rejected"
+    assert "not_first_hand" in str(result["failed_checks"]) or result["failed_checks"] == [
+        "no_verification_result"
+    ]
+
+
+def test_load_articles_carries_source_config_reporting_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from media_quotes.cli.common import _load_source_configs as real_loader
+    from media_quotes.registry import load_sources_csv
+
+    settings = _settings(tmp_path)
+    guardian = next(
+        row for row in load_sources_csv(settings.sources_csv) if row.source_id == "guardian"
+    )
+    config = real_loader(settings)["guardian"].model_copy(
+        update={"original_reporting_flag": "relayed wire copy"}
+    )
+    monkeypatch.setattr(
+        "media_quotes.cli.common._load_source_configs", lambda _settings: {"guardian": config}
+    )
+    monkeypatch.setattr("media_quotes.cli.common._load_registry", lambda _settings: [guardian])
+
+    articles, _skipped = quote_audit._load_articles(
+        settings, DAY, "ukraine-war", limit=5, provenance="fixture"
+    )
+    assert articles
+    assert all(item.original_reporting_flag == "relayed wire copy" for item in articles)
+
+
 def test_write_report_uses_atomic_write_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -346,6 +429,99 @@ def test_live_blob_audit_filters_sidecar_provenance_and_never_reads_fixtures(
     assert roots and all(root == settings.blob_dir.resolve() for root in roots)
     assert report["articles"][0]["canonical_url"] == "https://example.invalid/live"
     assert "TRAP FIXTURE QUOTE" not in json.dumps(report)
+
+
+def test_live_blob_sidecar_date_skips_fetch_outside_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import timedelta
+
+    from media_quotes.adapters import BlobCache
+    from media_quotes.adapters import build_adapter as real_build_adapter
+    from media_quotes.registry import load_sources_csv
+
+    settings = _settings(tmp_path).model_copy(update={"blob_dir": tmp_path / "blobs"})
+    cache = BlobCache(settings.blob_dir)
+    guardian = next(
+        row for row in load_sources_csv(settings.sources_csv) if row.source_id == "guardian"
+    )
+    monkeypatch.setattr("media_quotes.cli.common._load_registry", lambda _settings: [guardian])
+
+    def body(marker: str) -> bytes:
+        return json.dumps(
+            {
+                "article_text": f"Officials said {marker} talks continued in Kyiv on Thursday.",
+                # In-window in the blob itself; only the stale sidecar says otherwise.
+                "publication_date": DAY.isoformat(),
+                "canonical_url": "",
+            }
+        ).encode("utf-8")
+
+    stale, _ = cache.store("guardian", body("stale"), suffix=".json")
+    cache.store_meta(
+        "guardian",
+        stale,
+        {
+            "url": "https://example.invalid/stale",
+            "provenance": "live_feed",
+            "published": (DAY - timedelta(days=60)).isoformat(),
+        },
+    )
+    undated, _ = cache.store("guardian", body("undated"), suffix=".json")
+    cache.store_meta(
+        "guardian", undated, {"url": "https://example.invalid/undated", "provenance": "live_feed"}
+    )
+    in_window, _ = cache.store("guardian", body("in-window"), suffix=".json")
+    cache.store_meta(
+        "guardian",
+        in_window,
+        {
+            "url": "https://example.invalid/in-window",
+            "provenance": "live_feed",
+            "published": DAY.isoformat(),
+        },
+    )
+
+    fetched: list[str] = []
+    parsed: list[str] = []
+
+    def spy_build_adapter(row: Any, fixture_source: Any, **kwargs: Any) -> Any:
+        adapter = real_build_adapter(row, fixture_source, **kwargs)
+        real_fetch = adapter.fetch
+        real_parse = adapter.parse_metadata
+
+        def fetch(ref: str) -> bytes:
+            fetched.append(ref)
+            return real_fetch(ref)
+
+        def parse_metadata(raw: bytes, **parse_kwargs: Any) -> dict[str, Any]:
+            parsed.append(raw.decode("utf-8", "replace"))
+            return real_parse(raw, **parse_kwargs)
+
+        adapter.fetch = fetch
+        adapter.parse_metadata = parse_metadata
+        return adapter
+
+    monkeypatch.setattr(quote_audit, "build_adapter", spy_build_adapter)
+
+    articles, skipped = quote_audit._load_articles(
+        settings, DAY, "ukraine-war", limit=10, provenance="live_feed"
+    )
+    refs = [item.ref for item in articles]
+
+    # The out-of-window blob is rejected from its sidecar date before any I/O or parsing.
+    assert not any(stale in ref for ref in fetched)
+    assert not any("stale" in raw for raw in parsed)
+    assert not any(stale in ref for ref in refs)
+    assert any("sidecar outside report window" in item for item in skipped)
+
+    # Both usable blobs are fetched; the undated one still falls back to metadata date parsing.
+    assert any(undated in ref for ref in fetched)
+    assert any(in_window in ref for ref in fetched)
+    assert any("undated" in raw for raw in parsed)
+    assert any("in-window" in raw for raw in parsed)
+    assert any(undated in ref for ref in refs)
+    assert any(in_window in ref for ref in refs)
 
 
 def test_live_blob_audit_skips_malformed_blob_without_aborting(

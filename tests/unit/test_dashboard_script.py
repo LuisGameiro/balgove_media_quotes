@@ -97,6 +97,22 @@ def test_database_summary_imports_engine_when_run_as_script(monkeypatch) -> None
 
     engine = MagicMock()
     engine.connect.side_effect = SQLAlchemyError("unreachable")
-    monkeypatch.setattr(db_engine, "create_db_engine", lambda settings: engine)
+    monkeypatch.setattr(db_engine, "create_db_engine_from_url", lambda url: engine)
     namespace = runpy.run_path(str(DASHBOARD_SCRIPT), run_name="dashboard_script_test")
     assert namespace["database_summary"](Settings(_env_file=None)) == {"error": "SQLAlchemyError"}
+
+
+def test_database_summary_passes_hashable_url_to_db_counts(monkeypatch) -> None:
+    import media_quotes.dashboard as dashboard
+    from media_quotes.config import Settings
+
+    seen: list[str] = []
+
+    def fake_counts(url: str) -> dict[str, int]:
+        seen.append(url)
+        return {"sources": 1}
+
+    monkeypatch.setattr(dashboard, "_db_counts_cached", fake_counts)
+    settings = Settings(_env_file=None)
+    assert dashboard.database_summary(settings) == {"sources": 1}
+    assert seen == [settings.database_url_value]

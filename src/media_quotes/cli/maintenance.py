@@ -268,17 +268,23 @@ def _do_blob_prune(settings: Settings, *, tombstones_path: Path, execute: bool) 
 def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     """Print the retention/lock readiness plan; no DDL is executed."""
     today: date = settings.report_date
-    months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
-    report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
-    report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
-    if settings.persist_to_postgres and not dry_run:
-        from ..db.repository import sync_storage_partitions
+    live = bool(settings.persist_to_postgres and not dry_run)
+    months: list[date] = []
+    if live:
+        from ..db.repository import observed_audit_months
         from ..pipeline import _default_session_context
 
         with _default_session_context(settings) as session:
-            observed = sync_storage_partitions(session)
-        report["observed_partitions"] = observed
-        print(f"Observed {observed} audit month(s) in storage_partitions (existing rows kept).")
+            months = observed_audit_months(session)
+    report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
+    report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
+    report["partition_months_observed"] = live
+    if live:
+        print(f"Observed {len(months)} audit month(s) in Postgres.")
+    else:
+        print(
+            "Partition months are unobserved in offline/dry-run mode; no detach plan is fabricated."
+        )
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     print("Lock duration is not measured in offline mode.")
     if not dry_run:

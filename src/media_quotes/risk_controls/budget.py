@@ -39,18 +39,16 @@ def estimate_backfill(
     )
 
 
-def budget_gate(estimate: BackfillEstimate, max_cost: float, *, force: bool = False) -> str:
+def budget_gate(estimate: BackfillEstimate, max_cost: float) -> str:
     import math
 
     if not math.isfinite(max_cost) or max_cost <= 0:
         raise ValueError("max_cost must be positive and finite")
     if estimate.cost > max_cost:
-        if not force:
-            raise BudgetExceededError(
-                f"estimated cost {estimate.cost} exceeds budget {max_cost}; "
-                "use --force with an audit note to proceed"
-            )
-        return f"FORCED over budget: {estimate.cost} > {max_cost}; audit note required"
+        raise BudgetExceededError(
+            f"estimated cost {estimate.cost} exceeds budget {max_cost}; "
+            "raise --max-cost or narrow the span"
+        )
     if estimate.cost >= 0.8 * max_cost:
         return f"warning: estimated cost {estimate.cost} is >= 80% of budget {max_cost}"
     return f"within budget: {estimate.cost} <= {max_cost}"

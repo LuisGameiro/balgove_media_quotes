@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ class MockSt:
         if has_session_state:
             self.session_state: dict[str, Any] = {
                 "authenticated": authenticated,
-                "auth_time": time.monotonic() if authenticated else 0.0,
+                "auth_time": time.time() if authenticated else 0.0,
             }
         self.sidebar = self
         self._entered = entered_password
@@ -142,6 +143,7 @@ def test_dashboard_full_authenticated_flow(tmp_path: Path, monkeypatch: Any) -> 
         json.dumps(
             {
                 "topic_id": "ukraine-war",
+                "provenance": "live_feed",
                 "report_date": "2026-11-20",
                 "coverage": [{"source_id": "reuters", "status": "blocked"}],
                 "coverage_gaps": [{"reason": "quota"}],
@@ -364,3 +366,128 @@ def test_dashboard_st_none(monkeypatch: Any, capsys: Any) -> None:
     dashboard.main()
     captured = capsys.readouterr()
     assert "Dashboard not launched in blocked mode" in captured.out
+
+
+def test_session_active_uses_eight_hour_auth_time_window() -> None:
+    now = time.time()
+    assert dashboard._session_active({"authenticated": True, "auth_time": now - 10}, now)
+    assert not dashboard._session_active(
+        {"authenticated": True, "auth_time": now - dashboard.AUTH_TTL_SECONDS - 1}, now
+    )
+    assert not dashboard._session_active({"authenticated": True}, now)
+    assert not dashboard._session_active({"authenticated": False, "auth_time": now}, now)
+
+
+def test_expired_session_logs_out(tmp_path: Path, monkeypatch: Any) -> None:
+    settings = Settings(
+        _env_file=None,
+        dashboard_password=SecretStr("supersecretpassword123"),
+        logs_dir=tmp_path / "logs",
+        audit_dir=tmp_path / "audit",
+    )
+    mock_st = MockSt(authenticated=True)
+    mock_st.session_state["auth_time"] = time.time() - dashboard.AUTH_TTL_SECONDS - 1
+    monkeypatch.setattr(dashboard, "st", mock_st)
+
+    dashboard.main(settings=settings)
+    assert mock_st.session_state["authenticated"] is False
+    assert "auth_time" not in mock_st.session_state
+    assert any("Login" in title for title in mock_st.titles)
+    assert "Media quotes — operational dashboard" not in mock_st.titles
+
+
+def test_fresh_session_respects_server_lockout(tmp_path: Path, monkeypatch: Any) -> None:
+    settings = Settings(
+        _env_file=None,
+        dashboard_password=SecretStr("supersecretpassword123"),
+        logs_dir=tmp_path / "logs",
+        audit_dir=tmp_path / "audit",
+    )
+    now = time.time()
+    dashboard._write_auth_state(
+        settings.logs_dir, {"attempts": 5, "locked_until": now + 900, "updated_at": now}
+    )
+    mock_st = MockSt(entered_password="supersecretpassword123", authenticated=False)  # noqa: S106
+    monkeypatch.setattr(dashboard, "st", mock_st)
+
+    dashboard.main(settings=settings)
+    assert any("Too many attempts" in msg for msg in mock_st.errors)
+    assert not any("Login" in title for title in mock_st.titles)
+    assert mock_st.session_state["authenticated"] is False
+
+
+def test_auth_five_failures_lock_and_success_resets(tmp_path: Path) -> None:
+    logs_dir = tmp_path / "logs"
+    now = time.time()
+    for _ in range(4):
+        state = dashboard._record_auth_failure(logs_dir, now)
+    assert state["attempts"] == 4
+    assert not dashboard._is_locked(state, now)
+    state = dashboard._record_auth_failure(logs_dir, now)
+    assert state["attempts"] == 5
+    assert state["locked_until"] == now + dashboard.AUTH_LOCK_SECONDS
+    assert dashboard._is_locked(state, now)
+    assert dashboard._is_locked(dashboard._read_auth_state(logs_dir), now)
+
+    reset = dashboard._reset_auth_state(logs_dir, now + 1)
+    assert reset == {"attempts": 0, "locked_until": 0.0, "updated_at": now + 1}
+    assert not dashboard._is_locked(dashboard._read_auth_state(logs_dir), now)
+
+
+def test_auth_state_file_has_only_safe_keys(tmp_path: Path) -> None:
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    path = dashboard._auth_state_path(logs_dir)
+    path.write_text(
+        json.dumps(
+            {
+                "attempts": 1,
+                "locked_until": 0,
+                "updated_at": 0,
+                "password": "supersecretpassword123",
+                "ip": "127.0.0.1",
+                "token": "secret-token",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert set(dashboard._read_auth_state(logs_dir)) == set(dashboard.AUTH_STATE_KEYS)
+
+    dashboard._record_auth_failure(logs_dir, time.time())
+    raw = path.read_text(encoding="utf-8")
+    assert set(json.loads(raw)) == set(dashboard.AUTH_STATE_KEYS)
+    for secret in ("supersecretpassword123", "127.0.0.1", "secret-token"):
+        assert secret not in raw
+
+
+def test_auth_lock_contention_fails_open_with_last_read(tmp_path: Path) -> None:
+    logs_dir = tmp_path / "logs"
+    now = time.time()
+    original = {"attempts": 2, "locked_until": 0.0, "updated_at": now}
+    dashboard._write_auth_state(logs_dir, original)
+    path = dashboard._auth_state_path(logs_dir)
+    lock = path.with_name(path.name + ".lock")
+    lock.write_text("held", encoding="utf-8")
+    try:
+        result = dashboard._record_auth_failure(logs_dir, now)
+        assert result == original
+        assert json.loads(path.read_text(encoding="utf-8")) == original
+    finally:
+        lock.unlink()
+
+
+def test_auth_stale_lock_is_reclaimed(tmp_path: Path) -> None:
+    logs_dir = tmp_path / "logs"
+    now = time.time()
+    path = dashboard._auth_state_path(logs_dir)
+    lock = path.with_name(path.name + ".lock")
+    lock.parent.mkdir(parents=True)
+    lock.write_text("stale", encoding="utf-8")
+    stale = now - dashboard.AUTH_LOCK_STALE_SECONDS - 1
+    os.utime(lock, (stale, stale))
+
+    result = dashboard._record_auth_failure(logs_dir, now)
+
+    assert result["attempts"] == 1
+    assert dashboard._read_auth_state(logs_dir)["attempts"] == 1
+    assert not lock.exists()

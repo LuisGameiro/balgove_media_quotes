@@ -43,6 +43,23 @@ def test_overlimit_and_missing_attribution_are_rejected() -> None:
     assert all("missing_attribution" in item["reason"] for item in missing.rejected)
 
 
+def test_longer_translation_does_not_reject_an_in_limit_original() -> None:
+    from media_quotes.cli.run import _collect
+
+    settings = Settings(_env_file=None)
+    records, *_rest = _collect(settings, run_id="r", report_date=date(2026, 11, 19))
+    assert records
+    record = records[0]
+    original_words = len(record.quote_text_original.split())
+    assert original_words > 0
+    inflated = record.model_copy(
+        update={"quote_text_en": " ".join(["translation"] * (original_words + 50))}
+    )
+    decision = apply_rights_limits([inflated], max_quote_words=original_words)
+    assert decision.kept == [inflated]
+    assert decision.rejected == []
+
+
 def test_cjk_quote_without_spaces_is_not_char_counted() -> None:
     from media_quotes.cli.run import _collect
 

@@ -6,15 +6,18 @@ exposing mutating endpoints. A secure read-only interface into the operational s
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import hmac
 import json
+import os
 import re
 import sys
 import time
+from collections.abc import Callable, Mapping
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -31,6 +34,19 @@ else:
 
 get_settings: Any = config_module.get_settings
 DEFAULT_TOPIC_ID: str = config_module.DEFAULT_TOPIC_ID
+
+AUTH_TTL_SECONDS = 8 * 60 * 60
+AUTH_MAX_ATTEMPTS = 5
+AUTH_LOCK_SECONDS = 15 * 60
+AUTH_LOCK_STALE_SECONDS = 60.0
+AUTH_STATE_KEYS = ("attempts", "locked_until", "updated_at")
+FIXTURE_DIGEST_MARKER = "OFFLINE FIXTURE REPLAY"
+
+
+def _legacy_provenance(payload: dict[str, Any]) -> bool:
+    """Legacy artifacts have no provenance or are explicitly fixture-sourced."""
+    return payload.get("provenance") in (None, "fixture")
+
 
 st: Any
 try:
@@ -72,18 +88,18 @@ def latest_digests(
                     if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.md", path.name)
                 ),
                 reverse=True,
-            )[:limit]
-            if files:
-                return [(path.stem, path.read_text(encoding="utf-8")) for path in files]
+            )
+            digests: list[tuple[str, str]] = []
+            for path in files:
+                text = path.read_text(encoding="utf-8")
+                if root != digest_dir / "fixtures" and FIXTURE_DIGEST_MARKER in text:
+                    continue
+                digests.append((path.stem, text))
+                if len(digests) >= limit:
+                    break
+            if digests:
+                return digests
     return []
-
-
-def coverage_gaps(
-    audit_dir: Path, topic_id: str | None = None
-) -> list[dict[str, Any]]:  # pragma: no cover
-    payload = _latest_audit(audit_dir, topic_id=topic_id)
-    gaps = payload.get("coverage_gaps", []) if isinstance(payload, dict) else []
-    return [gap for gap in gaps if isinstance(gap, dict)]
 
 
 def _audit_report_trees(audit_dir: Path) -> list[list[Path]]:
@@ -112,31 +128,16 @@ def _latest_audit(audit_dir: Path, topic_id: str | None = None) -> dict[str, Any
         for path in reversed(reports):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(payload, dict) and (
-                    topic_id is None or payload.get("topic_id", DEFAULT_TOPIC_ID) == topic_id
-                ):
+                if not isinstance(payload, dict):
+                    continue
+                # Canonical artifacts are live-sourced; legacy fixtures live only in fixtures/.
+                if not path.is_relative_to(audit_dir / "fixtures") and _legacy_provenance(payload):
+                    continue
+                if topic_id is None or payload.get("topic_id", DEFAULT_TOPIC_ID) == topic_id:
                     return payload
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 continue
     return {}
-
-
-def review_queue_view(audit_dir: Path, topic_id: str | None = None) -> list[dict[str, Any]]:
-    """Pending obsolescence flags from the latest audit report (E2 review queue)."""
-    payload = _latest_audit(audit_dir, topic_id=topic_id)
-    queue = payload.get("review_queue", [])
-    if isinstance(queue, list):
-        return [item for item in queue if isinstance(item, dict)]
-    return []
-
-
-def coverage_summary(audit_dir: Path, topic_id: str | None = None) -> list[dict[str, Any]]:
-    """Per-source coverage rows from the latest audit report (E2 coverage view)."""
-    payload = _latest_audit(audit_dir, topic_id=topic_id)
-    rows = payload.get("coverage", [])
-    if isinstance(rows, list):
-        return [row for row in rows if isinstance(row, dict)]
-    return []
 
 
 def daily_source_coverage(audit_dir: Path, topic_id: str | None = None) -> list[dict[str, Any]]:
@@ -153,6 +154,8 @@ def daily_source_coverage(audit_dir: Path, topic_id: str | None = None) -> list[
             except (OSError, json.JSONDecodeError):
                 continue
             if not isinstance(payload, dict):
+                continue
+            if not path.is_relative_to(audit_dir / "fixtures") and _legacy_provenance(payload):
                 continue
             if topic_id and payload.get("topic_id") != topic_id:
                 continue
@@ -234,6 +237,8 @@ def browse_quotes(
                                 continue
                             if not isinstance(record, dict):
                                 continue
+                            if root != export_dir / "fixtures" and _legacy_provenance(record):
+                                continue
                             if topic_id and record.get("topic_id", DEFAULT_TOPIC_ID) != topic_id:
                                 continue
                             quote_id = str(record.get("quote_id") or "")
@@ -311,17 +316,17 @@ def registered_sources(sources_csv: Path) -> list[dict[str, str]]:  # pragma: no
         return [dict(row) for row in csv.DictReader(handle)]
 
 
-def database_summary(settings: Settings) -> dict[str, int | str]:  # pragma: no cover
-    """Read-only row counts from Postgres; an 'error' key names a failed query."""
+def _db_counts(database_url: str) -> dict[str, int | str]:  # pragma: no cover
+    """Read-only row counts keyed by a hashable URL, so Streamlit can cache them."""
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
 
     if __package__:
-        from .db.engine import create_db_engine
+        from .db.engine import create_db_engine_from_url
     else:
-        from media_quotes.db.engine import create_db_engine
+        from media_quotes.db.engine import create_db_engine_from_url
 
-    engine = create_db_engine(settings)
+    engine = create_db_engine_from_url(database_url)
     try:
         counts_sql = {
             "sources": text("SELECT count(*) FROM sources"),
@@ -339,6 +344,11 @@ def database_summary(settings: Settings) -> dict[str, int | str]:  # pragma: no 
         return {"error": type(exc).__name__}
     finally:
         engine.dispose()
+
+
+def database_summary(settings: Settings) -> dict[str, int | str]:  # pragma: no cover
+    """Read-only row counts from Postgres; an 'error' key names a failed query."""
+    return cast(dict[str, int | str], _db_counts_cached(settings.database_url_value))
 
 
 def graph_projection_summary(cfg: Settings) -> dict[str, Any]:
@@ -384,68 +394,113 @@ def graph_projection_summary(cfg: Settings) -> dict[str, Any]:
         return {"status": "error", "error": str(exc)}
 
 
-def graph_insights(
-    cfg: Settings,
-    topic_id: str,
-    *,
-    speaker: str | None = None,
-    quote_id: str | None = None,
-) -> dict[str, Any]:
-    """Read-only graph analytics for the optional Neo4j projection."""
-    if not cfg.sync_to_neo4j:
-        return {"status": "disabled"}
-    try:
-        if __package__:
-            from .graph import (
-                check_graph_connectivity,
-                fetch_cross_tier_divergence,
-                fetch_graphrag_subgraph,
-                fetch_speaker_timeline,
-                fetch_supersession_lineage,
-                fetch_sync_metadata,
-                get_driver,
-                graph_session,
-            )
-        else:
-            from media_quotes.graph import (
-                check_graph_connectivity,
-                fetch_cross_tier_divergence,
-                fetch_graphrag_subgraph,
-                fetch_speaker_timeline,
-                fetch_supersession_lineage,
-                fetch_sync_metadata,
-                get_driver,
-                graph_session,
-            )
-
-        driver = get_driver(cfg)
-        if not check_graph_connectivity(driver):
-            return {"status": "unreachable", "uri": cfg.neo4j_uri}
-        with graph_session(driver, cfg.neo4j_database) as session:
-            return {
-                "status": "connected",
-                "summary": fetch_sync_metadata(session),
-                "divergence": fetch_cross_tier_divergence(session, topic_id=topic_id),
-                "active_quotes": fetch_graphrag_subgraph(session, topic_id=topic_id),
-                "speaker_rows": (
-                    fetch_speaker_timeline(session, speaker, topic_id=topic_id) if speaker else []
-                ),
-                "lineage": (fetch_supersession_lineage(session, quote_id) if quote_id else {}),
-            }
-    except Exception as exc:
-        return {"status": "error", "error": str(exc)}
-
-
 if st is not None and hasattr(st, "cache_data"):
     _latest_audit_cached = st.cache_data(ttl="30s", max_entries=32)(_latest_audit)
     latest_digests_cached = st.cache_data(ttl="30s", max_entries=32)(latest_digests)
     daily_source_coverage_cached = st.cache_data(ttl="30s", max_entries=32)(daily_source_coverage)
     browse_quotes_cached = st.cache_data(ttl="30s", max_entries=16)(browse_quotes)
+    _db_counts_cached = st.cache_data(ttl="30s", max_entries=8)(_db_counts)
 else:  # pragma: no cover - Streamlit is optional for CLI imports
     _latest_audit_cached = _latest_audit
     latest_digests_cached = latest_digests
     daily_source_coverage_cached = daily_source_coverage
     browse_quotes_cached = browse_quotes
+    _db_counts_cached = _db_counts
+
+
+def _session_active(state: Any, now: float) -> bool:
+    """True only for an authenticated session inside the 8-hour auth_time window."""
+    if not isinstance(state, Mapping) or not state.get("authenticated", False):
+        return False
+    auth_time = state.get("auth_time")
+    if isinstance(auth_time, bool) or not isinstance(auth_time, (int, float)):
+        return False
+    return 0 <= now - auth_time < AUTH_TTL_SECONDS
+
+
+def _auth_state_path(logs_dir: Path) -> Path:
+    return logs_dir / ".dashboard-auth.json"
+
+
+def _read_auth_state(logs_dir: Path) -> dict[str, int | float]:
+    """Read only the three allowed counters; never load arbitrary stored keys."""
+    state: dict[str, int | float] = {"attempts": 0, "locked_until": 0.0, "updated_at": 0.0}
+    try:
+        raw = json.loads(_auth_state_path(logs_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return state
+    if isinstance(raw, dict):
+        for key in AUTH_STATE_KEYS:
+            value = raw.get(key)
+            if not isinstance(value, bool) and isinstance(value, (int, float)):
+                state[key] = value
+    return state
+
+
+def _write_auth_state(logs_dir: Path, state: dict[str, int | float]) -> None:
+    path = _auth_state_path(logs_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Only counters are persisted: never a password, IP, token or session identifier.
+    path.write_text(json.dumps({key: state[key] for key in AUTH_STATE_KEYS}), encoding="utf-8")
+
+
+def _mutate_auth_state(
+    logs_dir: Path, mutate: Callable[[dict[str, int | float]], dict[str, int | float]]
+) -> dict[str, int | float]:
+    """Locked read-modify-write; contention or IO errors fail open with the last read."""
+    last_read = _read_auth_state(logs_dir)
+    path = _auth_state_path(logs_dir)
+    lock = path.with_name(path.name + ".lock")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for _attempt in range(2):
+            try:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime <= AUTH_LOCK_STALE_SECONDS:
+                        return last_read
+                    lock.unlink(missing_ok=True)
+                except OSError:
+                    return last_read
+        else:  # pragma: no cover - both attempts were removed by another process
+            return last_read
+    except OSError:
+        return last_read
+    try:
+        state = mutate(_read_auth_state(logs_dir))
+        _write_auth_state(logs_dir, state)
+        return state
+    except OSError:
+        return last_read
+    finally:
+        os.close(fd)
+        with contextlib.suppress(OSError):
+            lock.unlink()
+
+
+def _record_auth_failure(logs_dir: Path, now: float) -> dict[str, int | float]:
+    def mutate(state: dict[str, int | float]) -> dict[str, int | float]:
+        attempts = int(state["attempts"]) + 1
+        state["attempts"] = attempts
+        state["updated_at"] = now
+        if attempts >= AUTH_MAX_ATTEMPTS:
+            state["locked_until"] = now + AUTH_LOCK_SECONDS
+        return state
+
+    return _mutate_auth_state(logs_dir, mutate)
+
+
+def _reset_auth_state(logs_dir: Path, now: float) -> dict[str, int | float]:
+    def mutate(state: dict[str, int | float]) -> dict[str, int | float]:
+        return {"attempts": 0, "locked_until": 0.0, "updated_at": now}
+
+    return _mutate_auth_state(logs_dir, mutate)
+
+
+def _is_locked(state: dict[str, int | float], now: float) -> bool:
+    return now < state["locked_until"]
 
 
 def _render_overview(
@@ -640,10 +695,20 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
         st.stop()
         return
 
-    # Authentication Gate: require matching password
+    # Authentication Gate: 8-hour session TTL plus a server-wide attempt state
     if hasattr(st, "session_state"):
         state = st.session_state
+        now = time.time()
+        if not _session_active(state, now):
+            state.pop("auth_time", None)
+            state["authenticated"] = False
+
         if not state.get("authenticated", False):
+            # Check the server-wide lockout before rendering any login form.
+            if _is_locked(_read_auth_state(cfg.logs_dir), now):
+                st.error("Too many attempts. Wait 15 minutes before retrying.")
+                st.stop()
+                return
             st.title("Media quotes — Login")
             form_ctx = st.form("login_form") if hasattr(st, "form") else None
             entered = ""
@@ -657,21 +722,15 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
                 submit = True
 
             if submit:
-                locked_until = state.get("auth_locked_until", 0.0)
-                if time.monotonic() < locked_until:
-                    st.error("Too many attempts. Wait 15 minutes before retrying.")
-                elif hmac.compare_digest(entered.encode("utf-8"), password_val.encode("utf-8")):
+                if hmac.compare_digest(entered.encode("utf-8"), password_val.encode("utf-8")):
+                    _reset_auth_state(cfg.logs_dir, now)
                     state["authenticated"] = True
-                    state["auth_time"] = time.monotonic()
-                    state["auth_attempts"] = 0
-                    state["auth_locked_until"] = 0.0
+                    state["auth_time"] = now
                     if hasattr(st, "rerun"):
                         st.rerun()
                 else:
-                    attempts = int(state.get("auth_attempts", 0)) + 1
-                    state["auth_attempts"] = attempts
-                    if attempts >= 5:
-                        state["auth_locked_until"] = time.monotonic() + 900.0
+                    updated = _record_auth_failure(cfg.logs_dir, now)
+                    if _is_locked(updated, now):
                         st.error("Too many attempts. Wait 15 minutes before retrying.")
                     else:
                         st.error("Incorrect password.")
@@ -763,19 +822,15 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
 __all__ = [
     "browse_quotes",
     "coverage_by_day_matrix",
-    "coverage_gaps",
-    "coverage_summary",
     "daily_source_coverage",
     "database_summary",
     "filter_quotes",
-    "graph_insights",
     "graph_projection_summary",
     "guidance",
     "latest_digests",
     "main",
     "recent_logs",
     "registered_sources",
-    "review_queue_view",
     "schema_summary",
 ]
 

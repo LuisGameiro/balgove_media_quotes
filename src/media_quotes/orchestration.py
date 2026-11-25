@@ -284,6 +284,19 @@ def _log_pipeline_events(context: dg.AssetExecutionContext, result: DailyPipelin
         )
 
 
+def _observed_retention_months(settings: Settings, database: DatabaseResourceHandle) -> list[date]:
+    """Read observed partition months only when persistence is enabled.
+
+    Offline runs report no months so the retention planner cannot fabricate partitions.
+    """
+    if not settings.persist_to_postgres:
+        return []
+    from .db.repository import observed_audit_months
+
+    with database.context()(settings) as session:
+        return observed_audit_months(session)
+
+
 def build_definitions() -> dg.Definitions:
     """Build Dagster definitions lazily so importing this module never starts a daemon."""
     partitions_def = dg.DailyPartitionsDefinition(
@@ -499,19 +512,22 @@ def build_definitions() -> dg.Definitions:
     def retention_readiness_report(
         context: dg.AssetExecutionContext,
         settings: dg.ResourceParam[Settings],
+        database: dg.ResourceParam[DatabaseResourceHandle],
     ) -> dict[str, Any]:
         from .restore_drill import retention_readiness
         from .risk_controls.retention import RetentionPolicy
 
         today = settings.report_date
-        months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
+        months = _observed_retention_months(settings, database)
         report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
         report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
+        report["partition_months_observed"] = settings.persist_to_postgres
         hot_count = len(report["partitions_hot"])
         detach_count = len(report["partitions_to_detach"])
         context.log.info(
             f"Retention readiness check: hot={hot_count}, detach={detach_count}; "
-            "lock duration not measured"
+            "partition months observed="
+            f"{'yes' if months else 'no (no plan fabricated)'}; lock duration not measured"
         )
         context.add_output_metadata(
             {
@@ -536,13 +552,14 @@ def build_definitions() -> dg.Definitions:
     def retention_index_bloat_within_limit(
         context: dg.AssetCheckExecutionContext,
         settings: dg.ResourceParam[Settings],
+        database: dg.ResourceParam[DatabaseResourceHandle],
     ) -> dg.AssetCheckResult:
         del context
         from .restore_drill import retention_readiness
         from .risk_controls.retention import RetentionPolicy
 
         today = settings.report_date
-        months = [date(today.year - 1, 1, 1), date(today.year, today.month, 1)]
+        months = _observed_retention_months(settings, database)
         report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
         bloat_ok = bool(report.get("index_bloat_ok", True))
         ratio = float(report.get("index_bloat_ratio", 0.0))
