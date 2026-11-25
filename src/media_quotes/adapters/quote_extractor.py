@@ -13,16 +13,34 @@ if TYPE_CHECKING:
 
 __all__ = [
     "UKRAINE_WAR_KEYWORDS",
+    "extract_quotes",
     "infer_section",
     "is_topic_relevant",
     "is_ukraine_war_relevant",
 ]
 
+
+def extract_quotes(
+    text: str,
+    *,
+    require_ukraine_topic: bool = False,
+    topic_pack: TopicPack | None = None,
+    require_topic: bool = False,
+) -> list[dict[str, Any]]:
+    """Public alias for _extract_quotes."""
+    return _extract_quotes(
+        text,
+        require_ukraine_topic=require_ukraine_topic,
+        topic_pack=topic_pack,
+        require_topic=require_topic,
+    )
+
+
 # Match curly quotes (“...”), straight quotes ("..."), or guillemets («...» / „...“)
 _QUOTE_RE = re.compile(
-    r"(?:[\u201c\"]([^\u201d\"]{20,4000})[\u201d\"]"
-    r"|[\u00ab]([^\u00bb]{20,4000})[\u00bb]"
-    r"|[\u201e]([^\u201c\u201d]{20,4000})[\u201c\u201d])"
+    r"(?:[\u201c\"]((?:(?!\n\s*\n)[^\u201d\"]){20,4000})[\u201d\"]"
+    r"|[\u00ab]((?:(?!\n\s*\n)[^\u00bb]){20,4000})[\u00bb]"
+    r"|[\u201e]((?:(?!\n\s*\n)[^\u201c\u201d]){20,4000})[\u201c\u201d])"
 )
 
 _ATTRIBUTION_VERBS = (
@@ -196,8 +214,13 @@ def infer_section(text: str, *, topic_pack: TopicPack | None = None) -> str:
         return topic_pack.infer_section(text)
     lowered = text.lower()
     for section_id, keywords in _SECTION_KEYWORDS.items():
-        if any(keyword in lowered for keyword in keywords):
-            return section_id
+        for keyword in keywords:
+            if len(keyword) <= 4 and " " not in keyword:
+                if re.search(rf"\b{re.escape(keyword)}\b", lowered):
+                    return section_id
+            else:
+                if keyword in lowered:
+                    return section_id
     return "other"
 
 
@@ -210,14 +233,50 @@ def _match_quote_group(match: re.Match[str]) -> tuple[str, int, int]:
     return "", match.start(), match.end()
 
 
+_NON_PERSON_TOKENS = frozenset(
+    {
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+)
+
+
+def _valid_speaker(match: re.Match[str]) -> bool:
+    return match.group(1).strip().casefold() not in _NON_PERSON_TOKENS
+
+
 def _find_attribution(prefix: str, suffix: str) -> tuple[str | None, str]:
     """Search suffix then prefix for verb-first or speaker-first attribution."""
-    for window in (suffix, prefix):
-        match = _ATTRIBUTION_VERB_FIRST_RE.search(window) or _ATTRIBUTION_SPEAKER_FIRST_RE.search(
-            window
-        )
-        if match:
+    suffix_matches: list[re.Match[str]] = list(_ATTRIBUTION_VERB_FIRST_RE.finditer(suffix)) + list(
+        _ATTRIBUTION_SPEAKER_FIRST_RE.finditer(suffix)
+    )
+    for match in suffix_matches:
+        if _valid_speaker(match):
             return match.group(1), match.group(0)
+    prefix_matches: list[re.Match[str]] = list(_ATTRIBUTION_VERB_FIRST_RE.finditer(prefix)) + list(
+        _ATTRIBUTION_SPEAKER_FIRST_RE.finditer(prefix)
+    )
+    valid_prefix = [match for match in prefix_matches if _valid_speaker(match)]
+    if valid_prefix:
+        closest = max(valid_prefix, key=lambda match: match.end())
+        return closest.group(1), closest.group(0)
     return None, ""
 
 

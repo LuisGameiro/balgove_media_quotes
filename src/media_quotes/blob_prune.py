@@ -82,13 +82,28 @@ def prune_blobs(
             if not _DIGEST.fullmatch(digest):
                 continue
             report["scanned"] += 1
-            blob_date = datetime.fromtimestamp(blob.stat().st_mtime, UTC).date()
+            try:
+                blob_date = datetime.fromtimestamp(blob.stat().st_mtime, UTC).date()
+            except OSError:
+                report["kept"] += 1
+                continue
             if not policy.allow_prune(blob_date, today, tombstone_written=digest in tombstones):
                 report["kept"] += 1
                 continue
             report["eligible"] += 1
             if not dry_run:
-                blob.unlink()
-                report["pruned"] += 1
-                report["deleted"].append(f"{source_dir.name}/{blob.name}")
+                meta_file = blob.with_suffix(".meta")
+                try:
+                    blob.unlink()
+                    if meta_file.exists():
+                        meta_file.unlink()
+                except OSError:
+                    pass
+                # The blob is the source of truth; a failed .meta unlink must not
+                # report an already-deleted blob as kept.
+                if blob.exists():
+                    report["kept"] += 1
+                else:
+                    report["pruned"] += 1
+                    report["deleted"].append(f"{source_dir.name}/{blob.name}")
     return report

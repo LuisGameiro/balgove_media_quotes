@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -92,6 +92,8 @@ class FetchPolicy(BaseModel):
     requests_per_second: float = Field(default=1.0, gt=0)
     max_bytes: int = Field(default=5_000_000, gt=0)
     user_agent: str = POLITE_USER_AGENT
+    follow_redirects: bool = False
+    max_redirects: int = Field(default=3, ge=0, le=10)
 
     def client_kwargs(self) -> dict[str, Any]:
         """httpx.AsyncClient constructor arguments from this policy."""
@@ -124,6 +126,10 @@ class TokenBucket:
     capacity: float = 1.0
     tokens: float = 1.0
     last_refill: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.rate_per_second <= 0:
+            raise ValueError("rate_per_second must be positive")
 
     def allow(self, now: float) -> bool:
         elapsed = max(0.0, now - self.last_refill)
@@ -167,6 +173,36 @@ async def _read_response(response: httpx.Response, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+async def _read_with_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    row: SourceRegistryRow,
+    policy: FetchPolicy,
+    allowed_hosts: frozenset[str],
+    check_dns: bool,
+) -> bytes:
+    current_url = url
+    for _ in range(policy.max_redirects + 1):
+        assert_url_permitted(current_url, row, extra_hosts=allowed_hosts, check_dns=check_dns)
+        async with client.stream(
+            "GET",
+            current_url,
+            follow_redirects=False,
+            timeout=httpx.Timeout(policy.timeout_seconds),
+        ) as response:
+            location = response.headers.get("location", "")
+            if (
+                policy.follow_redirects
+                and response.status_code in {301, 302, 303, 307, 308}
+                and location
+            ):
+                current_url = urljoin(current_url, location)
+                continue
+            return await _read_response(response, policy.max_bytes)
+    raise ValueError(f"too many redirects while fetching {url}")
+
+
 async def fetch_bytes(
     url: str,
     *,
@@ -205,17 +241,22 @@ async def fetch_bytes(
             raise RateLimitExceededError("rate limit exceeded")
 
     if client is not None:
-        async with client.stream(
-            "GET",
+        content = await _read_with_redirects(
+            client,
             url,
-            follow_redirects=False,
-            timeout=httpx.Timeout(policy.timeout_seconds),
-        ) as response:
-            content = await _read_response(response, policy.max_bytes)
+            row=row,
+            policy=policy,
+            allowed_hosts=allowed_hosts,
+            check_dns=check_dns,
+        )
     else:
-        async with (
-            httpx.AsyncClient(transport=transport, **policy.client_kwargs()) as owned,
-            owned.stream("GET", url) as response,
-        ):
-            content = await _read_response(response, policy.max_bytes)
+        async with httpx.AsyncClient(transport=transport, **policy.client_kwargs()) as owned:
+            content = await _read_with_redirects(
+                owned,
+                url,
+                row=row,
+                policy=policy,
+                allowed_hosts=allowed_hosts,
+                check_dns=check_dns,
+            )
     return content, hashlib.sha256(content).hexdigest()

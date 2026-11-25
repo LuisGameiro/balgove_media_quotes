@@ -97,9 +97,7 @@ def verify_quote(
         ),
         "claim_only": bool(policy_flags.get("claim_only", False)),
         "requires_translation": bool(policy_flags.get("requires_translation", False)),
-        "first_hand": bool(
-            policy_flags.get("original_reporting_flag", "first-hand") == "first-hand"
-        ),
+        "first_hand": bool(policy_flags.get("original_reporting_flag", "unknown") == "first-hand"),
     }
 
     failed = [name for name in _REQUIRED_CHECKS if not checks[name]]
@@ -129,7 +127,7 @@ def _as_date(value: object) -> date | None:
         return value.date()
     if isinstance(value, date):
         return value
-    if isinstance(value, str):
+    if isinstance(value, str) and value:
         try:
             return date.fromisoformat(value[:10])
         except ValueError:
@@ -149,22 +147,23 @@ def _attribution_ok(
     if not normalise_text(quote):
         return False
     names = [name for name in (speaker, normalise_text(attribution_span or "")) if name]
-    if names and any(name and name in near_text for name in names):
+    if names and any(
+        name and re.search(rf"\b{re.escape(name)}\b", near_text, re.IGNORECASE) for name in names
+    ):
         return True
-    if author and author in near_text:
+    if author and re.search(rf"\b{re.escape(author)}\b", near_text, re.IGNORECASE):
         return True
     # A short local cue is acceptable only next to a name-like token; long context alone
     # must not turn an unattributed quote into a verified one.
-    local = near_text[-160:] + " " + near_text[:160]
-    if not _ATTRIBUTION_NEAR_RE.search(local):
+    if not _ATTRIBUTION_NEAR_RE.search(near_text):
         return False
     # Only search context outside the quote itself to prevent self-matching
     name_pat = (
-        r"\b[A-Z\u0410-\u042F\u0404\u0406\u0407\u0490\u00C0-\u00D6\u00D8-\u00DE]"
-        r"[a-zA-Z\u0410-\u044F\u0404\u0454\u0406\u0456\u0407\u0457\u0490\u0491"
+        r"\b[A-Z\u0410-\u042f\u0404\u0406\u0407\u0490\u00C0-\u00D6\u00D8-\u00DE]"
+        r"[a-zA-Z\u0410-\u044f\u0404\u0454\u0406\u0456\u0407\u0457\u0490\u0491"
         r"\u00C0-\u024F'-]+\s+"
-        r"[A-Z\u0410-\u042F\u0404\u0406\u0407\u0490\u00C0-\u00D6\u00D8-\u00DE]"
-        r"[a-zA-Z\u0410-\u044F\u0404\u0454\u0406\u0456\u0407\u0457\u0490\u0491"
+        r"[A-Z\u0410-\u042f\u0404\u0406\u0407\u0490\u00C0-\u00D6\u00D8-\u00DE]"
+        r"[a-zA-Z\u0410-\u044f\u0404\u0454\u0406\u0456\u0407\u0457\u0490\u0491"
         r"\u00C0-\u024F'-]+\b"
     )
     return bool(re.search(name_pat, near_text))

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict
 
+from .enums import APPROVED_RIGHTS
 from .models import ExportQuoteRecord
 
 STRICT = ConfigDict(strict=True, extra="forbid")
@@ -21,6 +22,10 @@ class RightsDecision(BaseModel):
 
     kept: list[ExportQuoteRecord]
     rejected: list[dict[str, str]]
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
 
 
 def apply_rights_limits(
@@ -35,8 +40,10 @@ def apply_rights_limits(
     kept: list[ExportQuoteRecord] = []
     rejected: list[dict[str, str]] = []
     for record in records:
-        words = len(record.quote_text_original.split())
         reasons: list[str] = []
+        if record.rights_status not in APPROVED_RIGHTS:
+            reasons.append(f"rights_blocked:{record.rights_status}")
+        words = _word_count(record.quote_text_original)
         if words > max_quote_words:
             reasons.append(f"over_word_limit:{words}>{max_quote_words}")
         if attribution_required and not record.article_author.strip():

@@ -129,6 +129,10 @@ class SourceAdapter:
         topic_pack: TopicPack | None = None,
         extractor_hints: ExtractorHints | None = None,
     ) -> dict[str, Any]:  # pragma: no cover
+        if raw.lstrip().startswith(b"%PDF-"):
+            from .pdf_extractor import parse_pdf_document
+
+            return parse_pdf_document(raw, source_url=source_url, topic_pack=topic_pack)
         decoded = raw.decode("utf-8", errors="replace")
         if decoded.lstrip().startswith(("{", "[")):
             return _parse_json_fixture(decoded)

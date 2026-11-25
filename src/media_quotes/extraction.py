@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 
@@ -98,7 +99,7 @@ def rendered_html_fallback(raw_html: str, *, source_url: str) -> str:
     The caller must already have cleared the source rights gate before selecting this path.
     """
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import Route, sync_playwright
     except ImportError as exc:  # pragma: no cover - depends on the optional extra
         raise ConfigError(
             "rendered extraction requires 'uv sync --group render' and an installed browser"
@@ -107,7 +108,32 @@ def rendered_html_fallback(raw_html: str, *, source_url: str) -> str:
         browser = playwright.chromium.launch(headless=True)
         try:
             page = browser.new_page()
-            page.set_content(raw_html, wait_until="load")
+            parsed_src = urlparse(source_url)
+            allowed_host = (parsed_src.hostname or "").lower()
+            main_document_served = False
+
+            def _route_handler(route: Route) -> None:
+                nonlocal main_document_served
+                req_url = route.request.url
+                if not main_document_served and (
+                    route.request.resource_type == "document" or req_url == source_url
+                ):
+                    # Serve the vetted fetch, never re-request the main document.
+                    main_document_served = True
+                    route.fulfill(status=200, content_type="text/html", body=raw_html)
+                    return
+                req_parsed = urlparse(req_url)
+                if req_parsed.scheme != "https":
+                    route.abort()
+                    return
+                req_host = (req_parsed.hostname or "").lower()
+                if req_host == allowed_host or req_host.endswith("." + allowed_host):
+                    route.continue_()
+                else:
+                    route.abort()
+
+            page.route("**/*", _route_handler)
+            page.goto(source_url, wait_until="domcontentloaded", timeout=15_000)
             rendered = page.content()
         finally:
             browser.close()

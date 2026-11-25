@@ -40,7 +40,11 @@ def verify_export_integrity(
 
 
 def retention_readiness(
-    policy: RetentionPolicy, today: date, partitions: Sequence[date], *, longest_txn_seconds: int
+    policy: RetentionPolicy,
+    today: date,
+    partitions: Sequence[date],
+    *,
+    longest_txn_seconds: int,
 ) -> dict[str, Any]:
     """Machine-readable readiness report for the live retention job / load test."""
     plan = retention_plan(policy, today, partitions)

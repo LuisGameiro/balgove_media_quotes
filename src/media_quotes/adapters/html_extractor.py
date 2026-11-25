@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from ..extraction import ExtractionParams, RenderingFallback, extract_article, find_span
 from .quote_extractor import (
@@ -23,11 +23,6 @@ if TYPE_CHECKING:
     from ..topics import TopicPack
 
 __all__ = ["extract_json_ld_metadata", "parse_newspaper_html"]
-
-_JSON_LD_RE = re.compile(
-    r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
-    re.IGNORECASE | re.DOTALL,
-)
 
 
 class _QuoteBuffer:
@@ -122,7 +117,9 @@ class _FixtureHTMLParser(HTMLParser):
 
     def _finish_quote(self, buffer: _QuoteBuffer) -> None:  # pragma: no cover
         span_text = "".join(buffer.parts)
+        found = False
         for match in _QUOTE_RE.finditer(span_text):
+            found = True
             quote_text, q_start, q_end = _match_quote_group(match)
             suffix = span_text[match.end() : match.end() + 160]
             prefix = span_text[max(0, match.start() - 160) : match.start()]
@@ -137,6 +134,21 @@ class _FixtureHTMLParser(HTMLParser):
                     "speaker": speaker,
                     "role": buffer.role,
                     "attribution_span": attr_span or buffer.role,
+                    "section_id": buffer.section_id
+                    or infer_section(quote_text, topic_pack=self.topic_pack),
+                }
+            )
+        if not found and span_text.strip():
+            quote_text = span_text.strip()
+            self.quotes.append(
+                {
+                    "quote_text": quote_text,
+                    "char_start": buffer.start,
+                    "char_end": buffer.start + len(span_text),
+                    "dom_path": buffer.dom_path,
+                    "speaker": buffer.speaker,
+                    "role": buffer.role,
+                    "attribution_span": buffer.role,
                     "section_id": buffer.section_id
                     or infer_section(quote_text, topic_pack=self.topic_pack),
                 }
@@ -273,12 +285,11 @@ def _params_from_hints(hints: ExtractorHints | None) -> ExtractionParams:
     if hints is None:
         return ExtractionParams()
     prune = tuple(hints.strip_selectors) if hints.strip_selectors else ()
+    favor_prec = hints.favor_precision if (hints.favor_precision or hints.favor_recall) else True
     return ExtractionParams(
         include_comments=hints.include_comments,
         include_tables=hints.include_tables,
-        favor_precision=hints.favor_precision
-        if (hints.favor_precision or hints.favor_recall)
-        else True,
+        favor_precision=favor_prec,
         favor_recall=hints.favor_recall,
         prune_xpath=prune,
     )
@@ -300,6 +311,14 @@ def parse_newspaper_html(
     Preserves exact offsets into the extracted clean article body and runs ``quality_gate()``
     to ensure ads, cookie notices, and boilerplate are stripped before quote extraction.
     """
+    if raw_html.lstrip().startswith("{") and '"article_text"' in raw_html:
+        return _parse_json_fixture(raw_html)
+
+    if raw_html.startswith("%PDF-") or (source_url and source_url.lower().endswith(".pdf")):
+        from .pdf_extractor import parse_pdf_document
+
+        return parse_pdf_document(raw_html, source_url=source_url, topic_pack=topic_pack)
+
     enforce_topic = require_topic or require_ukraine_topic
     extraction_params = params or _params_from_hints(extractor_hints)
     dom_parser = _FixtureHTMLParser(topic_pack=topic_pack)
@@ -323,12 +342,24 @@ def parse_newspaper_html(
     article_text = (
         extracted.text if extracted.text.strip() else str(dom_meta.get("article_text") or "")
     )
-    canonical_url = (
+    raw_canonical = (
         ld_meta.get("canonical_url")
         or dom_meta.get("canonical_url")
         or str(extracted.metadata.get("canonical_url") or "")
-        or source_url
     )
+    canonical_url = source_url
+    if raw_canonical:
+        parsed_canon = urlparse(raw_canonical)
+        if parsed_canon.scheme == "https" and parsed_canon.hostname:
+            if not source_url:
+                canonical_url = raw_canonical
+            else:
+                parsed_src = urlparse(source_url)
+                if parsed_canon.hostname.lower() == (parsed_src.hostname or "").lower():
+                    canonical_url = raw_canonical
+    if not canonical_url:
+        canonical_url = raw_canonical or "https://example.invalid"
+
     publication_date = (
         ld_meta.get("publication_date")
         or dom_meta.get("publication_date")
@@ -350,6 +381,7 @@ def parse_newspaper_html(
         or dom_meta.get("publication_name")
         or str(extracted.metadata.get("publication_name") or "")
     )
+    byline = byline or (extractor_hints.fallback_byline if extractor_hints is not None else "")
     topic_relevant = is_topic_relevant(
         article_text, topic_pack=topic_pack, title=title, url=canonical_url
     )
