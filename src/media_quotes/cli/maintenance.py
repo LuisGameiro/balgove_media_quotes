@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from ..config import DEFAULT_TOPIC_ID, Settings, require_safe_id
+from ..config import DEFAULT_TOPIC_ID, Settings
 from ..exceptions import ConfigError
 from ..export import local_store_path, read_jsonl
 from ..pipeline import (
@@ -32,6 +32,7 @@ from ..risk_controls.obsolescence import (
     pending_flags,
 )
 from ..risk_controls.retention import RetentionPolicy
+from ..text_utils import require_safe_id
 from .common import EXIT_FAILURE, EXIT_OK, _read_json, _write_json, load_review_flags
 
 QUEUE_FILE = "review-queue.json"

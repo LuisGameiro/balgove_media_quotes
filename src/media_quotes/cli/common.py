@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .. import __version__
-from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings, require_safe_id
+from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
 from ..enums import APPROVED_RIGHTS
 from ..exceptions import ConfigError
 from ..export import atomic_write_text, content_hash
@@ -24,6 +24,7 @@ from ..source_configs import (
     load_source_configs,
 )
 from ..source_topics import load_source_topic_routes
+from ..text_utils import require_safe_id
 from ..topics import DEFAULT_TOPICS_DIR, TopicPack, load_topic_pack
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -46,8 +47,8 @@ def exit_code_for(*, ok: bool = True, gaps: Sequence[Any] = (), config_error: bo
 
 
 _NOTICE = (
-    "BLOCKED/DEGRADED MODE: quotes below come from clearly labelled synthetic fixtures for "
-    "blocked mandatory sources. Not real reporting; no live source, database or LLM was used."
+    "OFFLINE FIXTURE REPLAY: quotes below come from clearly labelled synthetic fixtures. "
+    "Not real reporting; source material is replayed from local files."
 )
 _MANDATORY = ("reuters", "bbc")
 _ARTICLES_PER_SOURCE_DAY = 10.0  # planning envelope
@@ -55,6 +56,7 @@ _CALLS_PER_ARTICLE = 2.0
 _PRICE_PER_CALL = 0.01
 _ARTICLES_PER_HOUR = 100.0
 _MAX_BACKFILL_DAYS = 365
+_LIVE_ARTICLES_PER_SOURCE = 2
 
 
 def render_errors(errors: list[str]) -> int:
@@ -120,7 +122,7 @@ def _registry_sha256(settings: Settings) -> str:  # pragma: no cover
 
 
 def _version_manifest(
-    settings: Settings, topic_id: str | None = None
+    settings: Settings, topic_id: str | None = None, fixture_replay: bool = False
 ) -> dict[str, Any]:  # pragma: no cover
     return {
         "app_version": __version__,
@@ -138,7 +140,7 @@ def _version_manifest(
         "registry_sha256": _registry_sha256(settings),
         "sections_sha256": _sha256_file(settings.sections_csv),
         "active_topic": topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID),
-        "fixture_replay": True,
+        "fixture_replay": fixture_replay,
     }
 
 
@@ -252,6 +254,8 @@ def _digest_path(settings: Settings, report_date: date, *, topic_id: str | None 
 
 
 def _gap_for(row: SourceRegistryRow) -> tuple[str, str]:  # pragma: no cover
+    if row.tier_block:
+        return "blocked", "tier_blocked"
     if row.rights_status == "blocked" or row.rights_status not in APPROVED_RIGHTS:
         return "blocked", "rights_blocked"
     if not row.enabled:
