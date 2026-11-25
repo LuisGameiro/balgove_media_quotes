@@ -13,6 +13,9 @@ def check_sections(sections: list[dict[str, str]], errors: list[str]) -> set[str
     ids: set[str] = set()
     for line, row in enumerate(sections, start=2):
         where = f"sections.csv line {line}"
+        if any(row.get(column) is None for column in SECTION_COLUMNS):
+            # check_columns already reported the header problem; never index a missing key.
+            continue
         sid = row["section_id"]
         if not sid:
             errors.append(f"{where}: missing section_id")

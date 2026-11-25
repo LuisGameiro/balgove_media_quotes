@@ -31,6 +31,9 @@ def check_quotes(
             except json.JSONDecodeError as exc:
                 errors.append(f"{where}: invalid JSON ({exc.msg})")
                 continue
+            if not isinstance(record, dict):
+                errors.append(f"{where}: record must be a JSON object")
+                continue
             try:
                 validator.validate(record)
             except jsonschema.ValidationError as exc:
@@ -76,7 +79,11 @@ def check_quotes(
             except (KeyError, ValueError, TypeError):
                 pass
             verification = record.get("verification", {})
-            if not verification.get("verbatim_match") or not verification.get("metadata_verified"):
+            if (
+                not isinstance(verification, dict)
+                or not verification.get("verbatim_match")
+                or not verification.get("metadata_verified")
+            ):
                 errors.append(
                     f"{where}: quote cannot be stored without both verification flags true"
                 )

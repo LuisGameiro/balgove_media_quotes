@@ -48,6 +48,9 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
     by_id: dict[str, dict[str, str]] = {}
     for line, row in enumerate(sources, start=2):
         where = f"sources.csv line {line}"
+        if any(row.get(column) is None for column in SOURCE_COLUMNS):
+            # check_columns already reported the header problem; never index a missing key.
+            continue
         sid = row["source_id"]
         if not sid:
             errors.append(f"{where}: missing source_id")

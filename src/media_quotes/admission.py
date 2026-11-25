@@ -18,7 +18,7 @@ import httpx
 
 from .adapters import parse_rss_feed, parse_sitemap_xml
 from .export import atomic_write_text
-from .fetch import assert_url_permitted, fetch_policy_from
+from .fetch import assert_url_permitted_async, fetch_policy_from
 from .source_configs import probe_source_admission
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ def probe_source_live(
                 errors.append(f"{url}: host is not registered for source {config.source_id}")
                 return None
             try:
-                assert_url_permitted(
+                await assert_url_permitted_async(
                     url,
                     config.to_registry_row(),
                     extra_hosts=frozenset(allowed_hosts),

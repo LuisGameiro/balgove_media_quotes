@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 import media_quotes.extraction as extraction
+from media_quotes.exceptions import ConfigError
 from media_quotes.extraction import (
     ExtractionParams,
     extract_article,
@@ -49,6 +50,17 @@ def test_extract_real_fixture() -> None:
     assert not article.used_fallback
     assert len(article.text) > 400
     assert article.metadata["title"]
+
+
+def test_extract_article_requires_trafilatura(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "trafilatura", None)
+    with pytest.raises(ConfigError, match="trafilatura") as exc_info:
+        extract_article(
+            "<html><body>text</body></html>",
+            params=ExtractionParams(),
+            source_url="https://example.invalid/a",
+        )
+    assert "uv sync --extra extraction" in str(exc_info.value)
 
 
 def test_low_quality_routes_to_fallback_before_llm() -> None:

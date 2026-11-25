@@ -157,6 +157,15 @@ def test_check_sources_tier4_requires_claim_only() -> None:
     assert any("tier 4 sources must be claim_only" in m for m in errors)
 
 
+def test_check_sources_skips_rows_missing_columns() -> None:
+    row = _source_row()
+    del row["tier"]
+    errors: list[str] = []
+    by_id = check_sources([row], errors)
+    assert any("missing columns" in message for message in errors)
+    assert by_id == {}
+
+
 # --- check_sections -------------------------------------------------------------------------
 
 
@@ -192,6 +201,15 @@ def test_check_sections_rejects_duplicate_ids() -> None:
     assert any("duplicate section_id" in message for message in errors)
 
 
+def test_check_sections_skips_rows_missing_columns() -> None:
+    section = _sections()[0]
+    del section["description"]
+    errors: list[str] = []
+    ids = check_sections([section], errors)
+    assert any("missing columns" in message for message in errors)
+    assert ids == set()
+
+
 # --- check_quotes ---------------------------------------------------------------------------
 
 
@@ -215,6 +233,24 @@ def test_check_quotes_rejects_invalid_json(tmp_path: Path) -> None:
     errors: list[str] = []
     check_quotes(store, _sources_map(), _section_ids(), OPEN_SCHEMA, errors)
     assert any("invalid JSON" in message for message in errors)
+
+
+def test_check_quotes_rejects_non_object_jsonl(tmp_path: Path) -> None:
+    store = tmp_path / "quotes.jsonl"
+    store.write_text("[]\n", encoding="utf-8")
+    errors: list[str] = []
+    check_quotes(store, _sources_map(), _section_ids(), OPEN_SCHEMA, errors)
+    assert any("record must be a JSON object" in message for message in errors)
+
+
+def test_check_quotes_rejects_non_dict_verification(tmp_path: Path) -> None:
+    record = _record()
+    record["verification"] = []
+    store = tmp_path / "quotes.jsonl"
+    store.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    errors: list[str] = []
+    check_quotes(store, _sources_map(), _section_ids(), OPEN_SCHEMA, errors)
+    assert any("verification flags true" in message for message in errors)
 
 
 def test_check_quotes_reports_schema_errors(tmp_path: Path) -> None:

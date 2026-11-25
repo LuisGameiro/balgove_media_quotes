@@ -34,7 +34,7 @@ LICENCE_TERRITORY: Final = "internal worldwide"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         validate_default=True,

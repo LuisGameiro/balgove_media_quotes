@@ -18,11 +18,34 @@ from .quote_extractor import extract_quotes, infer_section
 __all__ = ["extract_pdf_text", "parse_pdf_document"]
 
 _BT_ET_RE = re.compile(rb"BT\s+(.*?)\s+ET", re.DOTALL)
-_TJ_RE = re.compile(rb"\((.*?)\)\s*Tj", re.DOTALL)
-_TJ_ARRAY_RE = re.compile(rb"\[(.*?)\]\s*TJ", re.DOTALL)
-_TITLE_RE = re.compile(rb"/Title\s*\((.*?)\)")
-_AUTHOR_RE = re.compile(rb"/Author\s*\((.*?)\)")
+# A PDF string ends at the first unescaped ')'; escaped delimiters stay inside it.
+_STRING_BODY = rb"((?:[^()\\]|\\.)*)"
+_TEXT_OP_RE = re.compile(
+    rb"\(" + _STRING_BODY + rb"\)\s*Tj" + rb"|\[((?:[^\]\\]|\\.)*)\]\s*TJ", re.DOTALL
+)
+_PDF_STRING_RE = re.compile(rb"\(((?:[^()\\]|\\.)*)\)", re.DOTALL)
+_TITLE_RE = re.compile(rb"/Title\s*" + _PDF_STRING_RE.pattern)
+_AUTHOR_RE = re.compile(rb"/Author\s*" + _PDF_STRING_RE.pattern)
 _DATE_RE = re.compile(rb"/CreationDate\s*\(D:(\d{4})(\d{2})(\d{2})")
+_ESCAPE_MAP = {
+    b"n": b"\n",
+    b"r": b"\r",
+    b"t": b"\t",
+    b"b": b"\b",
+    b"f": b"\f",
+    b"(": b"(",
+    b")": b")",
+    b"\\": b"\\",
+}
+_NAMED_ESCAPE_RE = re.compile(rb"\\([()\\nrtbf])")
+_LINE_CONTINUATION_RE = re.compile(rb"\\\r?\n")
+
+
+def _unescape_pdf_string(value: bytes) -> str:
+    """Resolve PDF string escapes without losing the original character offsets."""
+    value = _LINE_CONTINUATION_RE.sub(b"", value)
+    value = _NAMED_ESCAPE_RE.sub(lambda match: _ESCAPE_MAP[match.group(1)], value)
+    return value.decode("latin1", errors="replace")
 
 
 def _decode_stream(stream_bytes: bytes) -> str:
@@ -41,13 +64,16 @@ def _decode_stream(stream_bytes: bytes) -> str:
 
     for bt_match in _BT_ET_RE.finditer(data):
         block = bt_match.group(1)
-        for tj in _TJ_RE.finditer(block):
-            with contextlib.suppress(Exception):
-                text_parts.append(tj.group(1).decode("latin1", errors="replace"))
-        for tja in _TJ_ARRAY_RE.finditer(block):
-            for sub in re.finditer(rb"\((.*?)\)", tja.group(1)):
-                with contextlib.suppress(Exception):
-                    text_parts.append(sub.group(1).decode("latin1", errors="replace"))
+        for op in _TEXT_OP_RE.finditer(block):
+            if op.group(1) is not None:
+                # One Tj operator is one word boundary.
+                text_parts.append(_unescape_pdf_string(op.group(1)))
+            else:
+                # TJ array fragments are kerning pieces of a single word: no injected spaces.
+                fragments = b"".join(
+                    sub.group(1) for sub in _PDF_STRING_RE.finditer(op.group(2) or b"")
+                )
+                text_parts.append(_unescape_pdf_string(fragments))
 
     return " ".join(text_parts).strip()
 
@@ -58,12 +84,12 @@ def extract_pdf_text(raw_bytes: bytes) -> tuple[str, dict[str, str]]:
     title_m = _TITLE_RE.search(raw_bytes)
     if title_m:
         with contextlib.suppress(Exception):
-            meta["title"] = title_m.group(1).decode("latin1", errors="replace").strip()
+            meta["title"] = _unescape_pdf_string(title_m.group(1)).strip()
 
     author_m = _AUTHOR_RE.search(raw_bytes)
     if author_m:
         with contextlib.suppress(Exception):
-            meta["byline"] = author_m.group(1).decode("latin1", errors="replace").strip()
+            meta["byline"] = _unescape_pdf_string(author_m.group(1)).strip()
 
     date_m = _DATE_RE.search(raw_bytes)
     if date_m:

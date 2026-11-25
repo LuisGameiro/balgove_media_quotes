@@ -148,8 +148,8 @@ def _topic_gate(settings: Settings, *, topic_pack: TopicPack | None = None) -> T
             rules = load_topic_rules(rules_path)
         else:
             rules = {}
-    except (ImportError, FileNotFoundError, ValueError, TypeError):
-        return None
+    except (ImportError, FileNotFoundError, ValueError, TypeError) as exc:
+        raise ConfigError(f"topic gate configuration is invalid: {exc}") from exc
 
     preferred_rule_id = ""
     if topic_pack is not None:

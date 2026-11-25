@@ -312,6 +312,11 @@ def collect_live_source(
         return official_feed
 
     domain = (urlparse(row.homepage_url).hostname or "").lower()
+    query = "Ukraine"
+    if topic_pack is not None:
+        keywords = topic_pack.all_quick_keywords()[:3]
+        if keywords:
+            query = " ".join(keywords)
     bing_errors: list[str] = []
     if not domain:
         bing_errors.append(f"source '{row.source_id}' has no homepage domain for Bing discovery")
@@ -319,7 +324,9 @@ def collect_live_source(
     else:
         try:
             candidates = asyncio.run(
-                discover_bing_news(domain, limit=limit, transport=transport, bucket=bucket)
+                discover_bing_news(
+                    domain, query=query, limit=limit, transport=transport, bucket=bucket
+                )
             )
         except Exception as exc:
             bing_errors.append(f"Bing discovery failed: {exc}")

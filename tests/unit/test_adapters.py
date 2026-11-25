@@ -107,6 +107,52 @@ def test_rendered_fallback_is_rights_gated_and_opt_in(monkeypatch: Any) -> None:
     assert seen["fallback"] is not None
 
 
+def test_live_html_without_article_uses_newspaper_parser(monkeypatch: Any) -> None:
+    from media_quotes.adapters import base
+
+    seen: list[bytes] = []
+
+    def fake_parse(raw_html: str, **kwargs: Any) -> dict[str, Any]:
+        seen.append(raw_html.encode())
+        return {"extraction_method": "trafilatura_dom_v2"}
+
+    monkeypatch.setattr(base, "parse_newspaper_html", fake_parse)
+    html = b"<html><body><p>Live article body without an article tag.</p></body></html>"
+    result = base.SourceAdapter(ROWS["guardian"])._parse(
+        html, source_url="https://example.invalid/a"
+    )
+    assert seen == [html]
+    assert result["extraction_method"] == "trafilatura_dom_v2"
+
+
+def test_live_html_with_quote_span_uses_fixture_parser(monkeypatch: Any) -> None:
+    from media_quotes.adapters import base
+
+    def fail(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("newspaper parser must not see a synthetic quote span")
+
+    monkeypatch.setattr(base, "parse_newspaper_html", fail)
+    html = (
+        b'<html><body><p><span class="quote">"The minister said talks would continue '
+        b'next week."</span></p></body></html>'
+    )
+    result = base.SourceAdapter(ROWS["guardian"])._parse(html)
+    assert result["extraction_method"] == "fixture_html_v1"
+    assert len(result["quote_spans"]) == 1
+
+
+def test_replay_mode_routes_html_to_fixture_parser(monkeypatch: Any) -> None:
+    from media_quotes.adapters import base
+
+    def fail(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("replay must not use the live newspaper parser")
+
+    monkeypatch.setattr(base, "parse_newspaper_html", fail)
+    html = b"<html><body><p>Replayed article body.</p></body></html>"
+    result = base.SourceAdapter(ROWS["guardian"], replay=True)._parse(html)
+    assert result["extraction_method"] == "fixture_html_v1"
+
+
 def test_fixture_parser_ignores_script_and_style_bodies() -> None:
     from media_quotes.adapters.html_extractor import _FixtureHTMLParser
 

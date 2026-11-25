@@ -1,7 +1,11 @@
 import pytest
 from pydantic import ValidationError
 
-from media_quotes.config import Settings, unknown_setting_env_vars
+from media_quotes.config import PROJECT_ROOT, Settings, unknown_setting_env_vars
+
+
+def test_env_file_is_anchored_to_project_root():
+    assert Settings.model_config["env_file"] == str(PROJECT_ROOT / ".env")
 
 
 def test_defaults_are_safe(monkeypatch):

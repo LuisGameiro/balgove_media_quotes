@@ -39,12 +39,24 @@ def allowed_hosts_for(row: SourceRegistryRow, extra_urls: Iterable[str] = ()) ->
     return frozenset(hosts)
 
 
+def _validate_resolved_ips(host: str, addr_info: Iterable[tuple[Any, ...]]) -> None:
+    """Reject any resolved address that is not globally routable."""
+    for item in addr_info:
+        resolved_ip_str = item[4][0]
+        resolved_ip = ipaddress.ip_address(resolved_ip_str)
+        if resolved_ip.version == 6 and resolved_ip.ipv4_mapped:
+            resolved_ip = resolved_ip.ipv4_mapped
+        if not resolved_ip.is_global:
+            raise ValueError(f"URL host {host!r} resolves to non-global IP {resolved_ip_str}")
+
+
 def assert_url_permitted(
     url: str,
     row: SourceRegistryRow,
     *,
     extra_hosts: frozenset[str] = frozenset(),
     check_dns: bool = False,
+    addr_info: Iterable[tuple[Any, ...]] | None = None,
 ) -> None:
     """HTTPS-only host allowlist; blocks using one source's rights for another's host."""
     parsed = urlparse(url)
@@ -64,21 +76,48 @@ def assert_url_permitted(
     except ValueError as exc:
         if "is a non-global IP address" in str(exc):
             raise
-        # Host is a domain name: resolve DNS and verify resolved IPs are global if requested
-        if check_dns:
+        # Host is a domain name: use pre-resolved addresses when supplied, otherwise resolve
+        # synchronously (kept for existing sync callers).
+        if addr_info is not None:
+            _validate_resolved_ips(host, addr_info)
+        elif check_dns:
             try:
-                addr_info = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-                for item in addr_info:
-                    resolved_ip_str = item[4][0]
-                    resolved_ip = ipaddress.ip_address(resolved_ip_str)
-                    if resolved_ip.version == 6 and resolved_ip.ipv4_mapped:
-                        resolved_ip = resolved_ip.ipv4_mapped
-                    if not resolved_ip.is_global:
-                        raise ValueError(
-                            f"URL host {host!r} resolves to non-global IP {resolved_ip_str}"
-                        )
+                resolved = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
             except socket.gaierror as dns_err:
                 raise ValueError(f"Failed to resolve host {host!r}: {dns_err}") from dns_err
+            _validate_resolved_ips(host, resolved)
+
+
+async def assert_url_permitted_async(
+    url: str,
+    row: SourceRegistryRow,
+    *,
+    extra_hosts: frozenset[str] = frozenset(),
+    check_dns: bool = False,
+) -> None:
+    """Non-blocking counterpart of ``assert_url_permitted`` for async request paths."""
+    assert_url_permitted(url, row, extra_hosts=extra_hosts, check_dns=False)
+    if not check_dns:
+        return
+    host = (urlparse(url).hostname or "").lower()
+    try:
+        ipaddress.ip_address(host)
+        return  # literal address already validated above; no DNS needed
+    except ValueError:
+        pass
+
+    def resolve() -> list[tuple[Any, ...]]:
+        return socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+
+    # shortcut: DNS validation is advisory — httpx re-resolves the host independently, so this
+    # only rejects obviously private resolutions before a request; pin the connection IP if
+    # DNS rebinding must be ruled out.
+    loop = asyncio.get_running_loop()
+    try:
+        addr_info = await loop.run_in_executor(None, resolve)
+    except socket.gaierror as dns_err:
+        raise ValueError(f"Failed to resolve host {host!r}: {dns_err}") from dns_err
+    assert_url_permitted(url, row, extra_hosts=extra_hosts, addr_info=addr_info)
 
 
 class FetchPolicy(BaseModel):
@@ -190,7 +229,9 @@ async def _read_with_redirects(
 ) -> bytes:
     current_url = url
     for _ in range(policy.max_redirects + 1):
-        assert_url_permitted(current_url, row, extra_hosts=allowed_hosts, check_dns=check_dns)
+        await assert_url_permitted_async(
+            current_url, row, extra_hosts=allowed_hosts, check_dns=check_dns
+        )
         async with client.stream(
             "GET",
             current_url,
@@ -224,7 +265,6 @@ async def fetch_bytes(
 ) -> tuple[bytes, str]:
     """Fetch raw article bytes and return (bytes, sha256). Never used without approval."""
     assert_fetch_permitted(row, track_a_approved=track_a_approved)
-    assert_url_permitted(url, row, extra_hosts=allowed_hosts, check_dns=check_dns)
     token_bucket = bucket or TokenBucket(policy.requests_per_second)
 
     if callable(clock):

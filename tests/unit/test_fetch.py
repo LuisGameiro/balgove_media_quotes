@@ -17,6 +17,7 @@ from media_quotes.fetch import (
     allowed_hosts_for,
     assert_fetch_permitted,
     assert_url_permitted,
+    assert_url_permitted_async,
     fetch_bytes,
 )
 from media_quotes.live import fetch_url_documents
@@ -411,3 +412,23 @@ def test_assert_url_permitted_security_checks(monkeypatch: pytest.MonkeyPatch) -
     assert_url_permitted(
         "https://example.invalid/test", APPROVED, extra_hosts=extra, check_dns=True
     )
+
+
+def test_assert_url_permitted_async_rejects_non_global_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_getaddrinfo_private(
+        host: str, port: int, **kwargs: object
+    ) -> list[tuple[object, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo_private)
+    with pytest.raises(ValueError, match="resolves to non-global IP"):
+        asyncio.run(
+            assert_url_permitted_async(
+                "https://example.invalid/test",
+                APPROVED,
+                extra_hosts=frozenset({"example.invalid"}),
+                check_dns=True,
+            )
+        )

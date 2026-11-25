@@ -63,6 +63,44 @@ def test_pdf_extractor_basic_stream() -> None:
     assert quote["char_end"] > quote["char_start"]
 
 
+def test_pdf_extractor_unescapes_parentheses() -> None:
+    pdf_content = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Title (Assessment \\(2026\\) review) >> endobj\n"
+        b"2 0 obj << /Length 120 >>\nstream\nBT\n"
+        b'(The minister said \\"Containment \\(phase two\\) starts now.\\" on Tuesday.) Tj\n'
+        b"ET\nendstream\nendobj\n%%EOF"
+    )
+    text, meta = extract_pdf_text(pdf_content)
+    assert "Containment (phase two) starts now." in text
+    assert meta["title"] == "Assessment (2026) review"
+
+
+def test_pdf_extractor_unescapes_backslash_and_whitespace() -> None:
+    pdf_content = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Author (A\\\\B) >> endobj\n"
+        b"2 0 obj << /Length 120 >>\nstream\nBT\n"
+        b"(Path C:\\\\temp\\nnext) Tj\n"
+        b"ET\nendstream\nendobj\n%%EOF"
+    )
+    text, meta = extract_pdf_text(pdf_content)
+    assert "C:\\temp\nnext" in text
+    assert meta["byline"] == "A\\B"
+
+
+def test_pdf_tj_array_joins_kerning_fragments_without_spaces() -> None:
+    pdf_content = (
+        b"%PDF-1.4\n1 0 obj << >> endobj\n2 0 obj << /Length 120 >>\nstream\nBT\n"
+        b"[(Frontline) -120 ( stability has improved.)] TJ\n"
+        b"[(Ker) 25 (ning)] TJ\n"
+        b"(Separate statement.) Tj\n"
+        b"ET\nendstream\nendobj\n%%EOF"
+    )
+    text, _meta = extract_pdf_text(pdf_content)
+    assert text == "Frontline stability has improved. Kerning Separate statement."
+
+
 def test_pdf_extraction_via_newspaper_html_router() -> None:
     quote_line = (
         '(General Vance said, "Frontline stability has improved this quarter." '

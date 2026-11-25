@@ -179,9 +179,15 @@ def extract_article(
     # offline extraction. Suppress only that third-party warning at the import boundary.
     import warnings
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=r"SOCKS support in urllib3 requires.*")
-        import trafilatura
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r"SOCKS support in urllib3 requires.*")
+            import trafilatura
+    except ImportError as exc:  # pragma: no cover - depends on the optional extra
+        raise ConfigError(
+            "HTML extraction requires trafilatura; install it with 'uv sync --extra extraction' "
+            "(or 'uv sync --all-extras')"
+        ) from exc
 
     document = trafilatura.bare_extraction(raw_html, url=source_url, **params.trafilatura_kwargs())
     data = _as_mapping(document) if document is not None else {}

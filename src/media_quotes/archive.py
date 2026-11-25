@@ -19,7 +19,7 @@ from defusedxml.ElementTree import ParseError, fromstring
 
 from .adapters import parse_rss_feed, parse_sitemap_xml
 from .exceptions import SourceNotPermitted
-from .fetch import TokenBucket, allowed_hosts_for, assert_url_permitted, fetch_bytes
+from .fetch import TokenBucket, allowed_hosts_for, assert_url_permitted_async, fetch_bytes
 
 if TYPE_CHECKING:
     from .fetch import FetchPolicy
@@ -145,9 +145,11 @@ def discover_historical_articles(
             client_kwargs["transport"] = transport
         client = httpx.AsyncClient(**client_kwargs)
 
-        def permitted(url: str, *, child: bool) -> bool:
+        async def permitted(url: str, *, child: bool) -> bool:
             try:
-                assert_url_permitted(url, row, extra_hosts=allowed_hosts, check_dns=True)
+                await assert_url_permitted_async(
+                    url, row, extra_hosts=allowed_hosts, check_dns=True
+                )
             except ValueError as exc:
                 label = "child sitemap" if child else "discovery URL"
                 errors.append(f"{label} {url!r} rejected: {exc}")
@@ -175,7 +177,7 @@ def discover_historical_articles(
             nonlocal sitemaps_fetched
             if limit > 0 and len(candidates) >= limit:
                 return
-            if not permitted(url, child=True):
+            if not await permitted(url, child=True):
                 return
             if sitemaps_fetched >= max_sitemaps:
                 errors.append(f"sitemap limit ({max_sitemaps}) reached; skipping {url!r}")
@@ -208,7 +210,7 @@ def discover_historical_articles(
                         f"unsupported route type {route.route_type!r} for route {route.route_id!r}"
                     )
                     continue
-                if not permitted(route.discovery_url, child=False):
+                if not await permitted(route.discovery_url, child=False):
                     continue
                 raw = await fetch(route.discovery_url)
                 if raw is None:

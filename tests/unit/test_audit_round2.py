@@ -29,7 +29,7 @@ def test_low_quality_article_yields_no_quotes() -> None:
 
 
 def test_licensed_source_fixture_quotes_are_published() -> None:
-    settings = Settings()
+    settings = Settings(_env_file=None)
     row = next(row for row in _load_registry(settings) if row.source_id == "guardian")
     assert row.usable
     records, _coverage, _gaps, _events, _rejected, _offsets = _process_source(
@@ -49,7 +49,7 @@ def test_non_first_hand_source_config_withholds_quotes(flag: str, monkeypatch: A
     from media_quotes.cli import run as cli_run
     from media_quotes.source_configs import load_source_config
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
     row = next(row for row in _load_registry(settings) if row.source_id == "guardian")
     assert row.usable
     config = load_source_config("guardian").model_copy(update={"original_reporting_flag": flag})

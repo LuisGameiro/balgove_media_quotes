@@ -9,8 +9,11 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from media_quotes.cli import maintenance, run
 from media_quotes.config import Settings
+from media_quotes.exceptions import ConfigError
 from media_quotes.judge import JudgeDecision
 from media_quotes.pipeline import TopicAssessment, assess_topic
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
@@ -127,6 +130,21 @@ class FakeAdapter:
 
 def _patch_adapter(monkeypatch: Any, row: SourceRegistryRow) -> None:
     monkeypatch.setattr(run, "build_adapter", lambda *args, **kwargs: FakeAdapter(row))
+
+
+def test_topic_gate_rejects_malformed_rules(tmp_path: Path) -> None:
+    rules_path = tmp_path / "topic_rules.json"
+    rules_path.write_text("{not json", encoding="utf-8")
+    settings = _settings(tmp_path, topic_rules_path=rules_path)
+
+    with pytest.raises(ConfigError, match="topic gate configuration is invalid"):
+        run._topic_gate(settings)
+
+
+def test_topic_gate_absent_routing_config_returns_none(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, source_topics_csv=None, sources_dir=None)
+
+    assert run._topic_gate(settings) is None
 
 
 def test_preferred_rule_never_falls_back_to_another_topic() -> None:

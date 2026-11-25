@@ -204,7 +204,7 @@ def test_get_decision_cache_returns_none_when_missing() -> None:
 
 def test_persist_articles_and_quotes_requires_offsets() -> None:
     session = MagicMock()
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
     inserted_articles, inserted_quotes = persist_articles_and_quotes(
         session, records, offsets={}, extractor_version="fixture-replay-v1"
     )
@@ -217,7 +217,7 @@ def test_persist_articles_and_quotes_requires_offsets() -> None:
 def test_persist_articles_and_quotes_persists_when_offsets_present() -> None:
     session = MagicMock()
     session.execute.return_value.rowcount = 1
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
     first = records[0]
     offsets = {
         first.quote_id: {
@@ -244,7 +244,7 @@ def test_quote_insert_writes_topic_and_translation_columns() -> None:
 
     session = MagicMock()
     session.execute.return_value.rowcount = 1
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
     first = records[0]
     offsets = {
         first.quote_id: {
@@ -277,7 +277,7 @@ def test_quote_insert_writes_topic_and_translation_columns() -> None:
 def test_persist_articles_and_quotes_handles_psycopg_minus_one_rowcount() -> None:
     session = MagicMock()
     session.execute.return_value.rowcount = -1  # psycopg INSERT .. ON CONFLICT DO NOTHING
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
     first = records[0]
     offsets = {
         first.quote_id: {
@@ -294,7 +294,7 @@ def test_persist_articles_and_quotes_handles_psycopg_minus_one_rowcount() -> Non
 def test_persist_quote_classifications_and_digest_manifest_and_obsolescence_flags() -> None:
     session = MagicMock()
     records, _, _, _, _, offsets = _collect(
-        Settings(), run_id="test", report_date=date(2026, 11, 19)
+        Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19)
     )
     first = records[0]
     detail = offsets[first.quote_id]
@@ -524,7 +524,9 @@ def test_digest_manifests_coexist_across_provenance() -> None:
     from sqlalchemy.dialects import postgresql
 
     session = MagicMock()
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0][:1]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0][
+        :1
+    ]
     common = dict(
         digest_date=date(2026, 11, 19),
         window_start=date(2026, 11, 13),
@@ -639,7 +641,7 @@ def test_article_upsert_sql_guards_fixture_overwrite() -> None:
 
     session = MagicMock()
     session.execute.return_value.rowcount = 1
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
     first = records[0]
     offsets = {
         first.quote_id: {
@@ -696,7 +698,7 @@ def test_fixture_quote_spans_are_skipped_for_live_articles() -> None:
         def commit(self) -> None:
             self.commits += 1
 
-    records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
     fixture = records[0]
     article_id = _run_uuid(f"article:{fixture.article_url}")
     offsets: dict[str, dict[str, object]] = {
@@ -768,7 +770,9 @@ def test_article_provenance_upgrade_is_one_way() -> None:
         session = Session(engine)
         try:
             session.execute(text(f"SET search_path TO {schema}, public"))
-            records = _collect(Settings(), run_id="test", report_date=date(2026, 11, 19))[0]
+            records = _collect(
+                Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19)
+            )[0]
             fixture = records[0]
             live = fixture.model_copy(update={"provenance": "live_feed"})
 

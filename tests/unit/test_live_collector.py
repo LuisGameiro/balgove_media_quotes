@@ -21,6 +21,7 @@ from media_quotes.live import (
 )
 from media_quotes.registry import SourceRegistryRow
 from media_quotes.source_configs import load_source_config
+from media_quotes.topics import TopicPack, TopicRelevanceConfig, TopicSection
 
 BBC = load_source_config("bbc")
 ROW: SourceRegistryRow = BBC.to_registry_row()
@@ -192,6 +193,63 @@ def test_bing_fallback_only_when_enabled(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.route == "bing_news"
     assert result.discovered == [bing_item]
     assert result.articles[0].provenance == "live_bing"
+
+
+def test_bing_query_comes_from_topic_pack(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_feed(
+        *args: object, **kwargs: object
+    ) -> tuple[list[dict[str, str]], list[FetchedArticle]]:
+        return ([], [_article("https://feeds.bbci.co.uk/news/rss.xml", error="feed unavailable")])
+
+    queries: list[str] = []
+
+    async def fake_bing(domain: str, **kwargs: object) -> list[dict[str, str]]:
+        queries.append(str(kwargs["query"]))
+        return [
+            {
+                "title": "Bing story",
+                "url": "https://www.bbc.co.uk/news/bing",
+                "published": "2026-11-24",
+            }
+        ]
+
+    def fake_url_docs(
+        row: SourceRegistryRow, items: list[dict[str, str]], **kwargs: object
+    ) -> list[FetchedArticle]:
+        return [_article(items[0]["url"])]
+
+    monkeypatch.setattr(live, "fetch_feed_documents", fake_feed)
+    monkeypatch.setattr(live, "discover_bing_news", fake_bing)
+    monkeypatch.setattr(live, "fetch_url_documents", fake_url_docs)
+
+    pack = TopicPack(
+        topic_id="ai-policy",
+        name="AI policy",
+        sections=[TopicSection(section_id="other", section_name="Other")],
+        relevance=TopicRelevanceConfig(rule_id="ai-policy-v1", anchors={"en": ["AI regulation"]}),
+        quick_keywords=["semiconductor export", "chip controls", "AI regulation"],
+    )
+    config = BBC.model_copy(update={"bing_discovery_enabled": True})
+    result = collect_live_source(
+        ROW,
+        feed_url=BBC.feed_url,
+        topic_pack=pack,
+        policy=POLICY,
+        limit=5,
+        source_config=config,
+    )
+    assert queries == ["semiconductor export chip controls ai regulation"]
+    assert result.route == "bing_news"
+
+    collect_live_source(
+        ROW,
+        feed_url=BBC.feed_url,
+        topic_pack=None,
+        policy=POLICY,
+        limit=5,
+        source_config=config,
+    )
+    assert queries[-1] == "Ukraine"  # default retained without a topic pack
 
 
 def test_unregistered_bing_candidate_is_dropped_and_recorded(

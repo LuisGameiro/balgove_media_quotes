@@ -136,8 +136,8 @@ class SourceAdapter:
         decoded = raw.decode("utf-8", errors="replace")
         if decoded.lstrip().startswith(("{", "[")):
             return _parse_json_fixture(decoded)
-        # If the HTML has no synthetic <span class="quote"> tags, use the real parser.
-        if 'class="quote"' not in decoded and (use_trafilatura or "<article" in decoded.lower()):
+        # Fixture-shaped input keeps synthetic span offsets; live HTML always uses the real parser.
+        if not self.replay and 'class="quote"' not in decoded:
             from ..config import get_settings
             from ..extraction import static_html_fallback
 
