@@ -7,7 +7,9 @@ import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-from media_quotes.db.tables import metadata
+from sqlalchemy import UniqueConstraint
+
+from media_quotes.db.tables import metadata, quotes_table
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "src/media_quotes/db/schema.sql"
@@ -27,6 +29,22 @@ def test_schema_sql_and_sqlalchemy_tables_match() -> None:
     sql = SCHEMA.read_text(encoding="utf-8")
     declared = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", sql))
     assert declared == set(metadata.tables), declared ^ set(metadata.tables)
+
+
+def test_quotes_span_unique_declared_in_schema_and_tables() -> None:
+    sql = SCHEMA.read_text(encoding="utf-8")
+    assert "UNIQUE (article_id, quote_text_normalised, char_start, char_end)" in sql
+    span_constraints = [
+        tuple(constraint.columns.keys())
+        for constraint in quotes_table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+    assert (
+        "article_id",
+        "quote_text_normalised",
+        "char_start",
+        "char_end",
+    ) in span_constraints
 
 
 def test_digest_uniqueness_declared_once_in_schema() -> None:

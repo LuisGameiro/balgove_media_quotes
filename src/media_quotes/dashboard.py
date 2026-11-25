@@ -358,6 +358,7 @@ def graph_projection_summary(cfg: Settings) -> dict[str, Any]:
             "status": "disabled",
             "notes": "Set SYNC_TO_NEO4J=true to enable graph projection.",
         }
+    driver = None
     try:
         if __package__:
             from .graph import (
@@ -392,6 +393,9 @@ def graph_projection_summary(cfg: Settings) -> dict[str, Any]:
         }
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
+    finally:
+        if driver is not None:
+            driver.close()
 
 
 if st is not None and hasattr(st, "cache_data"):

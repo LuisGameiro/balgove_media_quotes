@@ -1,5 +1,5 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from media_quotes.config import PROJECT_ROOT, Settings, unknown_setting_env_vars
 
@@ -94,3 +94,23 @@ def test_quote_within_limits_counts_words():
     assert settings.quote_within_limits(" ".join(["word"] * 30))
     assert not settings.quote_within_limits(" ".join(["word"] * 31))
     assert settings.quote_within_limits("r\u00e9sum\u00e9 test")
+
+
+def test_neo4j_password_required_only_when_sync_enabled():
+    supplied = SecretStr("secret")
+    settings = Settings(_env_file=None)
+    assert settings.neo4j_password is None
+    assert settings.neo4j_password_value == ""  # safe for callers when sync is disabled
+    assert (
+        Settings(_env_file=None, neo4j_password=supplied).neo4j_password_value
+        == supplied.get_secret_value()
+    )
+
+    with pytest.raises(ValidationError, match="NEO4J_PASSWORD is required"):
+        Settings(_env_file=None, sync_to_neo4j=True)
+    with pytest.raises(ValidationError, match="NEO4J_PASSWORD is required"):
+        Settings(_env_file=None, sync_to_neo4j=True, neo4j_password=SecretStr(""))
+
+    enabled = Settings(_env_file=None, sync_to_neo4j=True, neo4j_password=supplied)
+    assert enabled.neo4j_password_value == supplied.get_secret_value()
+    assert supplied.get_secret_value() not in repr(enabled.neo4j_password)

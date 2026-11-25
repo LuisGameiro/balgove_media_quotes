@@ -166,13 +166,56 @@ def test_project_records_to_graph_creates_nodes_and_relationships() -> None:
     queries_text = [q[0] for q in session.queries]
     assert any("MERGE (sp:Speaker" in q for q in queries_text)
     assert any("MERGE (tm:Term" in q for q in queries_text)
-    assert any("MERGE (q)-[sup:SUPERSEDES]->(ancestor)" in q for q in queries_text)
+    assert any("MERGE (newer)-[sup:SUPERSEDES]->(older)" in q for q in queries_text)
     assert any("ProjectionMetadata" in q for q in queries_text)
     metadata_params = next(
         params for query, params in session.queries if "ProjectionMetadata" in query
     )
     assert metadata_params["quotes_projected"] == 2
     assert metadata_params["error_count"] == 0
+
+
+def test_supersession_edges_use_canonical_ids_and_newer_to_older_direction() -> None:
+    session = MockSession()
+    # The Postgres path yields the obsolete (older) quote with `superseded_by` holding
+    # canonical ids of its newer replacements.
+    obsolete = {
+        "quote_id": "Q-20261120-0001",
+        "source_id": "guardian",
+        "article_url": "https://example.invalid/old",
+        "publication_date": date(2026, 11, 20),
+        "content_hash": "a" * 64,
+        "is_obsolete": True,
+        "obsolete_reason": "superseded",
+        "superseded_by": ["Q-20261123-0001", "Q-20261124-0001"],
+    }
+    newer_by_notes = {
+        "quote_id": "Q-20261125-0001",
+        "source_id": "guardian",
+        "article_url": "https://example.invalid/new",
+        "publication_date": date(2026, 11, 25),
+        "content_hash": "b" * 64,
+        "notes": "supersedes: Q-20261120-0001",
+    }
+    stats = project_records_to_graph([obsolete, newer_by_notes], session)
+    assert not stats.errors
+
+    edges = [
+        params
+        for query, params in session.queries
+        if "MERGE (newer)-[sup:SUPERSEDES]->(older)" in query
+    ]
+    assert len(edges) == 3
+    # List path: newer canonical ids -> the flagged (older) quote.
+    assert {edge["newer_quote_id"] for edge in edges[:2]} == {
+        "Q-20261123-0001",
+        "Q-20261124-0001",
+    }
+    assert {edge["older_quote_id"] for edge in edges[:2]} == {"Q-20261120-0001"}
+    # Notes-regex path keeps the current quote as the newer node.
+    assert edges[2]["newer_quote_id"] == "Q-20261125-0001"
+    assert edges[2]["older_quote_id"] == "Q-20261120-0001"
+    assert all(edge["reason"] for edge in edges)
 
 
 def test_graph_analytical_queries() -> None:
@@ -308,6 +351,7 @@ def test_cli_graph_subcommands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     settings = Settings(
         _env_file=None,
         sync_to_neo4j=True,
+        neo4j_password=SecretStr("pass123"),
         export_dir=tmp_path / "quotes",
         audit_dir=tmp_path / "audit",
     )

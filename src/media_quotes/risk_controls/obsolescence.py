@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Protocol, cast
 
@@ -203,15 +204,31 @@ def assess_obsolescence(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ObsolescenceProposal:
+    """Outcome of one proposal pass, including the judge-call money counters."""
+
+    flags: list[ObsolescenceFlag] = field(default_factory=list)
+    pairs_evaluated: int = 0
+    pairs_skipped: int = 0
+
+
 def propose_obsolescence(
     records: Sequence[ExportQuoteRecord],
     *,
     now: datetime,
     judge: JudgeDecisionLike | JudgeProviderLike,
     speakers: Mapping[str, str] | None = None,
-) -> list[ObsolescenceFlag]:
-    """Propose review flags; a human still decides before any quote is hidden."""
+    max_pairs: int | None = None,
+) -> ObsolescenceProposal:
+    """Propose review flags; a human still decides before any quote is hidden.
+
+    ``max_pairs`` caps judge calls for money control; ``None`` leaves it uncapped.
+    Deterministic record order is preserved, so the cap always drops the same tail pairs.
+    """
     proposed: list[ObsolescenceFlag] = []
+    pairs_evaluated = 0
+    pairs_skipped = 0
     for index, old in enumerate(records):
         old_speaker = normalise_text((speakers or {}).get(old.quote_id, "")).casefold()
         for newer in records[index + 1 :]:
@@ -221,12 +238,18 @@ def propose_obsolescence(
                     continue
             if not _eligible_pair(old, newer):
                 continue
+            if max_pairs is not None and pairs_evaluated >= max_pairs:
+                pairs_skipped += 1
+                continue
             decision = _pair_decision(judge, old, newer)
+            pairs_evaluated += 1
             flag = assess_obsolescence(old, newer, now=now, judge=decision)
             if flag is not None:
                 proposed.append(flag)
                 break
-    return proposed
+    return ObsolescenceProposal(
+        flags=proposed, pairs_evaluated=pairs_evaluated, pairs_skipped=pairs_skipped
+    )
 
 
 def triage_obsolescence(confidence: float) -> ReviewState:
@@ -315,6 +338,7 @@ def obsoletion_allowed(*, obsolete_precision: float, consecutive_failures: int) 
 __all__ = [
     "ObsolescenceEvidence",
     "ObsolescenceFlag",
+    "ObsolescenceProposal",
     "ReviewQueue",
     "assess_obsolescence",
     "flag_with_judge_provenance",

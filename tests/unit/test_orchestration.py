@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
 pytest.importorskip("dagster")
 
 import media_quotes.orchestration as orchestration
-from media_quotes.config import Settings
+from media_quotes.config import DEFAULT_TOPIC_ID, Settings
 from media_quotes.orchestration import (
     CODE_VERSION,
     PARTITION_START,
@@ -537,15 +541,17 @@ def test_check_topic_never_treats_fixtures_as_topic(tmp_path: Path) -> None:
     assert orchestration._check_topic(settings, day, None) == "ai-policy"
 
 
-def test_check_topic_never_treats_runs_as_topic(tmp_path: Path) -> None:
+def test_check_topic_finds_scoped_topic_under_runs(tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
     day = date(2026, 11, 19)
-    scoped = tmp_path / "audit" / "runs" / "archive" / "ai-policy"
+    scoped = tmp_path / "audit" / "runs" / "live-t1" / "ai-policy"
     scoped.mkdir(parents=True)
     (scoped / f"audit-{day.isoformat()}.json").write_text(
         json.dumps(_audit_payload(day.isoformat(), topic_id="ai-policy")), encoding="utf-8"
     )
-    assert orchestration._check_topic(settings, day, None) == "ukraine-war"
+    assert orchestration._check_topic(settings, day, None) == "ai-policy"
+    # The scope directory itself is never treated as a topic.
+    assert orchestration._check_topic(settings, day, "ukraine-war") == "ukraine-war"
 
 
 def test_schema_check_reads_selected_provenance(tmp_path: Path) -> None:
@@ -614,3 +620,189 @@ def test_live_export_check_skips_fixture_runs(tmp_path: Path) -> None:
     result = _check_result(defs, "live_export_has_no_fixture_records", settings)
     assert result.passed is True
     assert result.severity == dg.AssetCheckSeverity.WARN
+
+
+def test_checks_follow_newest_scoped_audit(tmp_path: Path) -> None:
+    from media_quotes.pipeline import run_daily_pipeline
+
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    settings.report_date = day
+    run_daily_pipeline(settings, report_date=day, topic_id="ukraine-war")
+
+    fixture_audit = tmp_path / "audit" / "fixtures" / "audit-2026-11-19.json"
+    fixture_export = tmp_path / "export" / "fixtures" / "quotes-2026-11-19.jsonl"
+    stale = time.time() - 3600
+    os.utime(fixture_audit, (stale, stale))  # the scoped audit is the newest for this partition
+
+    scope = "live-t1"
+    scoped_audit = tmp_path / "audit" / "runs" / scope / "audit-2026-11-19.json"
+    scoped_audit.parent.mkdir(parents=True, exist_ok=True)
+    scoped_audit.write_text(
+        json.dumps(
+            {
+                **_audit_payload("2026-11-19", provenance="live_feed", source_mode="live"),
+                "artifact_scope": scope,
+            }
+        ),
+        encoding="utf-8",
+    )
+    scoped_export = tmp_path / "export" / "runs" / scope / "quotes-2026-11-19.jsonl"
+    scoped_export.parent.mkdir(parents=True, exist_ok=True)
+    clean = "\n".join(
+        json.dumps({**json.loads(line), "provenance": "live_feed"})
+        for line in fixture_export.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+    scoped_export.write_text(clean + "\n", encoding="utf-8")
+
+    assert orchestration._check_topic(settings, day, None) == "ukraine-war"
+    report, provenance = orchestration._selected_audit(settings, day, "ukraine-war")
+    assert report["artifact_scope"] == scope
+    assert provenance == "live_feed"
+    assert (
+        orchestration._store_path(
+            settings, day, "ukraine-war", provenance, scope=report["artifact_scope"]
+        )
+        == scoped_export
+    )
+
+    defs = build_definitions()
+    checked = (
+        "export_schema_valid",
+        "t0_rights_boundary_enforced",
+        "quote_rights_limits_respected",
+        "live_export_has_no_fixture_records",
+    )
+    results = {name: _check_result(defs, name, settings).passed for name in checked}
+    assert results == {name: True for name in checked}
+
+
+def test_tier_scoped_run_excludes_out_of_tier_gaps(tmp_path: Path) -> None:
+    from media_quotes.cli.common import _load_registry
+    from media_quotes.pipeline import run_daily_pipeline
+
+    settings = _make_settings(tmp_path)
+    result = run_daily_pipeline(settings, report_date=date(2026, 11, 19), tier=1)
+    tier_one = {row.source_id for row in _load_registry(settings) if row.tier == 1}
+    assert result.gaps  # reuters is tier-1 blocked and must still be disclosed
+    assert {gap["source_id"] for gap in result.gaps} <= tier_one
+
+
+def test_materialize_closes_neo4j_driver_on_success_and_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from media_quotes import graph as graph_module
+
+    class FakeSession:
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+    class FakeDriver:
+        def __init__(self) -> None:
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+        def session(self, database: str | None = None) -> FakeSession:
+            return FakeSession()
+
+    settings = _make_settings(tmp_path).model_copy(
+        update={"sync_to_neo4j": True, "neo4j_password": SecretStr("secret")}
+    )
+    monkeypatch.setattr(orchestration, "get_settings", lambda: settings)
+    drivers: list[FakeDriver] = []
+
+    def fake_get_driver(_settings: Settings) -> FakeDriver:
+        driver = FakeDriver()
+        drivers.append(driver)
+        return driver
+
+    monkeypatch.setattr(graph_module, "get_driver", fake_get_driver)
+    monkeypatch.setattr(
+        graph_module, "graph_session", lambda driver, database: driver.session(database)
+    )
+    monkeypatch.setattr(graph_module, "init_schema", lambda session: [])
+    monkeypatch.setattr(
+        graph_module,
+        "project_records_to_graph",
+        lambda records, session: SimpleNamespace(quotes_projected=len(records)),
+    )
+
+    defs = build_definitions()
+    job = defs.resolve_job_def("daily_quotes_digest_job")
+    assert job.execute_in_process(partition_key="2026-11-19").success
+    assert len(drivers) == 1
+    assert drivers[0].closed == 1
+
+    def fail_projection(records: object, session: object) -> object:
+        raise RuntimeError("graph projection failed")
+
+    monkeypatch.setattr(graph_module, "project_records_to_graph", fail_projection)
+    drivers.clear()
+    assert job.execute_in_process(partition_key="2026-11-19").success
+    assert len(drivers) == 1
+    assert drivers[0].closed == 1
+
+
+@pytest.mark.parametrize("topic", [DEFAULT_TOPIC_ID, "ai-policy"])
+def test_scoped_audit_resolves_real_topic_and_scope(tmp_path: Path, topic: str) -> None:
+    from media_quotes.pipeline import run_daily_pipeline
+
+    settings = _make_settings(tmp_path)
+    day = date(2026, 11, 19)
+    settings.report_date = day
+    run_daily_pipeline(settings, report_date=day, topic_id=DEFAULT_TOPIC_ID)
+
+    # A scope directory is not a topic: audit-D.json at its root is the default topic,
+    # while a named subdirectory is a real topic.
+    scope = "live-t1"
+    audit_dir = tmp_path / "audit" / "runs" / scope
+    export_dir = tmp_path / "export" / "runs" / scope
+    if topic != DEFAULT_TOPIC_ID:
+        audit_dir = audit_dir / topic
+        export_dir = export_dir / topic
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / f"audit-{day}.json").write_text(
+        json.dumps(
+            {
+                **_audit_payload(
+                    day.isoformat(), provenance="live_feed", source_mode="live", topic_id=topic
+                ),
+                "artifact_scope": scope,
+            }
+        ),
+        encoding="utf-8",
+    )
+    fixture_export = tmp_path / "export" / "fixtures" / "quotes-2026-11-19.jsonl"
+    clean = "\n".join(
+        json.dumps({**json.loads(line), "provenance": "live_feed"})
+        for line in fixture_export.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+    scoped_export = export_dir / f"quotes-{day}.jsonl"
+    scoped_export.write_text(clean + "\n", encoding="utf-8")
+    stale = time.time() - 3600
+    os.utime(tmp_path / "audit" / "fixtures" / "audit-2026-11-19.json", (stale, stale))
+
+    assert orchestration._check_topic(settings, day, None) == topic
+    report = orchestration._load_audit_report(settings, day, topic)
+    assert report["artifact_scope"] == scope
+    assert (
+        orchestration._store_path(settings, day, topic, "live_feed", scope=report["artifact_scope"])
+        == scoped_export
+    )
+
+    defs = build_definitions()
+    checked = (
+        "export_schema_valid",
+        "t0_rights_boundary_enforced",
+        "quote_rights_limits_respected",
+        "live_export_has_no_fixture_records",
+    )
+    assert all(_check_result(defs, name, settings).passed for name in checked)

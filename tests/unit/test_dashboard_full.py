@@ -4,6 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import SecretStr
@@ -491,3 +492,53 @@ def test_auth_stale_lock_is_reclaimed(tmp_path: Path) -> None:
     assert result["attempts"] == 1
     assert dashboard._read_auth_state(logs_dir)["attempts"] == 1
     assert not lock.exists()
+
+
+def test_graph_projection_summary_closes_driver_on_success_and_failure(
+    monkeypatch: Any,
+) -> None:
+    class FakeSession:
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+        def run(self, query: str) -> Any:
+            key = "node_count" if "count(n)" in query else "rel_count"
+            return SimpleNamespace(data=lambda: [{key: 7}])
+
+    class FakeDriver:
+        def __init__(self) -> None:
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+        def session(self, database: str | None = None) -> FakeSession:
+            return FakeSession()
+
+    settings = Settings(_env_file=None, sync_to_neo4j=True, neo4j_password=SecretStr("secret"))
+    good = FakeDriver()
+    monkeypatch.setattr("media_quotes.graph.get_driver", lambda _: good)
+    monkeypatch.setattr(
+        "media_quotes.graph.graph_session", lambda driver, database: driver.session(database)
+    )
+    monkeypatch.setattr("media_quotes.graph.check_graph_connectivity", lambda _: True)
+    monkeypatch.setattr("media_quotes.graph.fetch_sync_metadata", lambda _: {})
+
+    result = dashboard.graph_projection_summary(settings)
+    assert result["status"] == "connected"
+    assert result["node_count"] == 7
+    assert good.closed == 1
+
+    bad = FakeDriver()
+    monkeypatch.setattr("media_quotes.graph.get_driver", lambda _: bad)
+
+    def fail_metadata(_session: object) -> object:
+        raise RuntimeError("metadata failed")
+
+    monkeypatch.setattr("media_quotes.graph.fetch_sync_metadata", fail_metadata)
+    failed = dashboard.graph_projection_summary(settings)
+    assert failed["status"] == "error"
+    assert bad.closed == 1

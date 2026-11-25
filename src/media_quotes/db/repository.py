@@ -76,6 +76,7 @@ def record_eval_run(
         thresholds=_jsonable(thresholds),
         passed=passed,
         trace_id=trace_id,
+        created_at=datetime.now(UTC),
     )
     statement = statement.on_conflict_do_nothing(index_elements=["eval_id"])
     session.execute(statement)
@@ -283,6 +284,10 @@ def persist_articles_and_quotes(
         statement = statement.on_conflict_do_update(
             index_elements=["article_id"],
             set_={
+                "title": statement.excluded.title,
+                "publication_date": statement.excluded.publication_date,
+                "language": statement.excluded.language,
+                "content_hash": statement.excluded.content_hash,
                 "extracted_text": statement.excluded.extracted_text,
                 "raw_blob_ref": statement.excluded.raw_blob_ref,
                 "extraction_method": statement.excluded.extraction_method,
@@ -684,14 +689,21 @@ def read_audit_events(
 
 
 def eval_recent_failures(session: Session, gold_set_version: str, *, limit: int = 2) -> int:
-    """Count consecutive failed eval runs for one gold set, newest first."""
+    """Count consecutive failed *full* eval runs for one gold set, newest first.
+
+    Ordering is by creation time, not report date: a backfilled evaluation carries an
+    older report_date but is still the latest decision. Dev-split runs are partial and
+    never join the streak.
+    """
     if limit < 1:
         raise ValueError("limit must be positive")
+    split = eval_runs_table.c.metrics["evaluated_split"].as_string()
     rows = (
         session.execute(
             select(eval_runs_table.c.passed)
             .where(eval_runs_table.c.gold_set_version == gold_set_version)
-            .order_by(eval_runs_table.c.report_date.desc())
+            .where(or_(split.is_(None), split == "all"))
+            .order_by(eval_runs_table.c.created_at.desc())
             .limit(limit)
         )
         .scalars()

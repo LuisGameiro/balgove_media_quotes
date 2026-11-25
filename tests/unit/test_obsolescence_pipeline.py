@@ -13,6 +13,7 @@ from media_quotes.judge import JudgeDecision
 from media_quotes.models import ExportQuoteRecord, VerificationRecord
 from media_quotes.pipeline import run_daily_pipeline
 from media_quotes.risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
+from media_quotes.risk_controls.obsolescence import ObsolescenceProposal
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT_DATE = date(2026, 11, 19)
@@ -221,13 +222,15 @@ def test_new_and_interleaved_flags_survive_the_review_queue_merge(
         json.dumps({"flags": [interleaved.model_dump(mode="json")]}), encoding="utf-8"
     )
 
-    def propose(records: Any, *, now: Any, judge: Any, speakers: Any) -> list[ObsolescenceFlag]:
+    def propose(
+        records: Any, *, now: Any, judge: Any, speakers: Any, max_pairs: Any = None
+    ) -> ObsolescenceProposal:
         # Judge/provider work must never run while the review queue is locked.
         assert not lock_path.exists()
         payload = json.loads(queue_path.read_text(encoding="utf-8"))
         payload["flags"].append(decided.model_dump(mode="json"))  # another operator's verdict
         queue_path.write_text(json.dumps(payload), encoding="utf-8")
-        return [proposed]
+        return ObsolescenceProposal(flags=[proposed], pairs_evaluated=1, pairs_skipped=0)
 
     monkeypatch.setattr("media_quotes.risk_controls.obsolescence.propose_obsolescence", propose)
 
@@ -241,3 +244,23 @@ def test_new_and_interleaved_flags_survive_the_review_queue_merge(
     states = {item["evidence"]["old_quote_id"]: item["state"] for item in payload["flags"]}
     assert states["Q-DECIDED"] == "confirmed"
     assert expected <= set(states)
+
+
+def test_paid_shadow_judge_mode_caps_pairs(tmp_path: Path, monkeypatch: Any) -> None:
+    settings = _settings(tmp_path)
+    settings.ai_judge_mode = "shadow"
+    monkeypatch.setattr("media_quotes.pipeline.make_judge", lambda _settings: object())
+    captured: dict[str, Any] = {}
+
+    def propose(
+        records: Any, *, now: Any, judge: Any, speakers: Any, max_pairs: Any = None
+    ) -> ObsolescenceProposal:
+        captured["max_pairs"] = max_pairs
+        return ObsolescenceProposal()
+
+    monkeypatch.setattr("media_quotes.risk_controls.obsolescence.propose_obsolescence", propose)
+    _patch_collection(monkeypatch, [], {})
+
+    run_daily_pipeline(settings, report_date=REPORT_DATE)
+
+    assert captured["max_pairs"] == 20

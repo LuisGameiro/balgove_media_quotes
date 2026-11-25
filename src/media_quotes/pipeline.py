@@ -654,6 +654,8 @@ def run_daily_pipeline(
 
     # DEC-17 / FR-2.4: only compare quotes attributed to the same speaker.
     # Offline runs escalate and produce no new flags; failures are recorded, never hidden.
+    _pairs_evaluated = 0
+    _pairs_skipped = 0
     try:
         from .risk_controls.obsolescence import propose_obsolescence as _propose_obsolescence
 
@@ -663,7 +665,28 @@ def run_daily_pipeline(
             for quote_id, meta in offsets.items()
             if isinstance(meta, Mapping)
         }
-        _new_flags = _propose_obsolescence(list(kept), now=now, judge=_judge, speakers=_speakers)
+        # Every non-off judge mode uses the pinned OpenRouter provider, so cap judge calls
+        # at 20 and disclose the count. Off mode uses a free local stand-in.
+        _judge_mode = str(getattr(settings, "ai_judge_mode", "off")).strip().lower()
+        _max_pairs = None if _judge_mode == "off" else 20
+        _proposal = _propose_obsolescence(
+            list(kept), now=now, judge=_judge, speakers=_speakers, max_pairs=_max_pairs
+        )
+        _new_flags = _proposal.flags
+        _pairs_evaluated = _proposal.pairs_evaluated
+        _pairs_skipped = _proposal.pairs_skipped
+        events.append(
+            _event(
+                run_id=actual_run_id,
+                trace_id=actual_run_id,
+                source_id="pipeline",
+                step="obsolescence",
+                status="proposed",
+                pairs_evaluated=_pairs_evaluated,
+                pairs_skipped=_pairs_skipped,
+                license_reference="(none)",
+            )
+        )
         _queue_path = review_queue_path(settings, provenance)
         with _queue_lock(_queue_path):
             # Re-read under the lock: a concurrent operator's verdict/flag must survive.
@@ -686,6 +709,8 @@ def run_daily_pipeline(
                 step="obsolescence",
                 status="skipped",
                 error_type=type(exc).__name__,
+                pairs_evaluated=_pairs_evaluated,
+                pairs_skipped=_pairs_skipped,
             )
         )
 

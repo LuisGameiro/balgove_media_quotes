@@ -6,6 +6,7 @@ import hashlib
 import json
 import sys
 import time
+import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -120,32 +121,65 @@ def _read_json(path: Path) -> dict[str, Any]:  # pragma: no cover
 
 @contextmanager
 def _queue_lock(path: Path) -> Iterator[None]:
-    """Keep the review-queue read-modify-write to one process at a time."""
+    """Keep the review-queue read-modify-write to one process at a time.
+
+    Stale locks are claimed by an atomic rename (only one contender can win) and each
+    holder writes a nonce that is rechecked before entry and before release, so two
+    writers can never both believe they own the lock.
+    """
     lock = path.with_name(f".{path.name}.lock")
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + 5.0
+    nonce = uuid.uuid4().hex
+
+    def still_held() -> bool:
+        try:
+            return lock.read_text(encoding="utf-8").splitlines()[-1] == nonce
+        except (OSError, IndexError):
+            return False
+
     while True:
         try:
             handle = lock.open("x", encoding="utf-8")
-            handle.write(str(time.time()) + "\n")
+            handle.write(f"{time.time()}\n{nonce}\n")
             handle.flush()
-            break
         except FileExistsError:
+            claimed = False
             try:
-                mtime = lock.stat().st_mtime
-                if time.time() - mtime > 60.0:
-                    lock.unlink(missing_ok=True)
-                    continue
+                stale = time.time() - lock.stat().st_mtime > 60.0
             except OSError:
-                pass
+                stale = False
+            if stale:
+                # Rename-claim is atomic: exactly one contender can move the stale lock.
+                claim = lock.with_name(f".{lock.name}.{nonce}.claimed")
+                try:
+                    lock.rename(claim)
+                    claimed = True
+                except FileNotFoundError:
+                    pass  # another contender won the claim; retry against the new lock
+                else:
+                    claim.unlink(missing_ok=True)
+            if claimed:
+                continue
             if time.monotonic() >= deadline:
                 raise ConfigError("review queue is locked by another process") from None
             time.sleep(0.05)
+            continue
+        # A stale-claimer may have replaced our lock in the gap between creation and here.
+        # If the nonce is no longer ours, we do not own the lock; back off and retry.
+        if not still_held():
+            handle.close()
+            if time.monotonic() >= deadline:
+                raise ConfigError("review queue is locked by another process") from None
+            continue
+        break
     try:
         yield
     finally:
         handle.close()
-        lock.unlink(missing_ok=True)
+        # Release only our own lock; never delete a lock a later writer now owns.
+        if still_held():
+            lock.unlink(missing_ok=True)
 
 
 def _registry_sha256(settings: Settings) -> str:  # pragma: no cover

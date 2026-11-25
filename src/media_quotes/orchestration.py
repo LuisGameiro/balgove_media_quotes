@@ -110,21 +110,40 @@ def database_resource(_: dg.InitResourceContext) -> DatabaseResourceHandle:
 def _audit_roots(
     settings: Settings, provenance: AcquisitionProvenance | None = None
 ) -> tuple[Path, ...]:
-    """Audit roots in precedence order: canonical live first, then fixture replay."""
-    live_root = settings.audit_dir
+    """Audit roots: canonical live, fixtures, then each scoped runs tree."""
     fixture_root = settings.audit_dir / "fixtures"
     if provenance == "fixture":
         return (fixture_root,)
-    return (live_root, fixture_root)
+    runs_root = settings.audit_dir / "runs"
+    scoped = (
+        tuple(sorted(sub for sub in runs_root.iterdir() if sub.is_dir()))
+        if runs_root.is_dir()
+        else ()
+    )
+    return (settings.audit_dir, fixture_root, *scoped)
 
 
-def _audit_report_path(
-    settings: Settings, report_date: date, topic_id: str | None, root: Path
-) -> Path:
+def _audit_candidates(
+    settings: Settings,
+    report_date: date,
+    provenance: AcquisitionProvenance | None = None,
+) -> list[tuple[float, Path, str]]:
+    """(mtime, path, topic) for every audit of a date across canonical/fixtures/runs."""
     name = f"audit-{report_date.isoformat()}.json"
-    safe_topic = _clean_slug(topic_id, settings.active_topic)
-    target = root if safe_topic == DEFAULT_TOPIC_ID else root / safe_topic
-    return target / name
+    found: list[tuple[float, Path, str]] = []
+    for root in _audit_roots(settings, provenance):
+        if not root.is_dir():
+            continue
+        candidates = [(root / name, DEFAULT_TOPIC_ID)]
+        candidates.extend(
+            (sub / name, sub.name)
+            for sub in sorted(root.iterdir())
+            if sub.is_dir() and sub.name not in {"fixtures", "runs"}
+        )
+        found.extend(
+            (path.stat().st_mtime, path, topic) for path, topic in candidates if path.is_file()
+        )
+    return found
 
 
 def _load_audit_report(
@@ -133,12 +152,16 @@ def _load_audit_report(
     topic_id: str | None = None,
     provenance: AcquisitionProvenance | None = None,
 ) -> dict[str, Any]:
-    """Load the selected audit: canonical live artifact first, then fixture replay."""
-    for root in _audit_roots(settings, provenance):
-        path = _audit_report_path(settings, report_date, topic_id, root)
-        if path.is_file():
-            return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
-    return {}
+    """Load the newest matching audit across canonical, fixtures and runs trees."""
+    safe_topic = _clean_slug(topic_id, settings.active_topic)
+    candidates = [
+        (mtime, path)
+        for mtime, path, topic in _audit_candidates(settings, report_date, provenance)
+        if topic == safe_topic
+    ]
+    if not candidates:
+        return {}
+    return cast(dict[str, Any], json.loads(max(candidates)[1].read_text(encoding="utf-8")))
 
 
 def _provenance_from_report(report: dict[str, Any]) -> AcquisitionProvenance:
@@ -160,13 +183,18 @@ def _store_path(
     report_date: date,
     topic_id: str | None = None,
     provenance: AcquisitionProvenance = "fixture",
+    scope: str | None = None,
 ) -> Path:
-    """Resolve the export path for the topic the partition actually ran with."""
+    """Resolve the export path for the topic/scope the partition actually ran with."""
     from .export import local_store_path
 
     safe_topic = _clean_slug(topic_id, settings.active_topic)
     return local_store_path(
-        settings.export_dir, report_date, topic_id=safe_topic, provenance=provenance
+        settings.export_dir,
+        report_date,
+        topic_id=safe_topic,
+        provenance=provenance,
+        scope=scope,
     )
 
 
@@ -176,22 +204,12 @@ def _check_topic(
     requested: str | None,
     provenance: AcquisitionProvenance | None = None,
 ) -> str:
-    """Pick the topic of the newest audit report when a check has no explicit topic."""
+    """Pick the topic of the newest audit (including scoped runs) when unspecified."""
     if requested:
         return _clean_slug(requested, settings.active_topic)
-    name = f"audit-{report_date.isoformat()}.json"
-    for root in _audit_roots(settings, provenance):
-        if not root.is_dir():
-            continue
-        candidates = [(root / name, DEFAULT_TOPIC_ID)]
-        candidates.extend(
-            (sub / name, sub.name)
-            for sub in sorted(root.iterdir())
-            if sub.is_dir() and sub.name not in {"fixtures", "runs"}
-        )
-        found = [(path.stat().st_mtime, topic) for path, topic in candidates if path.is_file()]
-        if found:
-            return max(found)[1]
+    candidates = _audit_candidates(settings, report_date, provenance)
+    if candidates:
+        return max(candidates)[2]
     return settings.active_topic
 
 
@@ -361,7 +379,7 @@ def build_definitions() -> dg.Definitions:
             context.add_output_metadata(summary)
             return summary
 
-        audit_report = _load_audit_report(app_settings, report_date, result.topic_id)
+        audit_report, _ = _selected_audit(app_settings, report_date, result.topic_id)
         checks: dict[str, Any] = audit_report.get("checks", {})
         digest_md = (
             result.digest_path.read_text(encoding="utf-8")
@@ -398,6 +416,7 @@ def build_definitions() -> dg.Definitions:
             metadata["audit_report_preview"] = dg.MetadataValue.md(audit_md)
 
         if app_settings.sync_to_neo4j and not config.dry_run and result.records:
+            g_driver = None
             try:
                 from .graph import get_driver, graph_session, init_schema, project_records_to_graph
 
@@ -409,6 +428,9 @@ def build_definitions() -> dg.Definitions:
             except Exception as g_err:
                 context.log.warning(f"Neo4j sync failed: {g_err}")
                 metadata["neo4j_sync_error"] = str(g_err)
+            finally:
+                if g_driver is not None:
+                    g_driver.close()
 
         context.add_output_metadata(metadata)
         return {
@@ -588,8 +610,16 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        _, provenance = _selected_audit(app_settings, report_date, topic)
-        records = read_jsonl(_store_path(app_settings, report_date, topic, provenance))
+        report, provenance = _selected_audit(app_settings, report_date, topic)
+        records = read_jsonl(
+            _store_path(
+                app_settings,
+                report_date,
+                topic,
+                provenance,
+                scope=report.get("artifact_scope"),
+            )
+        )
         return dg.AssetCheckResult(
             passed=bool(records),
             severity=dg.AssetCheckSeverity.ERROR,
@@ -670,8 +700,10 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        _, provenance = _selected_audit(app_settings, report_date, topic)
-        path = _store_path(app_settings, report_date, topic, provenance)
+        report, provenance = _selected_audit(app_settings, report_date, topic)
+        path = _store_path(
+            app_settings, report_date, topic, provenance, scope=report.get("artifact_scope")
+        )
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,
@@ -726,8 +758,10 @@ def build_definitions() -> dg.Definitions:
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
         topic = _check_topic(app_settings, report_date, config.topic_id)
-        _, provenance = _selected_audit(app_settings, report_date, topic)
-        path = _store_path(app_settings, report_date, topic, provenance)
+        report, provenance = _selected_audit(app_settings, report_date, topic)
+        path = _store_path(
+            app_settings, report_date, topic, provenance, scope=report.get("artifact_scope")
+        )
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,
@@ -784,7 +818,9 @@ def build_definitions() -> dg.Definitions:
                 metadata={"source_mode": source_mode, "provenance": provenance},
                 description="Fixture replay run; live-export provenance check not applicable.",
             )
-        path = _store_path(app_settings, report_date, topic, provenance)
+        path = _store_path(
+            app_settings, report_date, topic, provenance, scope=report.get("artifact_scope")
+        )
         if not path.is_file():
             return dg.AssetCheckResult(
                 passed=False,

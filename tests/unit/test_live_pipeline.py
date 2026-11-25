@@ -23,6 +23,7 @@ from media_quotes.fetch import FetchPolicy
 from media_quotes.live import FetchedArticle, LiveSourceResult
 from media_quotes.models import ExportQuoteRecord, VerificationRecord
 from media_quotes.pipeline import run_daily_pipeline
+from media_quotes.risk_controls.obsolescence import ObsolescenceProposal
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT_DATE = date(2026, 11, 23)
@@ -518,7 +519,9 @@ def test_live_pipeline_writes_live_review_queue(
     )
     monkeypatch.setattr(
         "media_quotes.risk_controls.obsolescence.propose_obsolescence",
-        lambda *args, **kwargs: [new_flag],
+        lambda *args, **kwargs: ObsolescenceProposal(
+            flags=[new_flag], pairs_evaluated=1, pairs_skipped=0
+        ),
     )
 
     settings.audit_dir.mkdir(parents=True, exist_ok=True)

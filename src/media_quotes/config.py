@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     sync_to_neo4j: bool = False
     neo4j_uri: str = "bolt://127.0.0.1:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: SecretStr = SecretStr("password123")
+    neo4j_password: SecretStr | None = None
     neo4j_database: str = "neo4j"
 
     @model_validator(mode="before")
@@ -243,6 +243,14 @@ class Settings(BaseSettings):
         self._require_pinned_snapshot(self.ai_judge_model_snapshot, "AI_JUDGE_MODEL_SNAPSHOT")
         return self
 
+    @model_validator(mode="after")
+    def _check_neo4j_password(self) -> Settings:
+        if self.sync_to_neo4j and (
+            self.neo4j_password is None or not self.neo4j_password.get_secret_value()
+        ):
+            raise ValueError("NEO4J_PASSWORD is required when SYNC_TO_NEO4J=true")
+        return self
+
     @property
     def database_url_value(self) -> str:
         """Raw connection string; never log this value."""
@@ -250,8 +258,8 @@ class Settings(BaseSettings):
 
     @property
     def neo4j_password_value(self) -> str:
-        """Raw Neo4j password; never log this value."""
-        return self.neo4j_password.get_secret_value()
+        """Raw Neo4j password; never log this value (empty when not configured)."""
+        return self.neo4j_password.get_secret_value() if self.neo4j_password else ""
 
     def quote_within_limits(self, quote_text: str) -> bool:
         """DEC-10 word-count gate; strict counting on Unicode whitespace."""

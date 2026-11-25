@@ -72,9 +72,9 @@ MERGE (q)-[:MENTIONS]->(tm)
 """
 
 _MERGE_SUPERSESSION_CYPHER = """
-MATCH (q:Quote {canonical_quote_id: $quote_id})
-MATCH (ancestor:Quote {canonical_quote_id: $superseded_id})
-MERGE (q)-[sup:SUPERSEDES]->(ancestor)
+MATCH (newer:Quote {canonical_quote_id: $newer_quote_id})
+MATCH (older:Quote {canonical_quote_id: $older_quote_id})
+MERGE (newer)-[sup:SUPERSEDES]->(older)
 SET sup.reason = $reason
 """
 
@@ -183,21 +183,27 @@ def project_records_to_graph(
                         {"quote_id": quote_id, "term_key": term_key},
                     )
 
-            # Supersession projection
+            # Supersession projection. `superseded_by` carries the *newer* quotes that
+            # replaced this one, so those edges run newer -> older. The notes-regex path
+            # is the fallback for records without that list (this quote supersedes an
+            # older one), so it runs in the opposite direction.
             superseded_ids = _get_val(rec, "superseded_by")
-            if isinstance(superseded_ids, list):
-                for sup_id in superseded_ids:
-                    if sup_id:
-                        session.run(
-                            _MERGE_SUPERSESSION_CYPHER,
-                            {
-                                "quote_id": quote_id,
-                                "superseded_id": str(sup_id),
-                                "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
-                            },
-                        )
+            newer_ids = (
+                [str(item) for item in superseded_ids if item]
+                if isinstance(superseded_ids, list)
+                else []
+            )
+            for newer_id in newer_ids:
+                session.run(
+                    _MERGE_SUPERSESSION_CYPHER,
+                    {
+                        "newer_quote_id": newer_id,
+                        "older_quote_id": quote_id,
+                        "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
+                    },
+                )
             superseded_id = _get_val(rec, "superseded_id")
-            if not superseded_id:
+            if not superseded_id and not newer_ids:
                 notes_text = str(_get_val(rec, "notes", ""))
                 m = re.search(r"supersedes:?\s*(Q-\d{8}-\d{4})", notes_text, re.IGNORECASE)
                 if m:
@@ -206,8 +212,8 @@ def project_records_to_graph(
                 session.run(
                     _MERGE_SUPERSESSION_CYPHER,
                     {
-                        "quote_id": quote_id,
-                        "superseded_id": str(superseded_id),
+                        "newer_quote_id": quote_id,
+                        "older_quote_id": str(superseded_id),
                         "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
                     },
                 )
@@ -253,7 +259,11 @@ def sync_postgres_to_graph(
            qc.section AS section_id,
            coalesce(obs.is_obsolete, false) AS is_obsolete,
            obs.reason AS obsolete_reason,
-           obs.superseded_by,
+           -- obsolescence_flags stores internal quote_id UUIDs; the graph is keyed by
+           -- canonical_quote_id, so resolve them before projecting SUPERSEDES edges.
+           (SELECT array_agg(cq.canonical_quote_id ORDER BY cq.canonical_quote_id)
+            FROM quotes cq
+            WHERE cq.quote_id = ANY(obs.superseded_by)) AS superseded_by,
            q.quote_metadata->>'notes' AS notes,
            a.canonical_url AS article_url,
            a.title AS article_name,

@@ -104,6 +104,13 @@ quotes_table = Table(
     Column("translation_hash", String, nullable=False, default=""),
     Column("translation_status", String, nullable=False, default=""),
     Column("created_at", DateTime(timezone=True), nullable=True),
+    UniqueConstraint(
+        "article_id",
+        "quote_text_normalised",
+        "char_start",
+        "char_end",
+        name="quotes_span_unique",
+    ),
 )
 
 quote_classifications_table = Table(
@@ -154,6 +161,7 @@ eval_runs_table = Table(
     Column("thresholds", JSON, nullable=False),
     Column("passed", Boolean, nullable=False),
     Column("trace_id", String, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=True),
 )
 
 pipeline_runs_table = Table(

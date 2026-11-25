@@ -113,8 +113,8 @@ def test_propose_obsolescence_builds_evidence_and_holds_for_review() -> None:
         actor = "bi"
         escalation_reason = "unclear"
 
-    assert propose_obsolescence([older, newer], now=now, judge=NoJudge()) == []
-    flags = propose_obsolescence([older, newer], now=now, judge=Judge())
+    assert propose_obsolescence([older, newer], now=now, judge=NoJudge()).flags == []
+    flags = propose_obsolescence([older, newer], now=now, judge=Judge()).flags
     assert len(flags) == 1
     assert flags[0].evidence.old_quote_id == older.quote_id
     assert flags[0].evidence.is_primary_evidence
@@ -168,13 +168,76 @@ def test_propose_obsolescence_calls_provider_for_same_speaker_only() -> None:
             newer.quote_id: "Alex Morgan",
             other.quote_id: "Sam Lee",
         },
-    )
+    ).flags
 
     assert [flag.evidence.old_quote_id for flag in flags] == [older.quote_id]
     assert len(provider.calls) == 1
     assert provider.calls[0]["task"] == "obsolescence_review"
     assert provider.calls[0]["old_quote_id"] == older.quote_id
     assert provider.calls[0]["newer_quote_id"] == newer.quote_id
+
+
+def test_propose_obsolescence_caps_judge_calls_and_reports_counts() -> None:
+    from media_quotes.risk_controls.obsolescence import propose_obsolescence
+
+    def record(i: int) -> ExportQuoteRecord:
+        return ExportQuoteRecord.model_construct(
+            quote_id=f"Q-{i:04d}",
+            quote_text_original=f"Statement number {i}",
+            topic_id="ukraine-war",
+            section_id="war_intensity",
+            publication_date=date(2026, 11, 1) + timedelta(days=i),
+            original_reporting_flag="first-hand",
+            rights_status="license_held",
+            access_mode="licensed_database",
+            article_url=f"https://example.invalid/{i}",
+            content_hash="a" * 64,
+        )
+
+    class CountingJudge:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @property
+        def verdict(self) -> str:
+            return "reject"  # never confirms, so the inner break never fires
+
+        @property
+        def confidence(self) -> float:
+            return 0.0
+
+        @property
+        def rationale(self) -> str:
+            return ""
+
+        @property
+        def actor(self) -> str:
+            return "test"
+
+        @property
+        def escalation_reason(self) -> str:
+            return ""
+
+        def decide(self, *, task: str, context: Mapping[str, Any]) -> "CountingJudge":
+            self.calls += 1
+            return self
+
+    records = [record(i) for i in range(6)]  # 15 eligible pairs
+    now = datetime(2026, 11, 19, 12, tzinfo=UTC)
+
+    uncapped = propose_obsolescence(records, now=now, judge=CountingJudge())
+    assert (uncapped.pairs_evaluated, uncapped.pairs_skipped) == (15, 0)
+
+    judge = CountingJudge()
+    capped = propose_obsolescence(records, now=now, judge=judge, max_pairs=4)
+    assert capped.flags == []
+    assert (capped.pairs_evaluated, capped.pairs_skipped) == (4, 11)
+    assert judge.calls == 4
+
+    zero = CountingJudge()
+    none = propose_obsolescence(records, now=now, judge=zero, max_pairs=0)
+    assert (none.pairs_evaluated, none.pairs_skipped) == (0, 15)
+    assert zero.calls == 0
 
 
 def test_evidence_bundle_rejects_empty_span_and_coercion() -> None:

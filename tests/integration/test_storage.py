@@ -663,6 +663,55 @@ def test_article_upsert_sql_guards_fixture_overwrite() -> None:
     ) in article_sql
 
 
+def test_article_reingest_refreshes_identity_fields() -> None:
+    """A re-ingest must refresh title/date/language/hash, not just extracted text."""
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from media_quotes.db.tables import articles_table, quotes_table
+
+    engine = create_engine("sqlite://")
+    articles_table.create(engine)
+    quotes_table.create(engine)
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
+    first = records[0]
+
+    def offsets(content_hash: str) -> dict[str, dict[str, object]]:
+        return {
+            first.quote_id: {
+                "char_start": 0,
+                "char_end": len(first.quote_text_original),
+                "content_hash": content_hash,
+            }
+        }
+
+    updated = first.model_copy(
+        update={
+            "article_name": "Updated headline",
+            "publication_date": date(2026, 11, 20),
+            "source_language": "fr",
+            "content_hash": "b" * 64,
+        }
+    )
+    with Session(engine) as session:
+        persist_articles_and_quotes(session, [first], offsets("a" * 64))
+        persist_articles_and_quotes(session, [updated], offsets("b" * 64))
+        row = session.execute(
+            select(
+                articles_table.c.title,
+                articles_table.c.publication_date,
+                articles_table.c.language,
+                articles_table.c.content_hash,
+                articles_table.c.provenance,
+            )
+        ).one()
+        assert row.title == "Updated headline"
+        assert row.publication_date == date(2026, 11, 20)
+        assert row.language == "fr"
+        assert row.content_hash == "b" * 64
+        assert row.provenance == "fixture"
+
+
 def test_fixture_quote_spans_are_skipped_for_live_articles() -> None:
     """A fixture replay must not add quote spans to an article that is already live."""
     from sqlalchemy.sql import Insert, Select
