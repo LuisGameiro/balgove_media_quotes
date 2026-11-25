@@ -13,18 +13,20 @@ Usage examples (PowerShell):
 
   3. Validate data getting for a single source (T0 gate, fixtures, and feed connectivity):
      .\.venv\Scripts\python.exe scripts/test_scraper.py --validate-source guardian
+     .\.venv\Scripts\python.exe scripts/test_scraper.py --validate-source guardian --live-routes
      .\.venv\Scripts\python.exe scripts/test_scraper.py --validate-source reuters
 
   4. Audit data getting readiness across all 28 sources in the registry:
      .\.venv\Scripts\python.exe scripts/test_scraper.py --validate-all-sources
+     .\.venv\Scripts\python.exe scripts/test_scraper.py --validate-all-sources --live-routes
 
   5. Test a single real article page (ONLY use a URL discovered by --live-feed):
      .venv/Scripts/python.exe scripts/test_scraper.py `
        --source-id guardian --live --url <real-article-url>
 
-  6. Test scraping on local sample HTML (my_article.html) or fixture HTML:
+   6. Test scraping on a generated sample (var/test-output/samples/article.html) or fixture HTML:
      .\.venv\Scripts\python.exe scripts/test_scraper.py `
-       --source-id guardian --html-file my_article.html
+        --source-id guardian --html-file var/test-output/samples/article.html
      .\.venv\Scripts\python.exe scripts/test_scraper.py `
        --source-id reuters --html-file data/fixtures/reuters/synthetic-reuters-2026-11-18.html
 
@@ -38,45 +40,38 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import csv
-import importlib
 import json
-import re
 import sys
-from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
-from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 
-from media_quotes.adapters import (
-    UKRAINE_WAR_KEYWORDS,
-    BlobCache,
-    build_adapter,
-    is_topic_relevant,
-    parse_newspaper_html,
-    parse_rss_feed,
-    parse_sitemap_xml,
-)
+from media_quotes import diagnostics
+from media_quotes.adapters import BlobCache, parse_rss_feed, parse_sitemap_xml
 from media_quotes.config import get_settings
-from media_quotes.enums import SECTION_IDS
+from media_quotes.diagnostics import (
+    TopicContext,
+    _list_available_fixture_html,
+    _load_source_row,
+    _resolve_feed_url,
+    _route_attr,
+    _unapproved_probe_refused,
+    detect_article_language,
+    discover_sections,
+    evaluate_source_topic,
+    expected_sections_for_fixture,
+    fixture_html_files,
+    has_translation_rights,
+    inspect_html_pipeline,
+    is_source_route_approved,
+    load_topic_configuration,
+    run_live_feed,
+    validate_all_sources,
+    validate_single_source,
+)
 from media_quotes.exceptions import SourceNotPermitted
 from media_quotes.fetch import FetchPolicy, fetch_bytes, fetch_policy_from
-from media_quotes.live import fetch_feed_documents
-from media_quotes.models import QuoteCandidate
-from media_quotes.registry import SourceRegistryRow
-from media_quotes.source_configs import (
-    SourceConfig,
-    load_registry_rows,
-    load_routes_from_sources,
-    load_source_config,
-)
-from media_quotes.topics import TopicPack, load_all_topic_rules, load_topic_pack
-from media_quotes.verification_stages import verify_pipeline
 
 
 def _policy() -> FetchPolicy:
@@ -166,584 +161,6 @@ DEMO_NEWSPAPER_HTML = """<!DOCTYPE html>
 """
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-# Optional workstream APIs are discovered lazily so this diagnostic stays usable while the
-# topic/language modules are being introduced. Offline equivalents keep the safety gates active.
-_TOPIC_MODULE_NAMES = (
-    "media_quotes.pipeline",
-    "media_quotes.relevance",
-    "media_quotes.topics",
-    "media_quotes.topic_gate",
-    "media_quotes.registry",
-    "media_quotes.source_topics",
-    "media_quotes.topic_routes",
-)
-_LANGUAGE_MODULE_NAMES = (
-    "media_quotes.language",
-    "media_quotes.linguistics",
-    "media_quotes.relevance",
-)
-
-_OFF_TOPIC_DIAGNOSTIC_HTML = """<!doctype html>
-<html lang="en">
-<head>
-  <title>Municipal bus timetable changes approved</title>
-  <link rel="canonical" href="https://example.invalid/civic/bus-timetable">
-</head>
-<body>
-  <article>
-    <h1>Municipal bus timetable changes approved</h1>
-    <p>The city council approved a new bakery delivery schedule and a revised bus timetable.</p>
-    <p>"The new timetable starts on Monday and reduces waiting time at the central stop," said
-    Transport Officer Anna Nowak, a municipal spokesperson.</p>
-    <p>Residents can collect a printed leaflet from the public library.</p>
-  </article>
-</body>
-</html>
-"""
-
-
-def _import_symbol(
-    module_names: tuple[str, ...], symbol_names: tuple[str, ...]
-) -> Callable[..., Any] | None:
-    for module_name in module_names:
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
-            continue
-        for symbol_name in symbol_names:
-            candidate = getattr(module, symbol_name, None)
-            if callable(candidate):
-                return cast(Callable[..., Any], candidate)
-    return None
-
-
-def _as_bool(value: object, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "approved"}
-
-
-def _as_str(value: object) -> str:
-    return "" if value is None else str(value).strip()
-
-
-@dataclass(frozen=True)
-class _FallbackRoute:
-    source_id: str
-    route_id: str
-    approved: bool = False
-    translation_rights_confirmed: bool = False
-    topic_rule_id: str = ""
-    license_reference: str = ""
-    route_type: str = ""
-    discovery_url: str = ""
-
-
-def _fallback_load_routes(path: Path) -> dict[str, list[Any]]:
-    if not path.exists():
-        return {}
-    routes: dict[str, list[Any]] = {}
-    with path.open(encoding="utf-8", newline="") as handle:
-        for raw_row in csv.DictReader(handle):
-            row = {str(key).strip().lower(): value for key, value in raw_row.items()}
-            source_id = _as_str(row.get("source_id"))
-            if not source_id:
-                continue
-            route = _FallbackRoute(
-                source_id=source_id,
-                route_id=_as_str(row.get("route_id")),
-                approved=_as_bool(row.get("approved")),
-                translation_rights_confirmed=_as_bool(row.get("translation_rights_confirmed")),
-                topic_rule_id=_as_str(row.get("topic_rule_id")),
-                license_reference=_as_str(row.get("license_reference")),
-                route_type=_as_str(row.get("route_type")),
-                discovery_url=_as_str(row.get("discovery_url")),
-            )
-            routes.setdefault(source_id, []).append(route)
-    return routes
-
-
-def _fallback_load_rules(path: Path) -> dict[str, dict[str, Any]]:
-    if not path.exists():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, dict) and isinstance(payload.get("rule_id"), str):
-        return {payload["rule_id"]: payload}
-    rules: object = payload
-    if isinstance(payload, dict):
-        rules = payload.get("rules") or payload.get("topic_rules") or payload
-    if isinstance(rules, dict):
-        return {str(key): dict(value) for key, value in rules.items() if isinstance(value, dict)}
-    if isinstance(rules, list):
-        return {
-            _as_str(item.get("rule_id")) or f"rule-{index}": dict(item)
-            for index, item in enumerate(rules)
-            if isinstance(item, dict)
-        }
-    return {}
-
-
-def _normalise_routes(loaded: object) -> dict[str, list[Any]]:
-    if isinstance(loaded, dict):
-        pairs = loaded.items()
-    elif isinstance(loaded, (list, tuple)):
-        grouped: dict[str, list[Any]] = {}
-        for route in loaded:
-            source_id = _as_str(_route_attr(route, "source_id"))
-            if source_id:
-                grouped.setdefault(source_id, []).append(route)
-        return grouped
-    else:
-        return {}
-    return {
-        _as_str(source_id): routes if isinstance(routes, list) else [routes]
-        for source_id, routes in pairs
-        if _as_str(source_id)
-    }
-
-
-def _load_source_config_optional(source_id: str) -> SourceConfig | None:
-    settings = get_settings()
-    try:
-        return load_source_config(source_id, settings.sources_dir)
-    except (FileNotFoundError, ValueError):
-        return None
-
-
-def _resolve_feed_url(
-    row: SourceRegistryRow,
-    *,
-    topic_id: str | None = None,
-    feed_url_override: str = "",
-) -> str:
-    if feed_url_override:
-        return feed_url_override
-    cfg = _load_source_config_optional(row.source_id)
-    if cfg is not None:
-        resolved = cfg.discovery_feed_url(topic_id)
-        if resolved:
-            return resolved
-    return row.feed_url
-
-
-def _resolve_topic_pack(topic_id: str | None = None) -> TopicPack | None:
-    settings = get_settings()
-    target = (topic_id or settings.active_topic).strip()
-    if not target:
-        return None
-    try:
-        return load_topic_pack(target, settings.topics_dir)
-    except FileNotFoundError:
-        if topic_id is not None:
-            raise
-        return None
-
-
-@dataclass
-class TopicContext:
-    """Resolved topic/route configuration shared by the validation helpers and CLI."""
-
-    routes: dict[str, list[Any]]
-    rules: dict[str, dict[str, Any]]
-    source_topics_csv: Path
-    topic_rules_path: Path
-    topic_pack: TopicPack | None = None
-
-    @property
-    def configured(self) -> bool:
-        return bool(self.routes) or bool(self.rules)
-
-
-def load_topic_configuration(
-    source_topics_csv: Path | None = None,
-    topic_rules_path: Path | None = None,
-    *,
-    topic_id: str | None = None,
-) -> TopicContext:
-    """Load source routes and topic rules from modular JSON packs or CSV/JSON fallbacks."""
-    settings = get_settings()
-    default_routes = getattr(settings, "source_topics_csv", None)
-    default_rules = getattr(settings, "topic_rules_path", None)
-    routes_path = Path(
-        source_topics_csv or default_routes or REPO_ROOT / "data" / "source_topic_routes.csv"
-    )
-    rules_file = Path(topic_rules_path or default_rules or REPO_ROOT / "data" / "topic_rules.json")
-    custom_override = source_topics_csv is not None or topic_rules_path is not None
-    topic_pack = (
-        _resolve_topic_pack(topic_id) if (topic_id is not None or not custom_override) else None
-    )
-
-    if source_topics_csv is None and settings.sources_dir.is_dir():
-        routes = _normalise_routes(
-            load_routes_from_sources(settings.sources_dir, fallback_csv=routes_path)
-        )
-    else:
-        routes_loader = _import_symbol(
-            _TOPIC_MODULE_NAMES, ("load_source_topic_routes", "load_source_topics")
-        )
-        loaded_routes: object = None
-        if routes_loader is not None and routes_path.exists():
-            try:
-                loaded_routes = routes_loader(routes_path)
-            except (OSError, ValueError, TypeError):
-                loaded_routes = None
-        routes = (
-            _normalise_routes(loaded_routes)
-            if loaded_routes
-            else _fallback_load_routes(routes_path)
-        )
-
-    if topic_rules_path is None and settings.topics_dir.is_dir():
-        rules = load_all_topic_rules(settings.topics_dir, fallback_rules_path=rules_file)
-    else:
-        rules_loader = _import_symbol(_TOPIC_MODULE_NAMES, ("load_topic_rules",))
-        loaded_rules: object = None
-        if rules_loader is not None and rules_file.exists():
-            try:
-                loaded_rules = rules_loader(rules_file)
-            except (OSError, ValueError, TypeError):
-                loaded_rules = None
-        if isinstance(loaded_rules, dict) and all(
-            isinstance(value, dict) for value in loaded_rules.values()
-        ):
-            rules = {str(key): dict(value) for key, value in loaded_rules.items()}
-        else:
-            rules = _fallback_load_rules(rules_file)
-
-    return TopicContext(
-        routes=routes,
-        rules=rules,
-        source_topics_csv=routes_path,
-        topic_rules_path=rules_file,
-        topic_pack=topic_pack,
-    )
-
-
-def _route_attr(route: Any, name: str, default: object = "") -> object:
-    if isinstance(route, dict):
-        return route.get(name, default)
-    return getattr(route, name, default)
-
-
-def _route_matches_topic(route: Any, topic_pack: TopicPack | None) -> bool:
-    if topic_pack is None:
-        return True
-    route_topic = _as_str(_route_attr(route, "topic_id"))
-    route_rule = _as_str(_route_attr(route, "topic_rule_id"))
-    if route_topic and route_topic == topic_pack.topic_id:
-        return True
-    return bool(
-        route_rule
-        and (
-            route_rule == topic_pack.relevance.rule_id
-            or route_rule == topic_pack.topic_id
-            or route_rule.startswith(f"{topic_pack.topic_id}-")
-        )
-    )
-
-
-def _source_routes(context: TopicContext, source_id: str) -> list[Any]:
-    routes = list(context.routes.get(source_id, []))
-    if context.topic_pack is None:
-        return routes
-    return [route for route in routes if _route_matches_topic(route, context.topic_pack)]
-
-
-def _approved_routes(context: TopicContext, source_id: str) -> list[Any]:
-    return [
-        route
-        for route in _source_routes(context, source_id)
-        if _as_bool(_route_attr(route, "approved"))
-    ]
-
-
-def is_source_route_approved(
-    source_id: str,
-    context: TopicContext,
-    row: SourceRegistryRow | None = None,
-) -> bool:
-    """Approved means an approved route AND (when supplied) a usable T0 row."""
-    approved = bool(_approved_routes(context, source_id)) if context.routes else True
-    return approved and (row is None or row.usable)
-
-
-def has_translation_rights(source_id: str, context: TopicContext) -> bool:
-    routes = _source_routes(context, source_id)
-    if not routes:
-        return False
-    return any(
-        _as_bool(_route_attr(route, "approved"))
-        and _as_bool(_route_attr(route, "translation_rights_confirmed"))
-        for route in routes
-    )
-
-
-def _flatten_terms(value: object) -> list[str]:
-    if isinstance(value, str):
-        return [value.strip().lower()] if value.strip() else []
-    if isinstance(value, dict):
-        terms: list[str] = []
-        for key, nested in value.items():
-            terms.extend(_flatten_terms(key))
-            if not isinstance(nested, (int, float, bool)):
-                terms.extend(_flatten_terms(nested))
-        return terms
-    if isinstance(value, (list, tuple, set)):
-        return [term for item in value for term in _flatten_terms(item)]
-    return []
-
-
-def _fallback_evaluate_topic(
-    rule: dict[str, Any],
-    article: dict[str, Any],
-    *,
-    topic_pack: TopicPack | None = None,
-) -> dict[str, Any]:
-    title = _as_str(article.get("title") or article.get("headline"))
-    text = _as_str(article.get("text") or article.get("article_text") or article.get("body"))
-    url = _as_str(article.get("url") or article.get("canonical_url"))
-    tags = article.get("tags") or article.get("tag") or []
-    tag_text = (
-        " ".join(str(tag) for tag in tags) if isinstance(tags, (list, tuple, set)) else str(tags)
-    )
-    combined = f"{tag_text} {title} {text} {url}".lower()
-    anchors = _flatten_terms(rule.get("anchors") or rule.get("required_terms"))
-    if not anchors:
-        anchors = (
-            list(topic_pack.all_quick_keywords())
-            if topic_pack is not None
-            else list(UKRAINE_WAR_KEYWORDS)
-        )
-    supporting = _flatten_terms(rule.get("supporting_terms"))
-    terms = list(dict.fromkeys(anchors + supporting))
-    matched = [term for term in terms if term and term in combined]
-    exclusions = [
-        term for term in _flatten_terms(rule.get("exclusions")) if term and term in combined
-    ]
-    keyword_hit = is_topic_relevant(text, topic_pack=topic_pack, title=title, url=url) or any(
-        term in combined for term in anchors
-    )
-    accepted = bool(keyword_hit and matched) and not exclusions
-    reasons = ["matched topic terms"] if matched else ["no topic anchor matched"]
-    if exclusions:
-        reasons.append("excluded terms present")
-    if not keyword_hit:
-        label = topic_pack.name if topic_pack is not None else "Ukraine-war"
-        reasons.append(f"no {label} domain signal")
-    return {
-        "status": "accepted" if accepted else "rejected",
-        "score": min(1.0, len(matched) / max(1, len(anchors))) if accepted else 0.0,
-        "matched_terms": matched[:10],
-        "rule_id": _as_str(rule.get("rule_id")),
-        "rule_version": _as_str(rule.get("version")),
-        "reasons": reasons,
-    }
-
-
-def _normalise_topic_decision(decision: Any) -> dict[str, Any]:
-    if isinstance(decision, dict):
-        raw = decision
-    else:
-        raw = {
-            name: getattr(decision, name, None)
-            for name in ("status", "score", "matched_terms", "rule_id", "rule_version", "reasons")
-        }
-    matched = raw.get("matched_terms") or []
-    reasons = raw.get("reasons") or []
-    try:
-        score = float(raw.get("score") or 0.0)
-    except (TypeError, ValueError):
-        score = 0.0
-    return {
-        "status": _as_str(raw.get("status")) or "unknown",
-        "score": score,
-        "matched_terms": [str(term) for term in matched],
-        "rule_id": _as_str(raw.get("rule_id")),
-        "rule_version": _as_str(raw.get("rule_version")),
-        "reasons": [str(reason) for reason in reasons],
-    }
-
-
-def evaluate_source_topic(
-    source_id: str,
-    article: dict[str, Any],
-    context: TopicContext | None = None,
-    *,
-    topic_pack: TopicPack | None = None,
-) -> dict[str, Any]:
-    """Evaluate one article through the source's route rule, never through the network."""
-    context = context or load_topic_configuration()
-    pack = topic_pack or context.topic_pack
-    routes = _source_routes(context, source_id)
-    selected = next(
-        (
-            route
-            for route in routes
-            if _as_bool(_route_attr(route, "approved"))
-            and _as_str(_route_attr(route, "topic_rule_id")) in context.rules
-        ),
-        None,
-    )
-    if selected is None:
-        selected = next(
-            (
-                route
-                for route in routes
-                if _as_str(_route_attr(route, "topic_rule_id")) in context.rules
-            ),
-            None,
-        )
-    rule_id = _as_str(_route_attr(selected, "topic_rule_id")) if selected is not None else ""
-    rule = context.rules.get(rule_id, {})
-    if not rule and pack is not None:
-        rule_id = pack.relevance.rule_id
-        rule = pack.to_rule_dict()
-    # A topic-routed fixture has no publisher tags; supply the rule's configured topic label
-    # so the gate checks the body's supporting terms rather than treating it as untagged.
-    enriched = dict(article)
-    tags = enriched.get("tags") or enriched.get("tag") or []
-    tags = list(tags) if isinstance(tags, (list, tuple, set)) else [str(tags)]
-    if "ukraine" in rule_id.lower() and not any("ukraine" in str(tag).lower() for tag in tags):
-        tags.append("Ukraine war")
-    enriched["tags"] = tags
-    evaluator = _import_symbol(_TOPIC_MODULE_NAMES, ("evaluate_topic",))
-    if evaluator is not None and rule:
-        try:
-            decision = _normalise_topic_decision(evaluator(rule, enriched))
-        except TypeError:
-            decision = _normalise_topic_decision(evaluator(rule, SimpleNamespace(**enriched)))
-    else:
-        decision = _fallback_evaluate_topic(rule, enriched, topic_pack=pack)
-    decision.update(
-        {
-            "source_id": source_id,
-            "route_id": _as_str(_route_attr(selected, "route_id")),
-            "rule_found": bool(rule),
-            "route_approved": bool(
-                selected is not None and _as_bool(_route_attr(selected, "approved"))
-            ),
-        }
-    )
-    return decision
-
-
-def detect_article_language(text: str) -> dict[str, Any]:
-    """Classify quote language with the workstream API or a deterministic offline detector."""
-    detector = _import_symbol(_LANGUAGE_MODULE_NAMES, ("detect_language",))
-    if detector is not None:
-        try:
-            decision = detector(text)
-        except TypeError:
-            decision = detector(text=text)
-        if isinstance(decision, dict):
-            raw = decision
-        else:
-            raw = {
-                name: getattr(decision, name, None)
-                for name in ("language", "confidence", "evidence")
-            }
-        evidence = raw.get("evidence") or []
-        try:
-            confidence = float(raw.get("confidence") or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        return {
-            "language": _as_str(raw.get("language")) or "unknown",
-            "confidence": confidence,
-            "evidence": [str(item) for item in evidence][:8],
-        }
-
-    cyrillic = sorted(set("йцукенгшщзхъфывапролджэячсмитьбюё") & set(text.lower()))
-    ukrainian_markers = [char for char in "іїєґ" if char in text.lower()]
-    han = sum("\u4e00" <= char <= "\u9fff" for char in text)
-    letters = sum(char.isalpha() for char in text)
-    fallback_evidence: list[str] = []
-    if not text.strip():
-        return {"language": "unknown", "confidence": 0.0, "evidence": ["empty_text"]}
-    if han > 4:
-        return {"language": "zh", "confidence": 0.85, "evidence": ["han_script"]}
-    if cyrillic and letters and len(cyrillic) / letters > 0.05:
-        language = "uk" if ukrainian_markers else "ru"
-        fallback_evidence = [
-            "cyrillic_script",
-            "ukrainian_markers" if ukrainian_markers else "russian_script",
-        ]
-        confidence = 0.92 if ukrainian_markers else 0.8
-    elif any(accent in text for accent in "àçèêëîôùûœ"):
-        language, confidence, fallback_evidence = "fr", 0.74, ["latin_accents_fr"]
-    elif any(accent in text for accent in "äöüß"):
-        language, confidence, fallback_evidence = "de", 0.74, ["latin_accents_de"]
-    else:
-        language, confidence, fallback_evidence = "en", 0.7, ["latin_script"]
-    return {"language": language, "confidence": confidence, "evidence": fallback_evidence}
-
-
-def discover_sections(sections_csv: Path | None = None) -> list[str]:
-    """Return canonical section ids in registry order; tolerate a missing catalog during rollout."""
-    settings = get_settings()
-    path = Path(sections_csv or settings.sections_csv)
-    if not path.exists():
-        return list(SECTION_IDS)
-    with path.open(encoding="utf-8", newline="") as handle:
-        sections = [row["section_id"] for row in csv.DictReader(handle) if row.get("section_id")]
-    return list(dict.fromkeys(sections)) or list(SECTION_IDS)
-
-
-def fixture_html_files(source_id: str) -> list[Path]:
-    settings = get_settings()
-    fixture_dir = settings.fixtures_dir / source_id
-    return sorted(fixture_dir.glob("*.html")) if fixture_dir.exists() else []
-
-
-def expected_sections_for_fixture(path: Path, sections: list[str] | None = None) -> list[str]:
-    """Read a fixture's declared sections from its filename and HTML labels."""
-    valid = set(sections or discover_sections())
-    if not path.exists():
-        return []
-    found: set[str] = set()
-    for token in re.split(r"[^a-z0-9_]+", path.stem.lower()):
-        if token in valid:
-            found.add(token)
-    html = path.read_text(encoding="utf-8", errors="replace")
-    for pattern in (
-        r"data-(?:section|topic-section)\s*=\s*[\"']([^\"']+)[\"']",
-        r"<meta\s+name=[\"']section[\"']\s+content=[\"']([^\"']+)[\"']",
-        r"<!--\s*section:\s*([a-z_]+)\s*-->",
-    ):
-        for match in re.findall(pattern, html, flags=re.IGNORECASE):
-            value = str(match).strip().lower()
-            if value in valid:
-                found.add(value)
-    return sorted(found)
-
-
-def _load_source_row(source_id: str) -> SourceRegistryRow:
-    settings = get_settings()
-    rows = {
-        row.source_id: row
-        for row in load_registry_rows(settings.sources_dir, fallback_csv=settings.sources_csv)
-    }
-    if source_id not in rows:
-        raise ValueError(f"Unknown source_id '{source_id}'. Available: {sorted(rows)}")
-    return rows[source_id]
-
-
-def _list_available_fixture_html() -> list[str]:
-    settings = get_settings()
-    if not settings.fixtures_dir.exists():
-        return []
-    return [
-        str(p.relative_to(Path.cwd())).replace("\\", "/")
-        if p.is_relative_to(Path.cwd())
-        else str(p)
-        for p in sorted(settings.fixtures_dir.rglob("*.html"))
-    ]
-
-
 def format_live_fetch_error(url: str, status: int, reason: str, source_id: str) -> str:
     """Explain a failed live article fetch without hiding the HTTP status."""
     script = ".\\.venv\\Scripts\\python.exe scripts/test_scraper.py"
@@ -763,7 +180,7 @@ def format_live_fetch_error(url: str, status: int, reason: str, source_id: str) 
                 f"  {script} --source-id {source_id} --live --url <real-article-url>",
                 "",
                 "To test extraction from saved HTML instead:",
-                f"  {script} --source-id {source_id} --html-file my_article.html",
+                f"  {script} --source-id {source_id} --html-file {SAMPLE_HTML_PATH}",
             ]
         )
     else:
@@ -794,7 +211,7 @@ def _read_required_file(path: Path, flag_name: str) -> str:
             hint_lines = [
                 f"ERROR: File not found for {flag_name}: '{path}'",
                 "",
-                "Tip: Pass an existing HTML file (e.g. my_article.html), or generate one:",
+                f"Tip: Pass an existing HTML file (e.g. {SAMPLE_HTML_PATH}), or generate one:",
                 f"  {cmd}",
             ]
             if available:
@@ -807,759 +224,36 @@ def _read_required_file(path: Path, flag_name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _replay_topic_label(url: str) -> str:
-    """Recognise the curated synthetic source x section fixture naming convention."""
-    match = re.search(r"synthetic-[a-z0-9_]+-topic-([a-z_]+)", str(url), flags=re.IGNORECASE)
-    return match.group(1).lower() if match else ""
+# Canonical generated sample; --write-sample recreates it without touching the repository root.
+SAMPLE_HTML_PATH = "var/test-output/samples/article.html"
 
-
-def _article_from_parsed(
-    parsed: dict[str, Any],
-    source_row: SourceRegistryRow,
-    source_url: str,
-) -> dict[str, Any]:
-    text = str(parsed.get("article_text") or "")
-    raw_tags = parsed.get("tags") or parsed.get("keywords") or []
-    tags = list(raw_tags) if isinstance(raw_tags, (list, tuple, set)) else [str(raw_tags)]
-    # Synthetic topic fixtures carry their section in the replay URL; that is publishable
-    # topic metadata for replay even when the short body has no location anchor.
-    replay_section = _replay_topic_label(source_url)
-    if replay_section:
-        tags.append(f"Ukraine war {replay_section}")
-    return {
-        "title": parsed.get("title"),
-        "headline": parsed.get("title"),
-        "text": text,
-        "article_text": text,
-        "body": text,
-        "url": source_url,
-        "canonical_url": parsed.get("canonical_url") or source_url,
-        "source_id": source_row.source_id,
-        "source_language": source_row.language,
-        "publication_date": parsed.get("publication_date"),
-        "tags": tags,
-    }
-
-
-def _category_report(sections: list[str], quotes: list[dict[str, Any]]) -> dict[str, Any]:
-    counts: dict[str, int] = {section: 0 for section in sections}
-    for quote in quotes:
-        section = _as_str(quote.get("section_id")) or "other"
-        counts[section] = counts.get(section, 0) + 1
-    covered = sorted(section for section, count in counts.items() if count)
-    return {
-        "sections": sections,
-        "covered": covered,
-        "missing": [section for section in sections if section not in covered],
-        "counts": counts,
-        "coverage_complete": bool(sections) and all(counts.get(section) for section in sections),
-    }
-
-
-def inspect_html_pipeline(
-    raw_html: str,
-    *,
-    source_row: SourceRegistryRow,
-    source_url: str,
-    window_start: date,
-    window_end: date,
-    require_topic: bool = True,
-    context: TopicContext | None = None,
-    source_topics_csv: Path | None = None,
-    topic_rules_path: Path | None = None,
-    topic_pack: TopicPack | None = None,
-) -> dict[str, Any]:
-    """Run Trafilatura + JSON-LD extraction, quote detection, and 2-stage verification."""
-    context = context or load_topic_configuration(source_topics_csv, topic_rules_path)
-    pack = topic_pack or context.topic_pack
-    source_cfg = _load_source_config_optional(source_row.source_id)
-    active_topic_id = pack.topic_id if pack is not None else "ukraine-war"
-    active_topic_label = pack.name if pack is not None else "Russia-Ukraine war"
-    sections = list(pack.section_ids()) if pack is not None else discover_sections()
-    default_section = pack.default_section if pack is not None else "other"
-
-    # Parse first with the keyword gate disabled: the configured topic rule is the authority
-    # and must see every span before deciding whether the article is publishable.
-    parsed = parse_newspaper_html(
-        raw_html,
-        source_url=source_url,
-        require_ukraine_topic=False,
-        topic_pack=pack,
-        extractor_hints=source_cfg.extractor_hints if source_cfg is not None else None,
-    )
-    text = str(parsed.get("article_text") or "")
-    canonical_url = str(parsed.get("canonical_url") or source_url)
-    keyword_hit = bool(parsed.get("topic_relevant", True))
-    topic_gate = evaluate_source_topic(
-        source_row.source_id,
-        _article_from_parsed(parsed, source_row, canonical_url),
-        context,
-        topic_pack=pack,
-    )
-    topic_ok = topic_gate["status"] == "accepted" or (
-        keyword_hit and topic_gate["status"] != "rejected"
-    )
-    # Curated synthetic fixtures carry their canonical section in the replay URL. Its provenance
-    # is an explicit topical label, so translation/inflection gaps in a rule do not turn the
-    # topic matrix into an off-topic corpus. Unknown/ordinary articles still need a gate hit.
-    replay_section = _replay_topic_label(canonical_url) or _replay_topic_label(source_url)
-    if require_topic and not topic_ok and replay_section:
-        topic_ok = True
-    language_decision = detect_article_language(text)
-    language_decision["evidence"] = language_decision["evidence"][:8]
-    source_identity = {
-        "source_type": str(source_row.source_type),
-        "claim_only": bool(source_row.claim_only),
-    }
-
-    if require_topic and not topic_ok:
-        return {
-            "source_id": source_row.source_id,
-            "topic_id": active_topic_id,
-            "t0_gate_permitted": source_row.usable,
-            **source_identity,
-            "topic_gate": topic_gate,
-            "language_detection": language_decision,
-            "categories": _category_report(sections, []),
-            "translation_readiness": {
-                "rights_confirmed": has_translation_rights(source_row.source_id, context),
-                "detected_language": language_decision["language"],
-                "confidence": language_decision["confidence"],
-                "requires_translation": source_row.requires_translation,
-                "translation_allowed": False,
-                "status": "not_applicable_off_topic",
-            },
-            "rights_status": str(source_row.rights_status),
-            "license_reference": source_row.license_reference or "(none)",
-            "metadata": {
-                "title": parsed.get("title"),
-                "canonical_url": canonical_url,
-                "publication_date": parsed.get("publication_date"),
-                "byline": parsed.get("byline"),
-                "publication_name": parsed.get("publication_name"),
-                "extraction_method": parsed.get("extraction_method"),
-                "extractor_version": parsed.get("extractor_version"),
-                "quality_ok": parsed.get("quality_ok"),
-                "quality_reasons": parsed.get("quality_reasons"),
-                "extracted_text_length": len(text),
-                "topic_relevant": False,
-            },
-            "topic_status": f"rejected_off_topic (only {active_topic_label} articles are accepted)",
-            "quotes_detected": 0,
-            "quotes_verified_publishable": 0,
-            "stage1_prefilter_rejected": {"off_topic": len(parsed.get("quote_spans", []))},
-            "quotes": [],
-        }
-
-    raw_spans = parsed.get("quote_spans", [])
-    if require_topic:
-        spans = [
-            s
-            for s in raw_spans
-            if s.get("section_id") != default_section
-            or is_topic_relevant(str(s.get("quote_text") or ""), topic_pack=pack)
-            or bool(replay_section)
-        ]
-    else:
-        spans = raw_spans
-
-    candidates = [
-        QuoteCandidate(
-            quote_text=str(span["quote_text"]),
-            article_id=uuid5(NAMESPACE_URL, canonical_url),
-            char_start=int(span["char_start"]),
-            char_end=int(span["char_end"]),
-            dom_path=str(span.get("dom_path") or ""),
-            speaker=str(span.get("speaker") or "") or None,
-            attribution_span=str(span.get("attribution_span") or "") or None,
-        )
-        for span in spans
-        if isinstance(span, dict)
-    ]
-
-    adapter = build_adapter(source_row, replay=not source_row.usable)
-    policy_flags = dict(adapter.policy_flags())
-    policy_flags["original_reporting_flag"] = "first-hand"
-
-    settings = get_settings()
-    outcome = verify_pipeline(
-        candidates,
-        text=text,
-        source_row=source_row,
-        policy_flags=policy_flags,
-        metadata=parsed,
-        window_start=window_start,
-        window_end=window_end,
-        max_quote_words=settings.max_quote_words,
-    )
-
-    # Map stage-2 results by (char_start, char_end) so status matches even if stage-1 filters one
-    result_by_span = {
-        (res.candidate.char_start, res.candidate.char_end): res for res in outcome.results
-    }
-
-    quotes_report: list[dict[str, Any]] = []
-    for idx, span in enumerate(spans):
-        q_text = str(span["quote_text"])
-        c_start = int(span["char_start"])
-        c_end = int(span["char_end"])
-        slice_matches = text[c_start:c_end] == q_text
-        res = result_by_span.get((c_start, c_end))
-        v_status = res.status if res is not None else "filtered_stage1"
-        v_reasons = list(res.reasons) if res is not None else []
-        quotes_report.append(
-            {
-                "index": idx + 1,
-                "quote_text": q_text,
-                "word_count": len(q_text.split()),
-                "speaker": span.get("speaker"),
-                "attribution_span": span.get("attribution_span"),
-                "section_id": span.get("section_id"),
-                "char_start": c_start,
-                "char_end": c_end,
-                "exact_offset_slice_match": slice_matches,
-                "verification_status": v_status,
-                "verification_reasons": v_reasons,
-            }
-        )
-
-    quote_language = detect_article_language(
-        " ".join(str(span.get("quote_text") or "") for span in raw_spans) or text
-    )
-    quote_language["evidence"] = quote_language["evidence"][:8]
-    translation_rights = has_translation_rights(source_row.source_id, context)
-    translation_allowed = bool(
-        translation_rights
-        and source_row.requires_translation
-        and quote_language["language"] not in {"", "en", "unknown"}
-        and quote_language["confidence"] >= 0.5
-    )
-    accepted_status = (
-        "accepted_ukraine_war_domain"
-        if active_topic_id == "ukraine-war"
-        else f"accepted_{active_topic_id}"
-    )
-    return {
-        "source_id": source_row.source_id,
-        "topic_id": active_topic_id,
-        "t0_gate_permitted": source_row.usable,
-        **source_identity,
-        "topic_gate": topic_gate,
-        "language_detection": quote_language,
-        "categories": _category_report(sections, quotes_report),
-        "translation_readiness": {
-            "rights_confirmed": translation_rights,
-            "detected_language": quote_language["language"],
-            "confidence": quote_language["confidence"],
-            "requires_translation": source_row.requires_translation,
-            "translation_allowed": translation_allowed,
-            "status": "ready" if translation_allowed else "rights_or_language_not_confirmed",
-        },
-        "rights_status": str(source_row.rights_status),
-        "license_reference": source_row.license_reference or "(none)",
-        "metadata": {
-            "title": parsed.get("title"),
-            "canonical_url": canonical_url,
-            "publication_date": parsed.get("publication_date"),
-            "byline": parsed.get("byline"),
-            "publication_name": parsed.get("publication_name"),
-            "extraction_method": parsed.get("extraction_method"),
-            "extractor_version": parsed.get("extractor_version"),
-            "quality_ok": parsed.get("quality_ok"),
-            "quality_reasons": parsed.get("quality_reasons"),
-            "extracted_text_length": len(text),
-            "topic_relevant": topic_ok,
-        },
-        "topic_status": accepted_status if topic_ok else "off_topic",
-        "quotes_detected": len(quotes_report),
-        "quotes_verified_publishable": len(outcome.publishable),
-        "stage1_prefilter_rejected": dict(outcome.prefilter.rejected),
-        "quotes": quotes_report,
-    }
-
-
-def run_live_feed(
-    row: SourceRegistryRow,
-    feed_url_override: str = "",
-    limit: int = 2,
-    require_topic: bool = True,
-    topic_id: str | None = None,
-) -> dict[str, Any]:
-    """Fetch live feed for source, discover articles, and scrape top N articles."""
-    pack = _resolve_topic_pack(topic_id)
-    active_topic_id = pack.topic_id if pack is not None else (topic_id or "ukraine-war")
-    feed_url = _resolve_feed_url(row, topic_id=active_topic_id, feed_url_override=feed_url_override)
-    if not feed_url:
-        return {
-            "source_id": row.source_id,
-            "topic_id": active_topic_id,
-            "status": "error_no_feed_url",
-            "message": f"No feed URL registered or known for source '{row.source_id}'. "
-            "Pass --feed-url <https://...> to specify one.",
-        }
-
-    if not row.usable:
-        return {
-            "source_id": row.source_id,
-            "topic_id": active_topic_id,
-            "t0_gate_permitted": False,
-            "rights_status": str(row.rights_status),
-            "status": "blocked_by_t0_gate",
-            "feed_url": feed_url,
-            "message": (
-                "Source is blocked under T0 rights policy. Automated live fetching is strictly "
-                "prohibited without verified written licence. Replay fixture mode is used instead."
-            ),
-        }
-
-    policy = _policy()
-    context = load_topic_configuration(topic_id=active_topic_id)
-    discovered, downloaded = fetch_feed_documents(
-        row,
-        feed_url,
-        policy=policy,
-        topic_pack=pack,
-        require_topic=require_topic,
-        limit=limit,
-    )
-
-    articles_results: list[dict[str, Any]] = []
-    for article in downloaded:
-        if article.error:
-            articles_results.append(
-                {
-                    "url": article.url,
-                    "title": article.title,
-                    "status": "fetch_or_parse_error",
-                    "error": article.error,
-                }
-            )
-            continue
-        rep = inspect_html_pipeline(
-            article.raw.decode("utf-8", errors="replace"),
-            source_row=row,
-            source_url=article.url,
-            window_start=date(2020, 1, 1),
-            window_end=date(2030, 12, 31),
-            require_topic=require_topic,
-            context=context,
-            topic_pack=pack,
-        )
-        rep["url"] = article.url
-        rep["cached_blob"] = article.blob_path
-        articles_results.append(rep)
-    discovered_count = len(discovered)
-
-    return {
-        "source_id": row.source_id,
-        "topic_id": active_topic_id,
-        "source_name": row.source_name,
-        "feed_url": feed_url,
-        "t0_gate_permitted": True,
-        "articles_discovered_in_feed": discovered_count,
-        "articles_scraped_and_verified": len(articles_results),
-        "articles": articles_results,
-    }
-
-
-def _unapproved_probe_refused(row: SourceRegistryRow) -> bool:
-    """Refuse an unapproved fetch; this uses example.invalid and never opens a socket."""
-    try:
-        asyncio.run(
-            fetch_bytes(
-                "https://example.invalid/probe",
-                row=row,
-                policy=_policy(),
-                track_a_approved=False,
-            )
-        )
-    except SourceNotPermitted:
-        return True
-    return False
-
-
-def _probe_approved_route(
-    url: str,
-    row: SourceRegistryRow,
-    *,
-    topic_pack: TopicPack | None = None,
-) -> dict[str, Any]:
-    """Opt-in live health check; callers must first prove the route and T0 row are approved."""
-    if not url:
-        return {"status": "no_route_url", "message": "Approved route has no discovery URL."}
-    try:
-        raw, _ = asyncio.run(
-            fetch_bytes(url, row=row, policy=_policy(), track_a_approved=True, check_dns=True)
-        )
-        body = raw.decode("utf-8", errors="replace")
-        if "<urlset" in body or "<sitemapindex" in body:
-            discovered = parse_sitemap_xml(body, topic_pack=topic_pack, require_topic=True)
-        else:
-            discovered = parse_rss_feed(body, topic_pack=topic_pack, require_topic=True)
-    except SourceNotPermitted:
-        return {"status": "blocked_not_probed", "url": url}
-    except Exception as exc:
-        return {"status": "probe_error", "url": url, "error": str(exc)}
-    return {
-        "status": "reachable",
-        "url": url,
-        "bytes": len(raw),
-        "articles_discovered": len(discovered),
-    }
-
-
-def _validate_single_source_with_context(
-    source_id: str,
-    context: TopicContext,
-    *,
-    live_routes: bool,
-) -> dict[str, Any]:
-    """Implementation shared by the single-source and all-source diagnostics."""
-    row = _load_source_row(source_id)
-    pack = context.topic_pack
-    active_topic_id = pack.topic_id if pack is not None else "ukraine-war"
-    sections = list(pack.section_ids()) if pack is not None else discover_sections()
-    fixture_files = fixture_html_files(source_id)
-    known_feed = _resolve_feed_url(row, topic_id=active_topic_id)
-    approved = is_source_route_approved(source_id, context, row)
-    approved_routes = _approved_routes(context, source_id)
-    approved_route = next(
-        (
-            route
-            for route in approved_routes
-            if known_feed or _as_str(_route_attr(route, "discovery_url"))
-        ),
-        None,
-    )
-
-    gate_enforcement = _unapproved_probe_refused(row)
-    fixture_results: list[dict[str, Any]] = []
-    covered_sections: set[str] = set()
-    quotes_verified = 0
-    replay_status = "no_fixtures"
-    for fixture_path in fixture_files:
-        try:
-            report = inspect_html_pipeline(
-                fixture_path.read_text(encoding="utf-8"),
-                source_row=row,
-                source_url=f"https://{source_id}.invalid/fixture/{fixture_path.stem}",
-                window_start=date(2020, 1, 1),
-                window_end=date(2030, 12, 31),
-                context=context,
-            )
-        except Exception as exc:
-            replay_status = f"error ({exc})"
-            fixture_results.append(
-                {"file": fixture_path.name, "status": "error", "error": str(exc)}
-            )
-            continue
-        declared = expected_sections_for_fixture(fixture_path, sections)
-        covered_sections.update(declared)
-        covered_sections.update(report["categories"]["covered"])
-        quotes_verified += int(report["quotes_verified_publishable"])
-        fixture_results.append(
-            {
-                "file": fixture_path.name,
-                "declared_sections": declared,
-                "topic_status": report["topic_status"],
-                "topic_gate_status": report["topic_gate"]["status"],
-                "sections": report["categories"]["covered"],
-                "quotes_verified_publishable": report["quotes_verified_publishable"],
-            }
-        )
-    if fixture_files and not replay_status.startswith("error"):
-        replay_status = f"ok ({quotes_verified} quotes verified)"
-
-    if fixture_results:
-        representative = fixture_results[0]
-        topic_gate = next(
-            (
-                item.get("topic_gate")
-                for item in fixture_results
-                if item.get("topic_gate_status") == "accepted"
-            ),
-            None,
-        )
-        topic_gate = topic_gate or evaluate_source_topic(
-            source_id,
-            {
-                "source_id": source_id,
-                "title": fixture_files[0].stem,
-                "text": fixture_files[0].read_text(encoding="utf-8", errors="replace"),
-            },
-            context,
-        )
-        language_decision = detect_article_language(
-            fixture_files[0].read_text(encoding="utf-8", errors="replace")
-        )
-        language_source = "first_fixture"
-    else:
-        topic_gate = evaluate_source_topic(
-            source_id,
-            {
-                "source_id": source_id,
-                "title": "Ukraine air defence and ceasefire monitoring",
-                "text": (
-                    "Synthetic diagnostic article about Ukraine, air defence, sanctions and "
-                    "ceasefire negotiations. No real reporting is used."
-                ),
-                "url": f"https://{source_id}.invalid/diagnostic-topic",
-            },
-            context,
-        )
-        language_decision = detect_article_language(row.language)
-        language_source = "source_registry_hint"
-        representative = None
-
-    categories: dict[str, Any] = {
-        "sections": sections,
-        "covered": sorted(covered_sections),
-        "missing": [section for section in sections if section not in covered_sections],
-        "quote_counts_by_section": {
-            section: sum(
-                item["quotes_verified_publishable"]
-                for item in fixture_results
-                if section in item.get("sections", [])
-            )
-            for section in sections
-        },
-    }
-    categories["coverage_complete"] = bool(fixture_files) and not categories["missing"]
-    if categories["coverage_complete"]:
-        categories["status"] = "full"
-    elif fixture_files:
-        categories["status"] = "partial"
-    else:
-        categories["status"] = "missing_fixture"
-
-    rights_confirmed = has_translation_rights(source_id, context)
-    translation_allowed = bool(
-        rights_confirmed
-        and row.requires_translation
-        and language_decision["language"] not in {"", "en", "unknown"}
-        and language_decision["confidence"] >= 0.5
-    )
-    translation_readiness = {
-        "rights_confirmed": rights_confirmed,
-        "detected_language": language_decision["language"],
-        "confidence": language_decision["confidence"],
-        "evidence": language_decision["evidence"][:8],
-        "language_source": language_source,
-        "requires_translation": row.requires_translation,
-        "translation_allowed": translation_allowed,
-        "status": "ready" if translation_allowed else "rights_or_language_not_confirmed",
-    }
-
-    if not live_routes:
-        live_report: dict[str, Any] = {
-            "status": "not_probed",
-            "reason": "live route checks require --live-routes",
-        }
-    elif not approved:
-        live_report = {
-            "status": "blocked_not_probed",
-            "reason": "no approved route or usable T0 row",
-        }
-    else:
-        route_url = _as_str(_route_attr(approved_route, "discovery_url")) if approved_route else ""
-        live_report = _probe_approved_route(route_url or known_feed, row, topic_pack=pack)
-        live_report["route_id"] = _as_str(_route_attr(approved_route, "route_id"))
-
-    warnings: list[str] = []
-    failures: list[dict[str, str]] = []
-    if not gate_enforcement:
-        failures.append(
-            {
-                "source_id": source_id,
-                "code": "gate_enforcement_failed",
-                "message": "Unapproved probe was not refused",
-            }
-        )
-    if not fixture_files:
-        warnings.append("missing_fixture")
-        if context.routes and approved:
-            failures.append(
-                {
-                    "source_id": source_id,
-                    "code": "missing_fixture",
-                    "message": "Approved source has no replay fixture",
-                }
-            )
-    elif categories["missing"]:
-        warnings.append("incomplete_category_coverage")
-        if context.routes and approved:
-            missing = ", ".join(categories["missing"])
-            failures.append(
-                {
-                    "source_id": source_id,
-                    "code": "incomplete_category_coverage",
-                    "message": f"Missing sections: {missing}",
-                }
-            )
-    for item in fixture_results:
-        gate_status = item.get("topic_gate_status")
-        if gate_status == "uncertain":
-            warnings.append(f"topic_gate_uncertain:{item['file']}")
-        if item.get("status") == "error" or gate_status == "rejected":
-            detail = item.get("error") or gate_status
-            failures.append(
-                {
-                    "source_id": source_id,
-                    "code": "fixture_replay_failed",
-                    "message": f"Fixture {item['file']}: {detail}",
-                }
-            )
-    if replay_status.startswith("error"):
-        failures.append({"source_id": source_id, "code": "replay_error", "message": replay_status})
-    if live_report["status"] == "probe_error":
-        failures.append(
-            {
-                "source_id": source_id,
-                "code": "live_route_probe_failed",
-                "message": str(live_report.get("error", "probe failed")),
-            }
-        )
-
-    return {
-        "source_id": row.source_id,
-        "topic_id": active_topic_id,
-        "source_name": row.source_name,
-        "tier": row.tier,
-        "source_type": str(row.source_type),
-        "claim_only": bool(row.claim_only),
-        "rights_status": str(row.rights_status),
-        "access_mode": str(row.access_mode),
-        "t0_permitted": row.usable,
-        "t0_security_boundary_verified": gate_enforcement,
-        "topic_gate": topic_gate,
-        "language_detection": {
-            "language": language_decision["language"],
-            "confidence": language_decision["confidence"],
-            "evidence": language_decision["evidence"][:8],
-            "source": language_source,
-        },
-        "categories": categories,
-        "translation_readiness": translation_readiness,
-        "gate_enforcement": {
-            "unapproved_probe_refused": gate_enforcement,
-            "probe_url": "https://example.invalid/probe",
-            "network_calls": 0,
-        },
-        "route": {
-            "approved": approved,
-            "route_ids": [
-                _as_str(_route_attr(route, "route_id"))
-                for route in _source_routes(context, source_id)
-            ],
-            "topic_rule_id": _as_str(
-                _route_attr(
-                    approved_routes[0]
-                    if approved_routes
-                    else (_source_routes(context, source_id) or [None])[0],
-                    "topic_rule_id",
-                )
-            ),
-            "fixture_replay": any(
-                "fixture" in _as_str(_route_attr(route, "route_type"))
-                or "fixture" in _as_str(_route_attr(route, "route_id"))
-                for route in _source_routes(context, source_id)
-            ),
-        },
-        "fixtures": {
-            "count": len(fixture_files),
-            "files": [path.name for path in fixture_files],
-            "replay_status": replay_status,
-            "results": fixture_results,
-            "representative_status": (
-                representative.get("topic_status") if representative else "no_fixtures"
-            ),
-            "warnings": warnings,
-        },
-        "feed": {
-            "url": known_feed or "(none registered)",
-            "live_supported": bool(known_feed and approved),
-        },
-        "live_routes": live_report,
-        "warnings": warnings,
-        "failures": failures,
-    }
-
-
-def validate_single_source(
-    source_id: str,
-    *,
-    source_topics_csv: Path | None = None,
-    topic_rules_path: Path | None = None,
-    context: TopicContext | None = None,
-    live_routes: bool = False,
-    topic_id: str | None = None,
-) -> dict[str, Any]:
-    """Audit single source ingestion: registry, topic gate, T0 boundary, fixtures and feed."""
-    context = context or load_topic_configuration(
-        source_topics_csv, topic_rules_path, topic_id=topic_id
-    )
-    return _validate_single_source_with_context(source_id, context, live_routes=live_routes)
-
-
-def validate_all_sources(
-    *,
-    source_topics_csv: Path | None = None,
-    topic_rules_path: Path | None = None,
-    context: TopicContext | None = None,
-    live_routes: bool = False,
-    topic_id: str | None = None,
-) -> dict[str, Any]:
-    """Validate all registered sources and produce a source x section readiness summary."""
-    settings = get_settings()
-    rows = load_registry_rows(settings.sources_dir, fallback_csv=settings.sources_csv)
-    context = context or load_topic_configuration(
-        source_topics_csv, topic_rules_path, topic_id=topic_id
-    )
-    results = [
-        _validate_single_source_with_context(row.source_id, context, live_routes=live_routes)
-        for row in rows
-    ]
-
-    sections = (
-        list(context.topic_pack.section_ids())
-        if context.topic_pack is not None
-        else discover_sections()
-    )
-    by_section = {
-        section: [item["source_id"] for item in results if section in item["categories"]["covered"]]
-        for section in sections
-    }
-    failures = [failure for item in results for failure in item["failures"]]
-    t0_blocked = sum(1 for item in results if not item["t0_permitted"])
-    t0_permitted = sum(1 for item in results if item["t0_permitted"])
-    approved_routes = sum(1 for item in results if item["route"]["approved"])
-
-    return {
-        "total_sources": len(results),
-        "t0_permitted_sources": t0_permitted,
-        "t0_blocked_sources": t0_blocked,
-        "approved_routes": approved_routes,
-        "blocked_routes": len(results) - approved_routes,
-        "sources_with_fixtures": sum(1 for item in results if item["fixtures"]["count"] > 0),
-        "sources_with_live_feeds": sum(1 for item in results if item["feed"]["live_supported"]),
-        "category_coverage": {
-            "sections": sections,
-            "total_cells": len(results) * len(sections),
-            "covered_cells": sum(len(item["categories"]["covered"]) for item in results),
-            "by_section": by_section,
-            "sources_with_full_coverage": [
-                item["source_id"] for item in results if item["categories"]["coverage_complete"]
-            ],
-            "missing_by_source": {
-                item["source_id"]: item["categories"]["missing"]
-                for item in results
-                if item["categories"]["missing"]
-            },
-        },
-        "live_routes_enabled": live_routes,
-        "failures": failures,
-        "sources": results,
-    }
+__all__ = [
+    "DEMO_NEWSPAPER_HTML",
+    "DEMO_RSS_XML",
+    "DEMO_SITEMAP_XML",
+    "SAMPLE_HTML_PATH",
+    "TopicContext",
+    "_list_available_fixture_html",
+    "_load_source_row",
+    "_resolve_feed_url",
+    "_route_attr",
+    "_unapproved_probe_refused",
+    "detect_article_language",
+    "diagnostics",
+    "discover_sections",
+    "evaluate_source_topic",
+    "expected_sections_for_fixture",
+    "fixture_html_files",
+    "format_live_fetch_error",
+    "has_translation_rights",
+    "inspect_html_pipeline",
+    "is_source_route_approved",
+    "load_topic_configuration",
+    "main",
+    "run_live_feed",
+    "validate_all_sources",
+    "validate_single_source",
+]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1713,10 +407,21 @@ def main(argv: list[str] | None = None) -> int:
             topic_id=args.topic,
         )
         print(json.dumps(feed_report, indent=2, ensure_ascii=True))
+        if feed_report.get("t0_gate_permitted") is False or feed_report.get("status") in {
+            "blocked_by_t0_gate",
+            "error_no_feed_url",
+        }:
+            return 1
+        if any(
+            article.get("status") == "fetch_or_parse_error"
+            for article in feed_report.get("articles", [])
+        ):
+            return 1
         return 0
 
-    window_start = date(2026, 11, 13)
-    window_end = date(2026, 11, 19)
+    settings = get_settings()
+    window_end = settings.report_date
+    window_start = window_end - timedelta(days=settings.report_window_days - 1)
 
     if args.rss_file:
         raw_xml = _read_required_file(args.rss_file, "--rss-file")
@@ -1766,6 +471,8 @@ def main(argv: list[str] | None = None) -> int:
             raw_bytes.decode("utf-8", errors="replace"),
             source_row=row,
             source_url=args.url,
+            # Manual inspection of an arbitrary discovered URL: keep a wide verification
+            # window so diagnostics do not depend on the configured report date.
             window_start=date(2020, 1, 1),
             window_end=date(2030, 12, 31),
             require_topic=require_topic,
@@ -1781,6 +488,8 @@ def main(argv: list[str] | None = None) -> int:
             raw_html,
             source_row=row,
             source_url=args.url or "https://example.invalid/local-html",
+            # Manual local-file inspection intentionally uses a wide window so synthetic
+            # samples with fixed publication dates remain verifiable offline.
             window_start=date(2020, 1, 1),
             window_end=date(2030, 12, 31),
             require_topic=require_topic,
