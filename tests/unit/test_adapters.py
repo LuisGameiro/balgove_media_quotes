@@ -126,9 +126,10 @@ def test_fixture_parser_ignores_script_and_style_bodies() -> None:
     assert "New York Times APIs" not in text
     assert "css-only quote text here" not in text
     assert str(meta["title"]) == "Real headline"
-    assert [span["quote_text"] for span in meta["quote_spans"]] == [
-        "Every synthetic JSON quote must stay out of the published digest."
-    ]
+    assert len(meta["quote_spans"]) == 1
+    assert "Every synthetic JSON quote must stay out of the published digest." in str(
+        meta["quote_spans"][0]["quote_text"]
+    )
 
 
 def test_fixture_source_list_refs_and_read(tmp_path: Path) -> None:

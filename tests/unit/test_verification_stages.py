@@ -66,6 +66,18 @@ def test_stage1_requires_first_hand() -> None:
     assert result.rejected["not_first_hand"] > 0
 
 
+def test_stage1_drops_clear_mid_sentence_truncation() -> None:
+    text = "The minister said Ukraine is currently still not a member of the alliance."
+    start = text.index("Ukraine")
+    fragment = candidate("Ukraine is currently still not", start)
+    complete = candidate("Ukraine is currently still not a member of the alliance.", start)
+
+    result = pre_llm_filter([fragment, complete], text=text, policy_flags=FLAGS)
+
+    assert result.kept == [complete]
+    assert result.rejected["incomplete_quote"] == 1
+
+
 def test_pipeline_publishable_only_verified() -> None:
     pipeline = verify_pipeline(
         real_candidates(),

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from datetime import date
 from pathlib import Path
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
-from media_quotes.exceptions import SourceNotPermitted
+from media_quotes.exceptions import FeedParseError, SourceBlockedError, SourceNotPermitted
 from media_quotes.fetch import (
     FetchPolicy,
     TokenBucket,
@@ -36,6 +37,8 @@ APPROVED = ROW.model_copy(
         "enabled": True,
         "rights_status": "api_permitted",
         "license_reference": "TRACK-A-TEST",
+        "tier_block": False,
+        "blocker_reason": "",
     }
 )
 
@@ -91,10 +94,160 @@ def test_feed_documents_share_one_rate_bucket(monkeypatch: pytest.MonkeyPatch) -
         topic_pack=None,
         require_topic=False,
         limit=1,
+        extra_hosts=frozenset({"example.invalid"}),
         cache=FakeCache(),
     )
     assert len(seen) == 2
     assert seen[0] is seen[1]
+
+
+def test_feed_documents_resolve_relative_article_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    import media_quotes.live as live
+
+    feed = b"<rss><channel><item><link>/article</link><title>Article</title></item></channel></rss>"
+    seen: list[str] = []
+
+    async def fake_fetch(url: str, **kwargs: object) -> tuple[bytes, str]:
+        seen.append(url)
+        return (feed if url.endswith("/feed") else b"article"), "abc"
+
+    class FakeCache:
+        def store(self, source_id: str, raw: bytes) -> tuple[str, Path]:
+            return "abc", Path("blob.html")
+
+        def store_meta(self, source_id: str, digest: str, metadata: object) -> Path:
+            return Path("blob.meta")
+
+    monkeypatch.setattr(live, "fetch_bytes", fake_fetch)
+    live.fetch_feed_documents(
+        APPROVED,
+        "https://example.invalid/feed",
+        policy=FetchPolicy(),
+        topic_pack=None,
+        require_topic=False,
+        limit=1,
+        extra_hosts=frozenset({"example.invalid"}),
+        cache=FakeCache(),
+    )
+
+    assert seen == ["https://example.invalid/feed", "https://example.invalid/article"]
+
+
+def test_feed_documents_rejects_invalid_xml(monkeypatch: pytest.MonkeyPatch) -> None:
+    import media_quotes.live as live
+
+    async def invalid_feed(url: str, **kwargs: object) -> tuple[bytes, str]:
+        return b"<rss><channel>", "abc"
+
+    monkeypatch.setattr(live, "fetch_bytes", invalid_feed)
+
+    with pytest.raises(FeedParseError, match="invalid discovery feed"):
+        live.fetch_feed_documents(
+            APPROVED,
+            "https://example.invalid/feed",
+            policy=FetchPolicy(),
+            topic_pack=None,
+            require_topic=False,
+            limit=1,
+            extra_hosts=frozenset({"example.invalid"}),
+        )
+
+
+def test_feed_documents_refuses_tier_blocked_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    import media_quotes.live as live
+
+    def no_fetch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("blocked source must not be fetched")
+
+    monkeypatch.setattr(live, "fetch_bytes", no_fetch)
+    blocked = APPROVED.model_copy(
+        update={"tier_block": True, "blocker_reason": "No quote-bearing content"}
+    )
+
+    with pytest.raises(SourceBlockedError, match="No quote-bearing content"):
+        live.fetch_feed_documents(
+            blocked,
+            "https://example.invalid/feed",
+            policy=FetchPolicy(),
+            topic_pack=None,
+            require_topic=False,
+            limit=1,
+            extra_hosts=frozenset({"example.invalid"}),
+        )
+
+
+def test_feed_documents_passes_date_window_to_parser(monkeypatch: pytest.MonkeyPatch) -> None:
+    import media_quotes.live as live
+
+    seen: dict[str, object] = {}
+    feed = b"<rss><channel></channel></rss>"
+
+    async def fake_fetch(url: str, **kwargs: object) -> tuple[bytes, str]:
+        return feed, "abc"
+
+    def fake_parse(raw: bytes | str, **kwargs: object) -> list[dict[str, str]]:
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(live, "fetch_bytes", fake_fetch)
+    monkeypatch.setattr(live, "parse_rss_feed", fake_parse)
+
+    live.fetch_feed_documents(
+        APPROVED,
+        "https://example.invalid/feed",
+        policy=FetchPolicy(),
+        topic_pack=None,
+        require_topic=False,
+        limit=1,
+        start=date(2026, 11, 1),
+        end=date(2026, 11, 24),
+        extra_hosts=frozenset({"example.invalid"}),
+    )
+
+    assert seen["start"] == date(2026, 11, 1)
+    assert seen["end"] == date(2026, 11, 24)
+
+
+def test_fetch_bytes_can_follow_same_host_redirects_when_enabled() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "/article"})
+        return httpx.Response(200, content=b"article bytes")
+
+    transport = httpx.MockTransport(handler)
+    content, digest = asyncio.run(
+        fetch_bytes(
+            "https://example.invalid/start",
+            row=APPROVED,
+            policy=FetchPolicy(follow_redirects=True),
+            track_a_approved=True,
+            transport=transport,
+            clock=lambda: 10.0,
+            allowed_hosts=frozenset({"example.invalid"}),
+        )
+    )
+
+    assert content == b"article bytes"
+    assert len(digest) == 64
+
+
+def test_fetch_bytes_rejects_cross_host_redirects() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "https://other.invalid/article"})
+
+    transport = httpx.MockTransport(handler)
+    with pytest.raises(ValueError, match="not registered"):
+        asyncio.run(
+            fetch_bytes(
+                "https://example.invalid/start",
+                row=APPROVED,
+                policy=FetchPolicy(follow_redirects=True),
+                track_a_approved=True,
+                transport=transport,
+                clock=lambda: 10.0,
+                allowed_hosts=frozenset({"example.invalid"}),
+            )
+        )
 
 
 def test_t0_gate_and_track_a_approval_required() -> None:

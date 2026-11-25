@@ -1,5 +1,7 @@
 """C2 — trafilatura extraction, quality gate and fallback routing (offline)."""
 
+from __future__ import annotations
+
 import sys
 import types
 from pathlib import Path
@@ -85,15 +87,55 @@ def test_find_span_exact() -> None:
     assert find_span(text, "missing") is None
 
 
-def test_rendered_fallback_lazily_uses_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(extraction, "static_html_fallback", lambda raw_html, **kw: "rendered-ok")
+def test_rendered_fallback_serves_fetched_html_and_keeps_host_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(extraction, "static_html_fallback", lambda raw_html, **kw: raw_html)
+    main_url = "https://example.invalid"
+    raw_html = "<p>js body</p>"
+
+    class FakeRequest:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.resource_type = "document"
+
+    class FakeRoute:
+        def __init__(self, url: str) -> None:
+            self.request = FakeRequest(url)
+            self.fulfilled: tuple[int, str, str] | None = None
+            self.aborted = False
+            self.continued = False
+
+        def fulfill(self, *, status: int, content_type: str, body: str) -> None:
+            self.fulfilled = (status, content_type, body)
+
+        def abort(self) -> None:
+            self.aborted = True
+
+        def continue_(self) -> None:
+            self.continued = True
 
     class FakePage:
         def __init__(self) -> None:
             self.body = ""
+            self.handler: object = None
+            self.goto_calls: list[str] = []
+            self.main_route: FakeRoute | None = None
 
-        def set_content(self, raw_html: str, *, wait_until: str) -> None:
-            self.body = f"<body>{raw_html}</body>"
+        def route(self, pattern: str, handler: object) -> None:
+            assert pattern == "**/*"
+            self.handler = handler
+
+        def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+            assert wait_until == "domcontentloaded"
+            assert 0 < timeout <= 30_000
+            self.goto_calls.append(url)
+            route = FakeRoute(url.rstrip("/") + "/")
+            assert callable(self.handler)
+            self.handler(route)
+            assert route.fulfilled is not None, "main document must be served from raw_html"
+            self.main_route = route
+            self.body = route.fulfilled[2]
 
         def content(self) -> str:
             return self.body
@@ -116,11 +158,14 @@ def test_rendered_fallback_lazily_uses_playwright(monkeypatch: pytest.MonkeyPatc
         def launch(self, *, headless: bool) -> FakeBrowser:
             return self.browser
 
+    created: list[FakePlaywright] = []
+
     class FakePlaywright:
         def __init__(self) -> None:
             self.chromium = FakeChromium()
+            created.append(self)
 
-        def __enter__(self) -> "FakePlaywright":
+        def __enter__(self) -> FakePlaywright:
             return self
 
         def __exit__(self, *args: object) -> bool:
@@ -128,12 +173,26 @@ def test_rendered_fallback_lazily_uses_playwright(monkeypatch: pytest.MonkeyPatc
 
     sync_api = types.ModuleType("playwright.sync_api")
     sync_api.sync_playwright = FakePlaywright  # type: ignore[attr-defined]
+    sync_api.Route = object  # type: ignore[attr-defined]
     playwright = types.ModuleType("playwright")
     monkeypatch.setitem(sys.modules, "playwright", playwright)
     monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
 
-    assert (
-        rendered_html_fallback("<p>js body</p>", source_url="https://example.invalid/a")
-        == "rendered-ok"
+    assert rendered_html_fallback(raw_html, source_url=main_url) == raw_html
+    page = created[0].chromium.browser.page
+    assert page.goto_calls == [main_url]
+    assert page.main_route is not None and page.main_route.fulfilled == (
+        200,
+        "text/html",
+        raw_html,
     )
-    assert sync_api.sync_playwright is not None  # type: ignore[attr-defined]
+    assert created[0].chromium.browser.closed
+
+    handler = page.handler
+    assert callable(handler)
+    same_host = FakeRoute("https://sub.example.invalid/app.js")
+    handler(same_host)
+    assert same_host.continued and not same_host.aborted
+    cross_host = FakeRoute("https://evil.invalid/app.js")
+    handler(cross_host)
+    assert cross_host.aborted and not cross_host.continued

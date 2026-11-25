@@ -9,6 +9,9 @@ from typing import Any
 import pytest
 
 from media_quotes.relevance import TopicDecision, evaluate_topic, load_topic_rules
+from media_quotes.topics import TopicPack, TopicRelevanceConfig, TopicSection, load_topic_pack
+
+_TOPICS_DIR = Path(__file__).resolve().parents[2] / "data" / "topics"
 
 
 def _rule(**overrides: object) -> dict[str, Any]:
@@ -121,3 +124,82 @@ def test_rule_files_are_strict_and_decisions_are_replayable(tmp_path: Path) -> N
 
     article = _article("Russia's war in Ukraine", body="Sanctions tighten", url="/ukraine")
     assert evaluate_topic(_rule(), article) == evaluate_topic(_rule(), article)
+
+
+def test_hard_exclusion_rejects_ice_hockey_despite_ukraine_russia_anchors() -> None:
+    rule = _rule(
+        anchors=["ukraine", "russia"],
+        supporting_terms=["war"],
+        exclusions=[],
+        hard_exclusions=["ice hockey", "nhl"],
+        weights={"anchor": 3.0, "support": 1.0},
+        accept_threshold=2.0,
+    )
+    decision = evaluate_topic(
+        rule,
+        _article(
+            "Ukraine and Russia meet in ice hockey final",
+            body="Kyiv and Moscow followed the ice hockey match closely.",
+        ),
+    )
+
+    assert decision.status == "rejected"
+    assert decision.score == 0.0
+    assert "hard_exclusion" in decision.reasons
+    assert "ice hockey" in decision.matched_terms
+
+
+def test_soft_exclusion_only_downgrades_not_hard_rejects() -> None:
+    rule = load_topic_pack("ukraine-war", _TOPICS_DIR).to_rule_dict()
+    decision = evaluate_topic(
+        rule,
+        _article("Ukraine war update", body="Aid to Gaza was discussed alongside the war."),
+    )
+
+    assert decision.status == "uncertain"
+    assert "exclusion_downgrades" in decision.reasons
+    assert "hard_exclusion" not in decision.reasons
+    # The built-in pack keeps other conflicts soft and moves sport/entertainment to hard.
+    assert "gaza" in rule["exclusions"]["en"]
+    assert "gaza" not in rule["hard_exclusions"]["en"]
+    assert "premier league" in rule["hard_exclusions"]["en"]
+
+
+def _section_test_pack() -> TopicPack:
+    return TopicPack(
+        topic_id="ukraine-war",
+        name="Ukraine War",
+        default_section="other",
+        sections=[
+            TopicSection(
+                section_id="war_intensity",
+                section_name="War Intensity",
+                keywords=["strike"],
+            ),
+            TopicSection(
+                section_id="peace_initiatives",
+                section_name="Peace Initiatives",
+                keywords=["halt in strikes"],
+            ),
+            TopicSection(section_id="aid", section_name="Aid", keywords=["aid"]),
+            TopicSection(section_id="other", section_name="Other", keywords=[]),
+        ],
+        relevance=TopicRelevanceConfig(
+            rule_id="ukraine-war-v1",
+            anchors={"en": ["ukraine"]},
+            supporting_terms={"en": ["war"]},
+        ),
+    )
+
+
+def test_infer_section_uses_strongest_weighted_match_deterministically() -> None:
+    pack = _section_test_pack()
+    text = "A strike was followed by a halt in strikes."
+
+    # "halt in strikes" (3 words) outweighs the single-word "strike" match.
+    assert pack.infer_section(text) == "peace_initiatives"
+    assert pack.infer_section("halt in strikes after the strike") == "peace_initiatives"
+    assert pack.infer_section(text) == pack.infer_section(text)
+
+    # Equal one-word matches tie, so the section declared first wins.
+    assert pack.infer_section("aid and a strike") == "war_intensity"

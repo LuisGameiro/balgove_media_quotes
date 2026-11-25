@@ -19,16 +19,15 @@ def test_load_registry():
     assert by_id["kyodo"].paywalled is None
     assert by_id["anadolu"].claim_only is True
     assert by_id["nyt_api"].paywalled is None
-    assert all(row.enabled for row in rows if row.tier != 4)
-    assert all(row.enabled is False for row in rows if row.tier == 4)
+    assert all(row.enabled for row in rows)
+    assert all(row.claim_only for row in rows if row.tier == 4)
     assert all(row.archive_start_date == date(2026, 10, 1) for row in rows)
 
 
 def test_usable_gate_blocks_every_non_cleared_row():
     rows = load_sources_csv(SOURCES_CSV)
-    # Every licensed, non-tier-4 source is usable; tier 4 stays disabled by policy.
-    assert all(row.usable for row in rows if row.tier != 4)
-    assert all(not row.usable for row in rows if row.tier == 4)
+    # Every source is licensed and enabled; tier-4 material remains claim-only.
+    assert all(row.usable for row in rows)
     bad = rows[0].model_copy(update={"rights_status": "blocked", "license_reference": ""})
     assert bad.usable is False
 

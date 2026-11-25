@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip("dagster")
+
 from media_quotes import cli
 from media_quotes.adapters import BlobCache
 from media_quotes.config import Settings
@@ -76,13 +78,13 @@ def test_blob_cache_sidecar_metadata_roundtrip(tmp_path: Path) -> None:
         cache.store_meta("bad/id", digest, {"url": "https://example.com"})
 
 
-def test_live_blob_bridge_ingests_t0_cleared_and_blocks_disabled(
+def test_live_blob_bridge_ingests_t0_cleared_and_claim_only_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = _isolated_settings(tmp_path)
     cache = BlobCache(settings.blob_dir)
 
-    # Store a live blob for a T0-cleared source (guardian) and for a disabled tier-4 source (rt)
+    # Store live blobs for a standard source and an enabled tier-4 claim-only source.
     g_digest, _ = cache.store("guardian", _LIVE_HTML)
     cache.store_meta(
         "guardian",
@@ -92,7 +94,11 @@ def test_live_blob_bridge_ingests_t0_cleared_and_blocks_disabled(
             "title": "Ukraine air defence update after summit",
         },
     )
-    rt_digest, _ = cache.store("rt", _LIVE_HTML)
+    rt_html = _LIVE_HTML.replace(
+        b"Air defence deliveries will accelerate this winter",
+        b"RT claims air defence deliveries will accelerate this winter",
+    )
+    rt_digest, _ = cache.store("rt", rt_html)
     cache.store_meta(
         "rt",
         rt_digest,
@@ -112,13 +118,35 @@ def test_live_blob_bridge_ingests_t0_cleared_and_blocks_disabled(
         guardian_records[0].article_url
         == "https://www.theguardian.com/world/2026/nov/23/ukraine-air-defence"
     )
-    # Disabled tier-4 source must never be ingested from blobs
-    assert rt_records == []
+    assert rt_records
+    assert all(record.claim_only for record in rt_records)
+    audit = json.loads(result.audit_json_path.read_text(encoding="utf-8"))
+    assert audit["version_manifest"]["fixture_replay"] is False
+    assert "OFFLINE FIXTURE REPLAY" not in result.digest_path.read_text(encoding="utf-8")
 
     # Also verify CLI flag `mq run --from-blobs --tier 2`
     monkeypatch.setattr("media_quotes.cli.app.get_settings", lambda: settings)
     rc = cli.main(["run", "--date", "2026-11-23", "--from-blobs", "--tier", "2"])
     assert rc in (0, 2)
+
+
+def test_fixture_pipeline_writes_only_to_test_output(tmp_path: Path) -> None:
+    settings = _isolated_settings(tmp_path)
+
+    result = run_daily_pipeline(settings, report_date=date(2026, 11, 23), source_mode="fixtures")
+
+    test_settings = settings.for_source_mode("fixtures")
+    assert result.store_path == test_settings.export_dir / "quotes-2026-11-23.jsonl"
+    assert result.digest_path == test_settings.digest_dir / "2026-11-23.md"
+    assert result.audit_json_path == test_settings.audit_dir / "audit-2026-11-23.json"
+    assert result.logs_path == test_settings.logs_dir / f"{result.run_id}.jsonl"
+    assert not (settings.export_dir / "quotes-2026-11-23.jsonl").exists()
+    assert not (settings.digest_dir / "2026-11-23.md").exists()
+    assert not result.persistence
+    audit = json.loads(result.audit_json_path.read_text(encoding="utf-8"))
+    assert audit["version_manifest"]["fixture_replay"] is True
+    assert audit["mode"] == "synthetic fixture replay (test output)"
+    assert "OFFLINE FIXTURE REPLAY" in result.digest_path.read_text(encoding="utf-8")
 
 
 def test_tier1_six_hourly_schedule_and_tier_filter(tmp_path: Path) -> None:
@@ -146,6 +174,7 @@ def test_tier1_six_hourly_schedule_and_tier_filter(tmp_path: Path) -> None:
     result = run_daily_pipeline(
         settings,
         report_date=date(2026, 11, 23),
+        source_mode="fixtures",
         tier=1,
     )
     covered_sources = {entry["source_id"] for entry in result.coverage}
@@ -156,6 +185,7 @@ def test_backfill_execute_runs_date_range_and_respects_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     settings = _isolated_settings(tmp_path)
+    test_settings = settings.for_source_mode("fixtures")
     monkeypatch.setattr("media_quotes.cli.app.get_settings", lambda: settings)
 
     # Budget gate must block before execution when max-cost is too low
@@ -172,7 +202,7 @@ def test_backfill_execute_runs_date_range_and_respects_budget(
         ]
     )
     assert rc_blocked == 3
-    assert not (settings.digest_dir / "2026-11-18.md").exists()
+    assert not (test_settings.digest_dir / "2026-11-18.md").exists()
 
     # With sufficient budget, --execute runs both partitions and produces digests/audits
     rc_ok = cli.main(
@@ -190,8 +220,8 @@ def test_backfill_execute_runs_date_range_and_respects_budget(
     out = capsys.readouterr().out
     assert rc_ok in (0, 2)
     assert "Backfill executed: 2 day(s)" in out
-    assert (settings.digest_dir / "2026-11-18.md").is_file()
-    assert (settings.digest_dir / "2026-11-19.md").is_file()
+    assert (test_settings.digest_dir / "2026-11-18.md").is_file()
+    assert (test_settings.digest_dir / "2026-11-19.md").is_file()
 
 
 def test_dashboard_daily_source_coverage_matrix(tmp_path: Path) -> None:

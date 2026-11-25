@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from typing import Any
@@ -33,11 +34,12 @@ def test_configure_logging_renderer(monkeypatch, log_json: bool, renderer_name: 
 
 def test_configure_logging_falls_back_for_unknown_level(monkeypatch) -> None:
     configure = MagicMock()
-    monkeypatch.setattr(observability.structlog, "configure", configure)
+    monkeypatch.setattr(observability.logging, "basicConfig", configure)
 
     observability.configure_logging(Settings(_env_file=None, log_level="NOT_A_LEVEL"))
 
     configure.assert_called_once()
+    assert configure.call_args.kwargs["level"] == logging.INFO
 
 
 def test_secret_scrub_covers_project_keys() -> None:
@@ -111,8 +113,20 @@ def test_cli_entry_configures_observability_once(monkeypatch: Any) -> None:
     calls: list[Settings] = []
     monkeypatch.setattr(app, "get_settings", lambda: settings)
     monkeypatch.setattr(app, "configure_observability", calls.append)
-    monkeypatch.setattr(app, "main", lambda argv: 0)
 
-    assert app.cli_entry([]) == 0
+    assert app.cli_entry(["version"]) == 0
     assert calls == [settings]
     assert not hasattr(pipeline, "configure_observability")  # not per pipeline run
+
+
+def test_cli_entry_returns_config_exit_for_invalid_settings(monkeypatch: Any) -> None:
+    from media_quotes.cli import app
+    from media_quotes.cli.common import EXIT_CONFIG
+    from media_quotes.exceptions import ConfigError
+
+    def invalid_settings() -> Any:
+        raise ConfigError("invalid provider")
+
+    monkeypatch.setattr(app, "get_settings", invalid_settings)
+
+    assert app.cli_entry(["version"]) == EXIT_CONFIG

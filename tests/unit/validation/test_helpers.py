@@ -120,6 +120,9 @@ def test_check_sources_accepts_valid_rows() -> None:
         ("claim_only", "maybe", "claim_only must be true or false"),
         ("requires_translation", "maybe", "requires_translation must be true or false"),
         ("enabled", "maybe", "enabled must be true or false"),
+        ("tier_block", "maybe", "tier_block must be true or false"),
+        ("availability_status", "bogus", "unknown availability_status"),
+        ("blocker_reason", "", "tier_block sources need a blocker_reason"),
         ("paywalled", "maybe", "paywalled must be true, false or unknown"),
         ("language", "eng", "ISO 639-1"),
         ("homepage_url", "http://example.invalid", "homepage_url must be an https URL"),
@@ -143,15 +146,25 @@ def test_check_sources_rejects_duplicate_ids() -> None:
     assert any("duplicate source_id" in message for message in errors)
 
 
-def test_check_sources_tier_must_be_disabled_with_zero_cadence() -> None:
+def test_check_sources_reports_missing_legacy_columns_without_crashing() -> None:
     row = _source_row()
-    row["tier"] = "4"
-    row["cadence_hours"] = "5"
-    row["enabled"] = "true"
+    for column in ("tier_block", "blocker_reason", "availability_status"):
+        row.pop(column, None)
     errors: list[str] = []
     check_sources([row], errors)
-    assert any("disabled tier must have cadence_hours 0" in m for m in errors)
-    assert any("tier 4 sources must be disabled" in m for m in errors)
+    assert any("missing columns" in message for message in errors)
+    assert all(not message.startswith("Traceback") for message in errors)
+
+
+def test_check_sources_tier4_requires_claim_only() -> None:
+    row = _source_row()
+    row["tier"] = "4"
+    row["cadence_hours"] = "24"
+    row["enabled"] = "true"
+    row["claim_only"] = "false"
+    errors: list[str] = []
+    check_sources([row], errors)
+    assert any("tier 4 sources must be claim_only" in m for m in errors)
 
 
 # --- check_sections -------------------------------------------------------------------------
@@ -242,7 +255,6 @@ def test_check_quotes_reports_schema_errors(tmp_path: Path) -> None:
             "verification flags true",
         ),
         (lambda r: r.update(is_obsolete=True), "obsolete quotes need an obsolete_reason"),
-        (lambda r: r.update(source_language="fr"), "non-English quotes need quote_text_en"),
     ],
 )
 def test_check_quotes_rejects_bad_records(tmp_path, mutator, expected: str) -> None:
@@ -253,6 +265,16 @@ def test_check_quotes_rejects_bad_records(tmp_path, mutator, expected: str) -> N
     errors: list[str] = []
     check_quotes(store, _sources_map(), _section_ids(), OPEN_SCHEMA, errors)
     assert any(expected in message for message in errors), errors
+
+
+def test_check_quotes_allows_original_only_non_english_quote(tmp_path: Path) -> None:
+    record = _record()
+    record.update(source_language="fr", quote_language="fr", quote_text_en="")
+    store = tmp_path / "quotes.jsonl"
+    store.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    errors: list[str] = []
+    check_quotes(store, _sources_map(), _section_ids(), OPEN_SCHEMA, errors)
+    assert errors == []
 
 
 def test_check_quotes_flags_blocked_sources(tmp_path: Path) -> None:

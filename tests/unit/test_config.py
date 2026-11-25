@@ -13,6 +13,19 @@ def test_defaults_are_safe(monkeypatch):
     assert "psycopg" in settings.database_url_value
 
 
+def test_fixture_source_mode_isolates_output(tmp_path):
+    settings = Settings(_env_file=None, output_dir=tmp_path / "output")
+
+    fixture = settings.for_source_mode("fixtures")
+
+    assert fixture.output_dir == tmp_path / "test-output"
+    assert fixture.digest_dir == tmp_path / "test-output" / "digests"
+    assert fixture.export_dir == tmp_path / "test-output" / "quotes"
+    assert fixture.audit_dir == tmp_path / "test-output" / "audit"
+    assert fixture.logs_dir == tmp_path / "test-output" / "logs"
+    assert settings.for_source_mode("blobs") is settings
+
+
 def test_log_json_env_override(monkeypatch):
     monkeypatch.setenv("LOG_JSON", "false")
     settings = Settings(_env_file=None)

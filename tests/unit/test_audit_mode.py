@@ -1,10 +1,14 @@
 """Audit gates are mode-aware: DB writes are only a violation in file-only mode."""
 
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from media_quotes.cli.audit import _audit_report, _write_audit
+import pytest
+
+from media_quotes.cli.audit import _audit_report, _do_audit, _write_audit
 from media_quotes.config import Settings
+from media_quotes.export import local_store_path, write_jsonl
 from media_quotes.models import ExportQuoteRecord, VerificationRecord
 
 
@@ -71,6 +75,64 @@ def test_persistent_mode_allows_database_writes() -> None:
     assert isinstance(checks, dict)
     assert checks["no_database_writes"] is False  # informational, not a failure
     assert checks["gates_pass"] is True
+
+
+def test_live_audit_is_not_labelled_fixture_replay() -> None:
+    report = _report(False)
+    assert report["mode"] == "live/blob file output"
+    manifest = report["version_manifest"]
+    assert isinstance(manifest, dict)
+    assert manifest["fixture_replay"] is False
+
+    fixture_report = _audit_report(
+        Settings(_env_file=None),
+        report_date=date(2026, 11, 19),
+        run_id="run-test",
+        records=[_record()],
+        coverage=[],
+        gaps=[],
+        events=[],
+        rejected=0,
+        source_mode="fixtures",
+    )
+    assert fixture_report["mode"] == "synthetic fixture replay (test output)"
+    assert fixture_report["version_manifest"]["fixture_replay"] is True
+
+
+def test_fixture_audit_never_reads_postgres_without_stored_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden_session(*args: object, **kwargs: object) -> object:
+        raise AssertionError("fixture audit must not open Postgres")
+
+    monkeypatch.setattr("media_quotes.pipeline._default_session_context", forbidden_session)
+    settings = Settings(
+        _env_file=None,
+        output_dir=tmp_path / "output",
+        persist_to_postgres=True,
+        llm_provider="local",
+    ).for_source_mode("fixtures")
+    report_date = date(2026, 11, 19)
+    write_jsonl(
+        [_record()],
+        local_store_path(settings.export_dir, report_date, topic_id="ukraine-war"),
+    )
+
+    assert (
+        _do_audit(
+            settings,
+            report_date=report_date,
+            run_id=None,
+            out=None,
+            source_mode="fixtures",
+        )
+        == 0
+    )
+    report = json.loads(
+        (settings.audit_dir / f"audit-{report_date.isoformat()}.json").read_text(encoding="utf-8")
+    )
+    assert report["mode"] == "synthetic fixture replay (test output)"
+    assert report["verified_quotes"] == 1
 
 
 def test_write_audit_accepts_json_file_path(tmp_path: Path) -> None:

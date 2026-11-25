@@ -66,6 +66,30 @@ def test_check_source_configs_not_dir_and_empty(tmp_path: Path) -> None:
     assert any("expected at least one source config" in err for err in errors)
 
 
+def test_check_source_configs_detects_json_route_drift_from_csv(tmp_path: Path) -> None:
+    from media_quotes.source_configs import sync_sources_to_csv
+
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    payload = json.loads(Path("data/sources/guardian.json").read_text(encoding="utf-8"))
+    payload["routes"] = payload["routes"][:1]
+    config_path = sources_dir / "guardian.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    routes_csv = tmp_path / "source_topic_routes.csv"
+    sync_sources_to_csv(sources_dir, sources_csv=tmp_path / "sources.csv", routes_csv=routes_csv)
+
+    errors: list[str] = []
+    check_source_configs(sources_dir, {}, {}, errors, routes_csv)
+    assert not any("route" in message for message in errors)
+
+    payload["routes"][0]["discovery_url"] = "https://changed.example/rss"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    errors = []
+    check_source_configs(sources_dir, {}, {}, errors, routes_csv)
+    assert any("discovery_url" in message for message in errors)
+    assert any("source_topic_routes.csv" in message for message in errors)
+
+
 def test_check_source_configs_rule_violations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -126,13 +150,15 @@ def test_check_source_configs_rule_violations(
     )
     (sources_dir / "bad-src.json").write_text(json.dumps(bad_cfg), encoding="utf-8")
 
-    # 3. Tier 4 config invalid (tier 4 enabled, cadence_hours != 0)
+    # 3. Tier 4 config invalid because it is not claim-only.
     tier4_cfg = make_cfg(
         "tier4-src",
         tier=4,
         enabled=True,
         cadence_hours=12,
         rights_status="blocked",
+        source_type="state-controlled",
+        claim_only=False,
     )
     (sources_dir / "tier4-src.json").write_text(json.dumps(tier4_cfg), encoding="utf-8")
 
@@ -173,6 +199,9 @@ def test_check_source_configs_rule_violations(
         "bad-src": {
             "rights_status": "api_permitted",  # mismatch
             "enabled": "false",  # mismatch
+            "tier_block": "false",
+            "blocker_reason": "",
+            "availability_status": "live",
             "tier": "3",  # mismatch
             "access_mode": "official_api",  # mismatch
             "source_type": "publicly funded",  # mismatch
@@ -181,6 +210,9 @@ def test_check_source_configs_rule_violations(
         "only-in-csv": {
             "rights_status": "blocked",
             "enabled": "false",
+            "tier_block": "false",
+            "blocker_reason": "",
+            "availability_status": "live",
             "tier": "1",
             "access_mode": "scraped_prohibited",
             "source_type": "independent",
@@ -197,7 +229,7 @@ def test_check_source_configs_rule_violations(
     assert any("enabled sources need approved rights_status" in err for err in errors)
     assert any("enabled sources cannot use web discovery" in err for err in errors)
     assert any("approved rights need a license_reference" in err for err in errors)
-    assert any("tier 4 sources must be disabled" in err for err in errors)
+    assert any("tier 4 sources must be claim_only" in err for err in errors)
     assert any("state-controlled sources must be claim_only" in err for err in errors)
     assert any("homepage_url must be an https URL" in err for err in errors)
     assert any("feed_url must be an https URL" in err for err in errors)

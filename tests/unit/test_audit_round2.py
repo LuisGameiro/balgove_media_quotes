@@ -42,6 +42,41 @@ def test_licensed_source_fixture_quotes_are_published() -> None:
     assert all(record.original_reporting_flag == "first-hand" for record in records)
 
 
+def test_tier_blocked_source_without_articles_is_reported_blocked(tmp_path: Path) -> None:
+    from media_quotes.cli.common import _gap_for
+
+    settings = Settings(
+        _env_file=None,
+        blob_dir=tmp_path / "raw",
+        fixtures_dir=tmp_path / "fixtures",
+        sources_csv=ROOT / "data/sources.csv",
+        sources_dir=ROOT / "data/sources",
+        sections_csv=ROOT / "data/sections.csv",
+        schema_path=ROOT / "data/quotes.schema.json",
+    )
+    row = next(row for row in _load_registry(settings) if row.source_id == "guardian").model_copy(
+        update={"tier_block": True, "blocker_reason": "No quote-bearing content"}
+    )
+    assert _gap_for(row) == ("blocked", "tier_blocked")
+
+    _records, coverage, gaps, _events, _rejected, _offsets = _process_source(
+        row,
+        settings=settings,
+        run_id="tier-block-regression",
+        window_start=date(2026, 11, 6),
+        report_date=REPORT_DATE,
+        used_quote_ids=set(),
+        source_mode="blobs",
+    )
+
+    assert coverage["status"] == "degraded"
+    assert coverage["gap_reason"] == "tier_blocked"
+    assert any(
+        gap["gap_reason"] == "tier_blocked" and gap["detail"] == "No quote-bearing content"
+        for gap in gaps
+    )
+
+
 def test_fetch_without_live_only_plans(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
     settings = Settings(
         _env_file=None,

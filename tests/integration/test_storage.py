@@ -75,7 +75,9 @@ def test_schema_sql_has_t0_constraints() -> None:
     ddl = SCHEMA_SQL.read_text(encoding="utf-8")
     assert "CONSTRAINT sources_t0_gate CHECK" in ddl
     assert "CONSTRAINT sources_state_controlled_claim_only CHECK" in ddl
-    assert "CONSTRAINT sources_tier4_disabled CHECK" in ddl
+    assert "CONSTRAINT sources_tier4_claim_only CHECK" in ddl
+    assert "CONSTRAINT sources_tier_block_reason CHECK" in ddl
+    assert "availability_status" in ddl
     assert "rights_status IN ('license_held','api_permitted')" in ddl
 
 
@@ -349,6 +351,7 @@ def test_read_export_records_keeps_one_row_per_quote() -> None:
         q_id="Q-20261119-0001",
         q_text="A long enough synthetic quote for this export dedupe test.",
         q_text_en="",
+        q_speaker="Jane Doe",
         q_char_start=0,
         q_meta={},
         q_details={},
@@ -382,10 +385,16 @@ def test_read_export_records_keeps_one_row_per_quote() -> None:
         s_claim=False,
         s_language="en",
         o_reason="pending",
+        o_created_at=datetime(2026, 11, 19, 10, 0, tzinfo=UTC),
     )
     rows = [
         {**base, "o_obsolete": False},
-        {**base, "o_obsolete": True, "o_reason": "confirmed"},
+        {
+            **base,
+            "o_obsolete": True,
+            "o_reason": "confirmed",
+            "o_created_at": datetime(2026, 11, 19, 12, 0, tzinfo=UTC),
+        },
     ]
     session = MagicMock()
     session.execute.return_value.mappings.return_value = rows
@@ -393,6 +402,7 @@ def test_read_export_records_keeps_one_row_per_quote() -> None:
     assert len(records) == 1
     assert records[0].is_obsolete is True
     assert records[0].obsolete_reason == "confirmed"
+    assert records[0].speaker == "Jane Doe"
 
 
 def test_pipeline_run_lifecycle() -> None:

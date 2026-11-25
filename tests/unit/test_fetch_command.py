@@ -7,11 +7,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pydantic import SecretStr
 
-from media_quotes.cli.common import EXIT_CONFIG, EXIT_OK, _translation_readiness_warning
+from media_quotes.cli.common import EXIT_CONFIG, EXIT_GAPS, EXIT_OK, _translation_readiness_warning
 from media_quotes.cli.fetch import _do_fetch
+from media_quotes.collection import CollectionResult
 from media_quotes.config import Settings
+from media_quotes.exceptions import ConfigError
 from media_quotes.fetch import FetchPolicy, fetch_policy_from
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,20 +39,31 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
     return Settings(_env_file=None, **values)  # type: ignore[arg-type]
 
 
+def test_fetch_rejects_non_positive_limit(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="positive"):
+        _do_fetch(
+            _settings(tmp_path),
+            source_id="bbc",
+            report_date=REPORT_DATE,
+            limit=0,
+            dry_run=True,
+        )
+
+
 class _NoFetch:
     def __init__(self) -> None:
         self.calls = 0
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         self.calls += 1
-        raise AssertionError("fetch_feed_documents must not be called in this mode")
+        raise AssertionError("collect_feed must not be called in this mode")
 
 
 def test_fetch_dry_run_makes_no_network_calls(tmp_path: Path, monkeypatch: Any) -> None:
     from media_quotes.cli import fetch as fetch_cli
 
     no_fetch = _NoFetch()
-    monkeypatch.setattr(fetch_cli, "fetch_feed_documents", no_fetch)
+    monkeypatch.setattr(fetch_cli, "collect_feed", no_fetch)
     settings = _settings(tmp_path)
 
     assert (
@@ -62,7 +76,7 @@ def test_fetch_refuses_unlicensed_source(tmp_path: Path, monkeypatch: Any) -> No
     from media_quotes.cli import fetch as fetch_cli
 
     no_fetch = _NoFetch()
-    monkeypatch.setattr(fetch_cli, "fetch_feed_documents", no_fetch)
+    monkeypatch.setattr(fetch_cli, "collect_feed", no_fetch)
     settings = _settings(tmp_path)
     # The registry is fully licensed; prove the gate still refuses a synthetic bad row.
     original_load = fetch_cli._load_registry
@@ -79,6 +93,67 @@ def test_fetch_refuses_unlicensed_source(tmp_path: Path, monkeypatch: Any) -> No
         _do_fetch(settings, source_id="bbc", report_date=REPORT_DATE, dry_run=False) == EXIT_CONFIG
     )
     assert no_fetch.calls == 0
+
+
+def test_fetch_refuses_tier_blocked_source(tmp_path: Path, monkeypatch: Any) -> None:
+    from media_quotes.cli import fetch as fetch_cli
+
+    no_fetch = _NoFetch()
+    monkeypatch.setattr(fetch_cli, "collect_feed", no_fetch)
+    settings = _settings(tmp_path)
+    original_load = fetch_cli._load_registry
+
+    def blocked_registry(cfg: Any) -> Any:
+        return [
+            row.model_copy(update={"tier_block": True, "blocker_reason": "No quotes"})
+            for row in original_load(cfg)
+        ]
+
+    monkeypatch.setattr(fetch_cli, "_load_registry", blocked_registry)
+
+    assert (
+        _do_fetch(settings, source_id="bbc", report_date=REPORT_DATE, dry_run=False) == EXIT_CONFIG
+    )
+    assert no_fetch.calls == 0
+
+
+def test_fetch_returns_gaps_for_article_errors(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    from media_quotes.cli import fetch as fetch_cli
+    from media_quotes.live import FetchedArticle
+
+    url = "https://www.theguardian.com/world/2026/nov/19/peace-talks"
+
+    def fake_fetch(row: Any, feed_url: str, **kwargs: Any) -> Any:
+        return CollectionResult(
+            mode="feed",
+            discovered=[{"url": url, "title": "Story"}],
+            articles=[
+                FetchedArticle(
+                    url=url,
+                    title="Story",
+                    raw=b"",
+                    sha256="",
+                    blob_path="",
+                    error="403 Forbidden",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(fetch_cli, "collect_feed", fake_fetch)
+
+    assert (
+        _do_fetch(
+            settings=_settings(tmp_path),
+            source_id="guardian",
+            report_date=REPORT_DATE,
+            dry_run=False,
+        )
+        == EXIT_GAPS
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["errors"][0]["error"] == "403 Forbidden"
 
 
 def test_fetch_live_report_contains_topic_and_articles(
@@ -101,15 +176,16 @@ def test_fetch_live_report_contains_topic_and_articles(
     def fake_fetch(row: Any, feed_url: str, **kwargs: Any) -> Any:
         calls.append(feed_url)
         url = "https://www.theguardian.com/world/2026/nov/19/peace-talks"
-        return (
-            [
+        return CollectionResult(
+            mode="feed",
+            discovered=[
                 {
                     "url": url,
                     "title": "Ukraine peace talks continue",
                     "publication_date": "2026-11-19",
                 }
             ],
-            [
+            articles=[
                 FetchedArticle(
                     url=url,
                     title="Ukraine peace talks continue",
@@ -120,7 +196,7 @@ def test_fetch_live_report_contains_topic_and_articles(
             ],
         )
 
-    monkeypatch.setattr(fetch_cli, "fetch_feed_documents", fake_fetch)
+    monkeypatch.setattr(fetch_cli, "collect_feed", fake_fetch)
     settings = _settings(tmp_path)
 
     assert (

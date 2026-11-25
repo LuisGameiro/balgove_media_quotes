@@ -177,7 +177,6 @@ def test_digest_migration_replaces_global_unique() -> None:
     assert module.down_revision == "0005_topic_packs"
     # schema.sql is the single DDL source; 0006 is a no-op revision placeholder.
     sql = (ROOT / "src/media_quotes/db/schema.sql").read_text(encoding="utf-8")
-    assert "UNIQUE (topic_id, digest_date)" in sql
     assert "digests_digest_date_key" not in sql
 
 

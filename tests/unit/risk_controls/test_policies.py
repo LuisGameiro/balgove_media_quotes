@@ -114,9 +114,140 @@ def test_propose_obsolescence_builds_evidence_and_holds_for_review() -> None:
     flags = propose_obsolescence([older, newer], now=now, judge=Judge())
     assert len(flags) == 1
     assert flags[0].evidence.old_quote_id == older.quote_id
+    assert flags[0].evidence.new_quote_id == newer.quote_id
     assert flags[0].evidence.is_primary_evidence
     assert flags[0].state in {"pending", "needs_evidence"}
     assert not flags[0].may_hide_quote(now=now)
+
+
+def test_propose_obsolescence_invokes_judge_provider_per_pair() -> None:
+    from media_quotes.judge import JudgeDecision
+    from media_quotes.risk_controls.obsolescence import propose_obsolescence
+
+    def record(quote_id: str, text: str, day: date) -> ExportQuoteRecord:
+        return ExportQuoteRecord.model_construct(
+            quote_id=quote_id,
+            quote_text_original=text,
+            topic_id="ukraine-war",
+            publication_date=day,
+            original_reporting_flag="first-hand",
+            rights_status="license_held",
+            access_mode="licensed_database",
+            article_url="https://example.invalid/a",
+            content_hash="a" * 64,
+        )
+
+    older = record("Q-20261101-0001", "Talks continue tomorrow", date(2026, 11, 1))
+    newer_a = record("Q-20261118-0001", "Talks paused briefly", date(2026, 11, 18))
+    newer_b = record("Q-20261119-0001", "Talks have been paused", date(2026, 11, 19))
+    now = datetime(2026, 11, 19, 12, tzinfo=UTC)
+
+    class Provider:
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+            self.tasks: list[str] = []
+
+        def decide(self, *, task: str, context: dict[str, object]) -> JudgeDecision:
+            self.tasks.append(task)
+            self.seen.append(str(context["newer_quote_id"]))
+            confirmed = (
+                context["old_quote_id"] == older.quote_id
+                and context["newer_quote_id"] == newer_b.quote_id
+            )
+            return JudgeDecision(
+                task=task,
+                verdict="confirmed" if confirmed else "escalate",
+                confidence=0.95 if confirmed else 0.0,
+                rationale="Newer first-hand statement supersedes the earlier position.",
+                actor="bi",
+                model_snapshot="v1",
+                prompt_version="v1",
+                input_hash="",
+                output_hash="",
+            )
+
+    ineligible = newer_a.model_copy(
+        update={"quote_id": "Q-20261120-0001", "original_reporting_flag": "relayed wire copy"}
+    )
+    provider = Provider()
+    flags = propose_obsolescence([older, newer_a, newer_b, ineligible], now=now, judge=provider)
+    assert provider.tasks == ["obsolescence_review"] * 3
+    assert provider.seen == [newer_a.quote_id, newer_b.quote_id, newer_b.quote_id]
+    assert len(flags) == 1
+    assert flags[0].evidence.new_quote_id == newer_b.quote_id
+    assert flags[0].confidence == 0.95
+
+    class OfflineProvider(Provider):
+        def decide(self, *, task: str, context: dict[str, object]) -> JudgeDecision:
+            self.tasks.append(task)
+            self.seen.append(str(context["newer_quote_id"]))
+            return JudgeDecision(
+                task=task,
+                verdict="escalate",
+                confidence=0.0,
+                rationale="offline",
+                actor="bi",
+                model_snapshot="v1",
+                prompt_version="v1",
+                input_hash="",
+                output_hash="",
+            )
+
+    assert propose_obsolescence([older, newer_b], now=now, judge=OfflineProvider()) == []
+
+
+def test_propose_obsolescence_bounds_paid_judge_calls() -> None:
+    from media_quotes.judge import JudgeDecision
+    from media_quotes.risk_controls.obsolescence import (
+        MAX_JUDGE_DECISIONS,
+        propose_obsolescence,
+    )
+
+    def record(quote_id: str, day: date) -> ExportQuoteRecord:
+        return ExportQuoteRecord.model_construct(
+            quote_id=quote_id,
+            quote_text_original=f"Distinct position {quote_id}",
+            topic_id="ukraine-war",
+            publication_date=day,
+            original_reporting_flag="first-hand",
+            rights_status="license_held",
+            access_mode="licensed_database",
+            article_url="https://example.invalid/a",
+            content_hash="a" * 64,
+        )
+
+    older = record("Q-20261101-0001", date(2026, 11, 1))
+    newer = [record(f"Q-20261119-{index:04d}", date(2026, 11, 19)) for index in range(20)]
+    now = datetime(2026, 11, 19, 12, tzinfo=UTC)
+
+    class Provider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def decide(self, *, task: str, context: dict[str, object]) -> JudgeDecision:
+            self.calls += 1
+            return JudgeDecision(
+                task=task,
+                verdict="escalate",
+                confidence=0.0,
+                rationale="offline",
+                actor="bi",
+                model_snapshot="v1",
+                prompt_version="v1",
+                input_hash="",
+                output_hash="",
+            )
+
+    provider = Provider()
+    assert propose_obsolescence([older, *newer], now=now, judge=provider) == []
+    assert provider.calls == MAX_JUDGE_DECISIONS
+
+    disabled = Provider()
+    assert propose_obsolescence([older, *newer], now=now, judge=disabled, max_decisions=0) == []
+    assert disabled.calls == 0
+
+    with pytest.raises(ValueError, match="max_decisions"):
+        propose_obsolescence([older, *newer], now=now, judge=provider, max_decisions=-1)
 
 
 def test_evidence_bundle_rejects_empty_span_and_coercion() -> None:
