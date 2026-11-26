@@ -78,6 +78,17 @@ def _extract_text(result: dict[str, Any]) -> str | None:
     return None
 
 
+def _response_identity(result: dict[str, Any]) -> tuple[str, str]:
+    """Read the provider's model and response id from one batch result."""
+    response = result.get("response") if isinstance(result, dict) else None
+    body = response.get("body") if isinstance(response, dict) else None
+    model = str(body.get("model") or "") if isinstance(body, dict) else ""
+    response_id = str(
+        result.get("id") or (response.get("id") if isinstance(response, dict) else "") or ""
+    )
+    return model, response_id
+
+
 def _require_matching_model(requests: list[LLMRequest], model: str) -> None:
     """Cache keys encode the model, so a batch must run under that same model."""
     if any(item.model_snapshot != model for item in requests):
@@ -108,6 +119,10 @@ def _apply_results(
                 continue
             if text is None:
                 continue  # failed provider result, not a mapping mismatch
+            model, response_id = _response_identity(result)
+            if model and model != request.model_snapshot:
+                unmatched += 1
+                continue  # never cache another model's output under the pinned model
             if contains_instruction_override(text) or is_refusal_text(text):
                 continue  # never cache a refusal or an injected instruction
             entry = DecisionCacheEntry(
@@ -121,7 +136,7 @@ def _apply_results(
                         "output": {"text": text},
                         "refusal": False,
                         "incomplete": False,
-                        "provider_response_id": "",
+                        "provider_response_id": response_id,
                     }
                 },
             )

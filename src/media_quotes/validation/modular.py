@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ..enums import APPROVED_RIGHTS, PERMITTED_ACCESS
 from ..source_configs import SourceConfig, load_source_config_file
@@ -88,19 +89,24 @@ def check_source_configs(
             errors.append(f"{where}: tier 4 sources must be claim_only")
         if str(cfg.source_type) == "state-controlled" and not cfg.claim_only:
             errors.append(f"{where}: state-controlled sources must be claim_only")
-        if not cfg.homepage_url.startswith("https://"):
-            errors.append(f"{where}: homepage_url must be an https URL")
-        if cfg.feed_url and not cfg.feed_url.startswith("https://"):
-            errors.append(f"{where}: feed_url must be an https URL")
+        if not cfg.homepage_url.startswith("https://") or not urlparse(cfg.homepage_url).hostname:
+            errors.append(f"{where}: homepage_url must be an https URL with a host")
+        if cfg.feed_url and (
+            not cfg.feed_url.startswith("https://") or not urlparse(cfg.feed_url).hostname
+        ):
+            errors.append(f"{where}: feed_url must be an https URL with a host")
 
         seen_routes: set[str] = set()
         for route in cfg.routes:
             if route.route_id in seen_routes:
                 errors.append(f"{where}: duplicate route_id {route.route_id!r}")
             seen_routes.add(route.route_id)
-            if route.discovery_url and not route.discovery_url.startswith("https://"):
+            if route.discovery_url and (
+                not route.discovery_url.startswith("https://")
+                or not urlparse(route.discovery_url).hostname
+            ):
                 errors.append(
-                    f"{where}: route {route.route_id!r} discovery_url must be an https URL"
+                    f"{where}: route {route.route_id!r}: discovery_url must be an https URL"
                 )
             if route.approved and not route.license_reference:
                 errors.append(

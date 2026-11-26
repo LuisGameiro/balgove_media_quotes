@@ -37,6 +37,8 @@ SCHEDULE_CRON = "0 6 * * *"
 TIER1_SCHEDULE_CRON = "0 */6 * * *"
 SCHEDULE_TIMEZONE = "UTC"
 
+_OBSERVABILITY_CONFIGURED = False
+
 _SOURCE_MODES = frozenset({"fixtures", "blobs", "live"})
 _LIVE_PROVENANCES = frozenset({"live_feed", "live_bing", "manual_sample"})
 
@@ -127,13 +129,18 @@ def _audit_candidates(
     settings: Settings,
     report_date: date,
     provenance: AcquisitionProvenance | None = None,
-) -> list[tuple[float, Path, str]]:
-    """(mtime, path, topic) for every audit of a date across canonical/fixtures/runs."""
+) -> list[tuple[int, int, Path, str]]:
+    """(priority, mtime_ns, path, topic) for every audit of a date; live beats fixture on a tie."""
     name = f"audit-{report_date.isoformat()}.json"
-    found: list[tuple[float, Path, str]] = []
+    found: list[tuple[int, int, Path, str]] = []
     for root in _audit_roots(settings, provenance):
         if not root.is_dir():
             continue
+        priority = (
+            0
+            if root == settings.audit_dir / "fixtures"
+            else (2 if root == settings.audit_dir else 1)
+        )
         candidates = [(root / name, DEFAULT_TOPIC_ID)]
         candidates.extend(
             (sub / name, sub.name)
@@ -141,7 +148,9 @@ def _audit_candidates(
             if sub.is_dir() and sub.name not in {"fixtures", "runs"}
         )
         found.extend(
-            (path.stat().st_mtime, path, topic) for path, topic in candidates if path.is_file()
+            (priority, path.stat().st_mtime_ns, path, topic)
+            for path, topic in candidates
+            if path.is_file()
         )
     return found
 
@@ -155,13 +164,13 @@ def _load_audit_report(
     """Load the newest matching audit across canonical, fixtures and runs trees."""
     safe_topic = _clean_slug(topic_id, settings.active_topic)
     candidates = [
-        (mtime, path)
-        for mtime, path, topic in _audit_candidates(settings, report_date, provenance)
+        (priority, mtime_ns, path)
+        for priority, mtime_ns, path, topic in _audit_candidates(settings, report_date, provenance)
         if topic == safe_topic
     ]
     if not candidates:
         return {}
-    return cast(dict[str, Any], json.loads(max(candidates)[1].read_text(encoding="utf-8")))
+    return cast(dict[str, Any], json.loads(max(candidates)[2].read_text(encoding="utf-8")))
 
 
 def _provenance_from_report(report: dict[str, Any]) -> AcquisitionProvenance:
@@ -209,7 +218,7 @@ def _check_topic(
         return _clean_slug(requested, settings.active_topic)
     candidates = _audit_candidates(settings, report_date, provenance)
     if candidates:
-        return max(candidates)[2]
+        return max(candidates)[3]
     return settings.active_topic
 
 
@@ -318,7 +327,10 @@ def _observed_retention_months(settings: Settings, database: DatabaseResourceHan
 def build_definitions() -> dg.Definitions:
     """Build Dagster definitions lazily so importing this module never starts a daemon."""
     runtime_settings = get_settings()
-    configure_observability(runtime_settings)  # once per process, not once per asset run
+    global _OBSERVABILITY_CONFIGURED
+    if not _OBSERVABILITY_CONFIGURED:
+        configure_observability(runtime_settings)  # once per process, not once per asset run
+        _OBSERVABILITY_CONFIGURED = True
     schedule_status = (
         dg.DefaultScheduleStatus.RUNNING
         if runtime_settings.enable_tier1_schedules

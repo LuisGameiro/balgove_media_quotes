@@ -29,8 +29,6 @@ DEFAULT_TOPIC_ID: Final = "ukraine-war"
 
 # DEC-10 licence-limit policy — enforced by the renderer, never by the frozen schema.
 MAX_QUOTE_WORDS: Final = 30
-ATTRIBUTION_FORMAT: Final = "Outlet — Named person (role), Article, YYYY-MM-DD, URL"
-LICENCE_TERRITORY: Final = "internal worldwide"
 
 
 class Settings(BaseSettings):
@@ -81,8 +79,6 @@ class Settings(BaseSettings):
 
     # DEC-10 (docs/04): renderer-enforced rights limits; no change to quotes.schema.json.
     max_quote_words: int = Field(default=MAX_QUOTE_WORDS, gt=0)
-    attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
-    licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)
     persist_to_postgres: bool = False  # C4: Dagster persists run/audit rows only when enabled
 
     # C4: Dagster automations stay STOPPED unless explicitly enabled (safe default).
@@ -97,7 +93,7 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     dashboard_password: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_app_url: str = "https://github.com/balgoveinnovations/media-quotes"
+    openrouter_app_url: str = "https://github.com/LuisGameiro/balgove_media_quotes"
     openrouter_app_title: str = "Media Quotes Collection System"
     openrouter_timeout_seconds: float = 30.0
     openrouter_max_retries: int = 2

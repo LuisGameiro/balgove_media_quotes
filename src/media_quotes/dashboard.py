@@ -228,12 +228,13 @@ def coverage_by_day_matrix(records: list[dict[str, Any]]) -> list[dict[str, Any]
     return sorted(grid.values(), key=lambda row: str(row["source_id"]))
 
 
+# shortcut: no paging, default caps the newest 500 quotes; add paging if exports exceed that.
 def browse_quotes(
-    export_dir: Path, topic_id: str | None = None, limit: int | None = None
+    export_dir: Path, topic_id: str | None = None, limit: int | None = 500
 ) -> list[dict[str, Any]]:
     """Read governed JSONL exports for one topic, newest files first.
 
-    ``limit=None`` loads every quote; ``limit=0`` returns nothing.
+    ``limit=None`` loads every quote; the default keeps the newest 500; ``limit=0`` returns nothing.
     """
     if (limit is not None and limit <= 0) or not export_dir.is_dir():
         return []
@@ -441,6 +442,9 @@ def _make_db_counts_cached(cached_by_hash: Any) -> Any:
 
 def database_summary(settings: Settings) -> dict[str, int | str]:  # pragma: no cover
     """Read-only row counts from Postgres; an 'error' key names a failed query."""
+    current_digest = _remember_db_url(get_settings().database_url_value)
+    if _remember_db_url(settings.database_url_value) != current_digest:
+        return {"error": "SettingsMismatch"}
     return cast(dict[str, int | str], _db_counts_cached(settings.database_url_value))
 
 

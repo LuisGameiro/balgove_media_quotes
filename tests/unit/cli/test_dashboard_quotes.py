@@ -59,15 +59,16 @@ def test_browse_quotes_is_topic_scoped_deduplicated_and_bounded(tmp_path: Path) 
     assert browse_quotes(export_dir, topic_id="ukraine-war", limit=0) == []
 
 
-def test_browse_quotes_loads_all_rows_without_a_cap(tmp_path: Path) -> None:
+def test_browse_quotes_caps_the_default_view_at_500(tmp_path: Path) -> None:
     export_dir = tmp_path / "quotes"
     export_dir.mkdir()
     rows = [_row(f"Q-{index:04d}") for index in range(501)]
     (export_dir / "quotes-2026-11-19.jsonl").write_text(
         "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
     )
-    assert len(browse_quotes(export_dir)) == 501
+    assert len(browse_quotes(export_dir)) == 500
     assert len(browse_quotes(export_dir, limit=10)) == 10
+    assert len(browse_quotes(export_dir, limit=None)) == 501
 
 
 def test_dashboard_readers_prefer_live_artifacts_and_fall_back_to_fixtures(tmp_path: Path) -> None:

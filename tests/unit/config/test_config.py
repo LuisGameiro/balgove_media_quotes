@@ -32,8 +32,6 @@ def test_database_url_is_secret():
 def test_dec10_licence_limits_defaults():
     settings = Settings(_env_file=None)
     assert settings.max_quote_words == 30
-    assert settings.attribution_format
-    assert settings.licence_territory
 
 
 def test_dec10_limits_accept_environment_override(monkeypatch):

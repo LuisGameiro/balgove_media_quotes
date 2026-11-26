@@ -543,6 +543,44 @@ def test_concurrent_writer_completed_days_survive_save(
     assert not list(path.parent.glob("*.lock"))
 
 
+def test_competing_succeeded_day_is_not_downgraded_to_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    end = date(2026, 10, 2)
+    _install(monkeypatch, settings, candidates=[], statuses=["succeeded", "succeeded"])
+    path = _manifest_path(settings, end)
+    real_load = backfill._load_manifest
+    real_atomic = backfill.atomic_write_text
+    injected = False
+
+    def load_with_competitor(p: Path) -> dict[str, Any]:
+        nonlocal injected
+        result = real_load(p)
+        if not injected:
+            injected = True
+            other = {
+                "completed": {
+                    START.isoformat(): {
+                        "status": "succeeded",
+                        "quotes": 9,
+                        "gaps": 0,
+                        "run_id": "other-writer",
+                    }
+                }
+            }
+            real_atomic(p, json.dumps(other, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+        return result
+
+    monkeypatch.setattr(backfill, "_load_manifest", load_with_competitor)
+
+    run_historical_backfill(settings, start=START, end=end, max_cost=10)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["completed"][START.isoformat()]["run_id"] == "other-writer"
+    assert saved["completed"][START.isoformat()]["status"] == "succeeded"
+
+
 @pytest.mark.parametrize(
     ("stage", "message"),
     [

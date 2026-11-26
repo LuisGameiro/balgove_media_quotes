@@ -271,8 +271,17 @@ def run_historical_backfill(
                 "run_id": outcome.run_id,
             }
         with _queue_lock(manifest_path):
-            # Re-read under the lock: a competing backfill's completed days must survive.
-            completed = {**_load_manifest(manifest_path).get("completed", {}), **completed}
+            # A finished day from another backfill must survive our stale local result.
+            disk = _load_manifest(manifest_path).get("completed", {})
+            for day_key, stored in disk.items():
+                local_status = completed.get(day_key, {}).get("status")
+                disk_status = stored.get("status")
+                if (disk_status == "succeeded" and local_status != "succeeded") or (
+                    disk_status in _DONE_STATUSES and local_status in {"empty", "pending"}
+                ):
+                    completed[day_key] = stored
+                else:
+                    completed.setdefault(day_key, stored)
             manifest["completed"] = completed
             manifest["updated_at"] = datetime.now(UTC).isoformat()
             _save_manifest(manifest_path, manifest)
