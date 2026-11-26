@@ -40,8 +40,11 @@ a checklist to maintain.
 
 ### Production operations
 
-- Rehearse a production backup/restore; there is no downgrade migration.
-- Provision the production OTLP collector and enable `OTEL_ENABLED=true`.
+- Rehearse a production backup/restore: apply `migrations/schema.sql` with `mq bootstrap` to a
+  restored database, then run `mq restore-drill --provenance live_feed`. There is no downgrade
+  migration.
+- Provision the production OTLP collector from `docker-compose.yml` (`otel-collector` service) and
+  set `OTEL_ENABLED=true` with `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - Register scheduled tombstone-gated `mq blob-prune --tombstones PATH --execute` runs using
   `scripts/ops/blob_prune_scheduled.ps1` (helper added; scheduler registration pending).
 

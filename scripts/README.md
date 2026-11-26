@@ -18,7 +18,7 @@ available; the PowerShell wrapper also resolves the local virtualenv on Windows.
 
 | Script | Mode | Output |
 |---|---|---|
-| `run_all.ps1` | Turnkey fixture verification sequence; offline | Console pass/fail |
+| `run_all.ps1` | Starts local Postgres, runs CI, bootstrap, evals and Dagster materialization; optional dashboard | Console pass/fail |
 | `run_dagster.ps1` | Starts the local Dagster UI; schedules/sensor stopped by default | `var/dagster/` runtime files |
 | `enable_automation.ps1` | Starts existing Dagster schedules/sensor: requires `-EnableSchedules` and/or `-EnableSensor` plus the matching `ENABLE_*` env flag | Console status |
 | `blob_prune_scheduled.ps1` | Operator-run prune with a required, non-empty tombstone file | Console status |

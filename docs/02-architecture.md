@@ -9,8 +9,8 @@ derived projection.
 
 ## Main flow
 
-1. `cli/run.py` loads JSON source configs, the CSV mirror, a topic pack and registry rows, then
-   calls `pipeline.run_daily_pipeline`.
+1. `ingestion/collect.py` loads JSON source configs, the CSV mirror, a topic pack and registry rows;
+   `cli/run.py` calls it, then `pipeline.run_daily_pipeline`.
 2. The pipeline processes fixture references, cached blobs or articles collected in the same run.
    `mq run --live` and `mq backfill ... --execute --live` use official feeds and sitemaps first;
    Bing News is an opt-in discovery fallback. `mq fetch --live` is a separate download step.
@@ -69,7 +69,8 @@ context packs; it is not a second database.
 `config.py` loads `.env` through pydantic-settings. Secrets are `SecretStr`, paths resolve against
 the project root, and validators reject unpinned model snapshots and unknown modes.
 `observability._redact` keeps sensitive keys out of logs; `license_reference` is audit evidence.
-Observability is configured once at the shared pipeline entry point.
+Observability is configured once per CLI invocation in `cli/app.py` and once when Dagster definitions
+load in `orchestration.py`.
 
 ## Background work and dashboard
 
@@ -82,9 +83,9 @@ registry metadata, not scheduler configuration. See
 
 The dashboard caches file reads, loads the latest audit once per render and executes only the
 selected tab. It shows run metrics, digests, logs, coverage, review flags, registry rows, a read-only
-JSONL quote browser and read-only Postgres counts. The Quotes tab loads all governed records (the
-table paginates them) and never shows article bodies. It uses an 8-hour session TTL and a
-per-session lockout after five failed attempts for 15 minutes.
+JSONL quote browser and read-only Postgres counts. The Quotes tab loads the newest 500 governed
+records and never shows article bodies; callers can pass `limit=None` for all records. It uses an
+8-hour session TTL and a per-session lockout after five failed attempts for 15 minutes.
 
 ## Quality gate
 

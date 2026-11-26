@@ -82,7 +82,7 @@ uv run python -m media_quotes sources --action list
 uv run python -m media_quotes topics --action list
 
 # Dagster
-uv sync --frozen --extra dashboard --extra extraction --extra orchestration --group dev
+uv sync --frozen --extra dashboard --extra extraction --group dev
 uv run dagster dev -m media_quotes.orchestration
 ```
 

@@ -18,7 +18,6 @@ Collection System described in [`../docs/Test_News.md`](../docs/Test_News.md).
 | `quotes.example.jsonl` | Three clearly synthetic records showing the export shape. |
 | `fixtures/` | Read-only synthetic article pages for offline replay. |
 | `gold_set/` | Labelled synthetic evaluation sets; see `gold_set/README.md`. |
-| `reports/` | Legacy directory. No active output is written here. |
 
 Generated output belongs under `../var/output/`, never here. Dated `quotes-YYYY-MM-DD.jsonl` files are created at runtime.
 

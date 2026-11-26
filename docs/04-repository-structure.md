@@ -44,7 +44,8 @@ src/media_quotes/
 ├── db/                     engine, table definitions and repository writes
 ├── governance/             evaluation, gold sets, relevance, rights, restore and blob pruning
 ├── graph/                  optional Neo4j projection and GraphRAG protocol
-├── ingestion/              fetch policy, live collection, archive, Bing and admission
+├── ingestion/              neutral collection service, fetch policy, live collection, archive,
+│                           Bing and admission
 ├── processing/             extraction, verification, curation, digest and export
 ├── risk_controls/          obsolescence review, budget gate and retention policy
 ├── validation/             registry, schema and export validation
@@ -63,7 +64,8 @@ var/output/audit/      audit JSON/Markdown and review queues
 var/output/logs/       one JSONL log file per run
 var/output/raw/        downloaded HTML blobs
 var/output/proof/      per-source proof reports
-var/dagster/           local Dagster home
+var/dagster/           Dagster home set by scripts/ops/run_dagster.ps1
+var/output/dagster/    default home when DAGSTER_HOME is unset (see `mq doctor`)
 ```
 
 ## Placement rules
