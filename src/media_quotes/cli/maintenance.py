@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import Any
 from ..config import DEFAULT_TOPIC_ID, Settings
 from ..enums import AcquisitionProvenance
 from ..exceptions import ConfigError
-from ..export import local_store_path, read_jsonl
+from ..governance.restore_drill import retention_readiness, verify_export_integrity
 from ..pipeline import (
     JudgeDecisionSnapshot,
     JudgeProvider,
@@ -19,7 +20,7 @@ from ..pipeline import (
     make_judge,
     normalise_judge_decision,
 )
-from ..restore_drill import retention_readiness, verify_export_integrity
+from ..processing.export import local_store_path, read_jsonl
 from ..risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
 from ..risk_controls.obsolescence import (
     VERDICTS,
@@ -40,8 +41,6 @@ from .common import (
     load_review_flags,
     review_queue_path,
 )
-
-QUEUE_FILE = "review-queue.json"
 
 
 def _queue_path(settings: Settings, provenance: AcquisitionProvenance = "fixture") -> Path:
@@ -243,23 +242,58 @@ def _do_review(
         _write_json(_queue_path(settings, provenance), payload)
         if settings.persist_to_postgres:
             from ..db.repository import persist_obsolescence_flags
-            from ..pipeline import _default_session_context
+            from ..pipeline import default_session_context
 
-            with _default_session_context(settings) as session:
+            with default_session_context(settings) as session:
                 persist_obsolescence_flags(session, [decided_flag])
         print(f"review recorded: {quote_id} -> {chosen_verdict}")
         return EXIT_OK
 
 
-def _do_blob_prune(settings: Settings, *, tombstones_path: Path, execute: bool) -> int:
+def _do_blob_prune(
+    settings: Settings,
+    *,
+    tombstones_path: Path,
+    execute: bool,
+    acknowledge_unverified: bool = False,
+) -> int:
     """Delete blobs past the cutoff only when their digest is in the tombstone manifest."""
-    from ..blob_prune import load_tombstones, prune_blobs
+    from ..governance.blob_prune import load_tombstones, prune_blobs
 
+    referenced: frozenset[str] = frozenset()
+    if settings.persist_to_postgres:
+        try:
+            from sqlalchemy import text
+
+            from ..pipeline import default_session_context
+
+            with default_session_context(settings) as session:
+                rows = (
+                    session.execute(
+                        text("SELECT raw_blob_ref FROM articles WHERE raw_blob_ref IS NOT NULL")
+                    )
+                    .scalars()
+                    .all()
+                )
+            referenced = frozenset(Path(str(value)).stem for value in rows if str(value))
+        except Exception as exc:
+            print(
+                f"error: cannot verify referenced blobs; refusing to prune: {exc}", file=sys.stderr
+            )
+            return EXIT_FAILURE
+    elif execute and not acknowledge_unverified:
+        print(
+            "error: persistence is disabled; pass --ack-no-references to prune without "
+            "referenced-digest verification (use --dry-run to plan safely)",
+            file=sys.stderr,
+        )
+        return EXIT_FAILURE
     report = prune_blobs(
         settings,
         today=settings.report_date,
         tombstones=load_tombstones(tombstones_path),
         dry_run=not execute,
+        referenced=referenced,
     )
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     return EXIT_OK
@@ -272,9 +306,9 @@ def _do_retention(settings: Settings, *, dry_run: bool) -> int:
     months: list[date] = []
     if live:
         from ..db.repository import observed_audit_months
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             months = observed_audit_months(session)
     report = retention_readiness(RetentionPolicy(), today, months, longest_txn_seconds=0)
     report.pop("longest_txn_ok", None)  # no live measurement exists in offline mode
@@ -315,8 +349,10 @@ def _do_restore_drill(
         if len(files) < 2:
             print("restore drill requires two exports; pass --reference PATH")
             return EXIT_FAILURE
-        current_path = files[0]
-        reference = files[1]
+        # Keep the requested dated export when it exists; fall back to the two newest files.
+        if not current_path.is_file():
+            current_path = files[0]
+        reference = files[1] if current_path == files[0] else files[0]
     elif not current_path.is_file() and files:
         current_path = files[0]
 

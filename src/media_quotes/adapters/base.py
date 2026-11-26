@@ -139,7 +139,7 @@ class SourceAdapter:
         # Fixture-shaped input keeps synthetic span offsets; live HTML always uses the real parser.
         if not self.replay and 'class="quote"' not in decoded:
             from ..config import get_settings
-            from ..extraction import static_html_fallback
+            from ..processing.extraction import static_html_fallback
 
             mode = self.extraction_fallback
             if mode is None:
@@ -154,7 +154,7 @@ class SourceAdapter:
                 and self.row.usable
             ):
                 # Rights gate and per-source opt-in both apply before a browser is used.
-                from ..extraction import rendered_html_fallback
+                from ..processing.extraction import rendered_html_fallback
 
                 fallback = rendered_html_fallback
             return parse_newspaper_html(

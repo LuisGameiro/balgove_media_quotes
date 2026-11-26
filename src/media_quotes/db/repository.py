@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import DEFAULT_TOPIC_ID
@@ -31,7 +33,7 @@ from .tables import (
 )
 
 if TYPE_CHECKING:
-    from ..gold_set import GoldSet
+    from ..governance.gold_set import GoldSet
     from ..models import ExportQuoteRecord
     from ..registry import SourceRegistryRow
     from ..risk_controls.models import ObsolescenceFlag
@@ -54,7 +56,7 @@ def record_eval_run(
     commit: bool = True,
 ) -> str:
     """Append one evaluation result; eval ids are stable per gold set + date."""
-    from ..evaluation import EVAL_CONTRACT_VERSION
+    from ..governance.evaluation import EVAL_CONTRACT_VERSION
 
     eval_split = str(metrics.get("evaluated_split") or "all")
     eval_id_seed = (
@@ -87,7 +89,7 @@ def record_eval_run(
 
 def sync_gold_set_labels(session: Session, gold_set: GoldSet, *, commit: bool = True) -> int:
     """Persist gold-set labels and negative candidates with their deterministic split."""
-    from ..gold_set import split_for
+    from ..governance.gold_set import split_for
 
     rows: list[dict[str, Any]] = []
     for article in gold_set.articles:
@@ -159,6 +161,56 @@ def _inserted_count(result: object, attempted: int) -> int:
     """psycopg reports -1 for INSERT .. ON CONFLICT DO NOTHING; fall back to attempted."""
     rowcount = getattr(result, "rowcount", None)
     return rowcount if isinstance(rowcount, int) and rowcount >= 0 else attempted
+
+
+# Bounded retry for concurrent backfills racing on the UNIQUE canonical_quote_id.
+_QUOTE_ID_INSERT_ATTEMPTS = 5
+
+
+def _assign_canonical_quote_ids(session: Session, quote_values: list[dict[str, Any]]) -> None:
+    """Reuse stored display ids and remap in-batch collisions, in place."""
+    # Reuse the stored display id when the same quote (business key) already exists:
+    # an idempotent re-run must not treat its own row as a collision.
+    # Only the date prefixes in this batch can collide with a remapped candidate.
+    prefixes = sorted({str(item["canonical_quote_id"])[:10] for item in quote_values})
+    existing_statement = select(
+        quotes_table.c.canonical_quote_id,
+        quotes_table.c.article_id,
+        quotes_table.c.quote_text_normalised,
+        quotes_table.c.char_start,
+        quotes_table.c.char_end,
+    ).where(or_(*(quotes_table.c.canonical_quote_id.like(f"{prefix}-%") for prefix in prefixes)))
+    existing_by_key = {
+        (str(row[1]), str(row[2] or ""), int(row[3]), int(row[4])): str(row[0])
+        for row in session.execute(existing_statement)
+    }
+    assigned_ids = set(existing_by_key.values())
+    for item in quote_values:
+        key = (
+            str(item["article_id"]),
+            str(item["quote_text_normalised"] or ""),
+            int(item["char_start"]),
+            int(item["char_end"]),
+        )
+        stable_id = existing_by_key.get(key)
+        if stable_id is not None:
+            item["canonical_quote_id"] = stable_id
+            continue
+        quote_id = str(item["canonical_quote_id"])
+        if quote_id not in assigned_ids:
+            assigned_ids.add(quote_id)
+            continue
+        date_prefix, sequence = quote_id.rsplit("-", 1)
+        next_sequence = (int(sequence) + 1) % 10000
+        attempts = 0
+        while f"{date_prefix}-{next_sequence:04d}" in assigned_ids:
+            next_sequence = (next_sequence + 1) % 10000
+            attempts += 1
+            if attempts > 10000:
+                raise RuntimeError(f"Exhausted quote id namespace for prefix {date_prefix}")
+        remapped = f"{date_prefix}-{next_sequence:04d}"
+        item["canonical_quote_id"] = remapped
+        assigned_ids.add(remapped)
 
 
 def persist_articles_and_quotes(
@@ -319,56 +371,24 @@ def persist_articles_and_quotes(
 
     inserted_quotes = 0
     if quote_values:
-        # Reuse the stored display id when the same quote (business key) already exists:
-        # an idempotent re-run must not treat its own row as a collision.
-        # Only the date prefixes in this batch can collide with a remapped candidate.
-        prefixes = sorted({str(item["canonical_quote_id"])[:10] for item in quote_values})
-        existing_statement = select(
-            quotes_table.c.canonical_quote_id,
-            quotes_table.c.article_id,
-            quotes_table.c.quote_text_normalised,
-            quotes_table.c.char_start,
-            quotes_table.c.char_end,
-        ).where(
-            or_(*(quotes_table.c.canonical_quote_id.like(f"{prefix}-%") for prefix in prefixes))
-        )
-        existing_by_key = {
-            (str(row[1]), str(row[2] or ""), int(row[3]), int(row[4])): str(row[0])
-            for row in session.execute(existing_statement)
-        }
-        assigned_ids = set(existing_by_key.values())
-        for item in quote_values:
-            key = (
-                str(item["article_id"]),
-                str(item["quote_text_normalised"] or ""),
-                int(item["char_start"]),
-                int(item["char_end"]),
+        for attempt in range(_QUOTE_ID_INSERT_ATTEMPTS):
+            _assign_canonical_quote_ids(session, quote_values)
+            statement = pg_insert(quotes_table).values(quote_values)
+            statement = statement.on_conflict_do_nothing(
+                index_elements=["article_id", "quote_text_normalised", "char_start", "char_end"]
             )
-            stable_id = existing_by_key.get(key)
-            if stable_id is not None:
-                item["canonical_quote_id"] = stable_id
+            try:
+                # A savepoint keeps the outer transaction usable after an id collision on
+                # PostgreSQL, where a failed statement otherwise aborts the whole transaction.
+                with session.begin_nested():
+                    result = session.execute(statement)
+            except IntegrityError:
+                if attempt == _QUOTE_ID_INSERT_ATTEMPTS - 1:
+                    raise
+                # Another backfill took an id we guessed; reload the taken ids and retry.
                 continue
-            quote_id = str(item["canonical_quote_id"])
-            if quote_id not in assigned_ids:
-                assigned_ids.add(quote_id)
-                continue
-            date_prefix, sequence = quote_id.rsplit("-", 1)
-            next_sequence = (int(sequence) + 1) % 10000
-            attempts = 0
-            while f"{date_prefix}-{next_sequence:04d}" in assigned_ids:
-                next_sequence = (next_sequence + 1) % 10000
-                attempts += 1
-                if attempts > 10000:
-                    raise RuntimeError(f"Exhausted quote id namespace for prefix {date_prefix}")
-            remapped = f"{date_prefix}-{next_sequence:04d}"
-            item["canonical_quote_id"] = remapped
-            assigned_ids.add(remapped)
-        statement = pg_insert(quotes_table).values(quote_values)
-        statement = statement.on_conflict_do_nothing(
-            index_elements=["article_id", "quote_text_normalised", "char_start", "char_end"]
-        )
-        result = session.execute(statement)
-        inserted_quotes = _inserted_count(result, len(quote_values))
+            inserted_quotes = _inserted_count(result, len(quote_values))
+            break
     if commit:
         session.commit()
     return inserted_articles, inserted_quotes
@@ -652,7 +672,11 @@ class DecisionCacheEntry(BaseModel):
 def upsert_decision_cache(
     session: Session, entry: DecisionCacheEntry, *, commit: bool = True
 ) -> bool:
-    """Idempotent insert: an existing cache key is never overwritten (returns False)."""
+    """Idempotent insert; existing key is never overwritten.
+
+    Cache writes commit independently of the enclosing pipeline transaction: a cache
+    hit must survive a later pipeline rollback.
+    """
     values = entry.model_dump(mode="json")
     statement = pg_insert(decision_cache_table).values(values)
     statement = statement.on_conflict_do_nothing(index_elements=["cache_key"])
@@ -724,7 +748,7 @@ def read_export_records(
     window_days: int,
     topic_id: str | None = None,
     provenance: AcquisitionProvenance | None = None,
-) -> list[Any]:
+) -> list[ExportQuoteRecord]:
     """Rebuild strict export records from persisted quotes for one report window."""
     from datetime import timedelta
 
@@ -796,14 +820,15 @@ def read_export_records(
     if provenance is not None:
         statement = statement.where(quotes_table.c.provenance == provenance)
     # A quote can carry several flags (one per review decision); keep the newest one.
-    unique_rows: dict[Any, Any] = {}
-    for row in session.execute(statement).mappings():
+    unique_rows: dict[Any, Mapping[str, Any]] = {}
+    for raw_row in session.execute(statement).mappings():
+        row = cast("Mapping[str, Any]", raw_row)
         previous = unique_rows.get(row["q_id"])
         if previous is None or (row.get("o_created_at") or datetime.min.replace(tzinfo=UTC)) > (
             previous.get("o_created_at") or datetime.min.replace(tzinfo=UTC)
         ):
             unique_rows[row["q_id"]] = row
-    records: list[Any] = []
+    records: list[ExportQuoteRecord] = []
     for row in unique_rows.values():
         meta = row["q_meta"] or {}
         article_meta = row["a_meta"] or {}

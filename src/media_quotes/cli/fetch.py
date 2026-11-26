@@ -14,8 +14,8 @@ from typing import Any
 
 from ..adapters import build_adapter
 from ..config import DEFAULT_TOPIC_ID, Settings
-from ..fetch import fetch_policy_from
-from ..live import fetch_feed_documents
+from ..ingestion.fetch import fetch_policy_from
+from ..ingestion.live import fetch_feed_documents
 from ..topics import TopicPack
 from .common import EXIT_CONFIG, EXIT_OK, _load_registry, _load_source_configs, _load_topic_pack
 
@@ -100,6 +100,7 @@ def _do_fetch(
         require_topic=True,
         limit=limit,
         extra_hosts=extra_hosts,
+        redirect_hosts=frozenset(source_cfg.redirect_hosts) if source_cfg else frozenset(),
     )
 
     adapter = build_adapter(

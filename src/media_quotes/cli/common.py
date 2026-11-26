@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,7 +17,8 @@ from .. import __version__
 from ..config import DEFAULT_TOPIC_ID, PROJECT_ROOT, Settings
 from ..enums import APPROVED_RIGHTS, AcquisitionProvenance
 from ..exceptions import ConfigError
-from ..export import atomic_write_text, content_hash
+from ..processing.export import atomic_write_text, content_hash
+from ..processing.window import window
 from ..registry import SourceRegistryRow, load_sources_csv
 from ..risk_controls.models import ObsolescenceFlag
 from ..source_configs import (
@@ -221,6 +222,11 @@ def _version_manifest(
     }
 
 
+def _window(report_date: date, settings: Settings) -> tuple[date, date]:  # pragma: no cover
+    """Compatibility wrapper; the implementation lives in processing.window."""
+    return window(report_date, settings)
+
+
 def _parse_report_date(value: str | None, settings: Settings) -> date:  # pragma: no cover
     if value is None:
         return settings.report_date
@@ -228,10 +234,6 @@ def _parse_report_date(value: str | None, settings: Settings) -> date:  # pragma
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ConfigError(f"invalid --date {value!r}: expected YYYY-MM-DD") from exc
-
-
-def _window(report_date: date, settings: Settings) -> tuple[date, date]:  # pragma: no cover
-    return report_date - timedelta(days=settings.report_window_days - 1), report_date
 
 
 def run_scope(

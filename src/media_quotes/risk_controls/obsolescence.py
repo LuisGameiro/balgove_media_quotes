@@ -177,7 +177,10 @@ def assess_obsolescence(
     if not _eligible_pair(old, newer):
         return None
 
-    confidence = float(_value(judge, "confidence", 0.0))
+    try:
+        confidence = float(_value(judge, "confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
     verdict = judge_obsolescence_verdict(judge)
     if verdict != "confirmed":
         return None
@@ -229,7 +232,10 @@ def propose_obsolescence(
     proposed: list[ObsolescenceFlag] = []
     pairs_evaluated = 0
     pairs_skipped = 0
+    cap_reached = False
     for index, old in enumerate(records):
+        if cap_reached:
+            break
         old_speaker = normalise_text((speakers or {}).get(old.quote_id, "")).casefold()
         for newer in records[index + 1 :]:
             if speakers is not None:
@@ -240,7 +246,8 @@ def propose_obsolescence(
                 continue
             if max_pairs is not None and pairs_evaluated >= max_pairs:
                 pairs_skipped += 1
-                continue
+                cap_reached = True
+                break  # cap reached; stop scanning the remaining pairs entirely
             decision = _pair_decision(judge, old, newer)
             pairs_evaluated += 1
             flag = assess_obsolescence(old, newer, now=now, judge=decision)
@@ -255,7 +262,7 @@ def propose_obsolescence(
 def triage_obsolescence(confidence: float) -> ReviewState:
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be in [0, 1]")
-    if confidence >= 0.80:
+    if confidence >= JUDGE_CONFIDENCE_THRESHOLD:
         return "pending"
     if confidence >= 0.50:
         return "needs_evidence"
@@ -317,7 +324,7 @@ class ReviewQueue:
         return sorted(
             quote_id
             for quote_id, flag in self._flags.items()
-            if flag.state not in TERMINAL_STATES and review_overdue(flag, now, sla_days)
+            if review_overdue(flag, now, sla_days)
         )
 
     def hideable_quotes(self, *, now: datetime, hold_hours: int = 24) -> list[str]:

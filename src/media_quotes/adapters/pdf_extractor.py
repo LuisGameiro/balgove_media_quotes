@@ -12,6 +12,7 @@ import re
 import zlib
 from typing import Any
 
+from ..exceptions import ConfigError
 from ..topics import TopicPack
 from .quote_extractor import extract_quotes, infer_section
 
@@ -117,6 +118,12 @@ def parse_pdf_document(
         else raw_content.encode("latin1", errors="replace")
     )
     body_text, meta = extract_pdf_text(raw_bytes)
+    if not body_text:
+        # Object-stream/CID PDFs can look structurally valid yet yield no text; fail
+        # closed so callers do not mistake an unreadable document for one with no quotes.
+        raise ConfigError(
+            f"could not extract body text from PDF document at {source_url or '(no source URL)'}"
+        )
 
     quotes: list[dict[str, Any]] = []
     if body_text:

@@ -1,4 +1,8 @@
-"""Plugin registry for discovery-method and per-source adapter overrides."""
+"""Plugin registry for discovery-method and per-source adapter overrides.
+
+The registries below are process-global: registration persists for the lifetime of the
+interpreter. Tests must snapshot/restore them (``tests/conftest.py`` does this automatically).
+"""
 
 from __future__ import annotations
 

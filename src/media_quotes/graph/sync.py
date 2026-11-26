@@ -7,7 +7,7 @@ idempotent Cypher MERGE projections.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -78,6 +78,21 @@ MERGE (newer)-[sup:SUPERSEDES]->(older)
 SET sup.reason = $reason
 """
 
+# Bound memory for range sync and keep batch boundaries deterministic for offline tests.
+_BATCH_SIZE = 100
+
+
+def _unwind(cypher: str) -> str:
+    """Turn a single-row MERGE template into an UNWIND batch over ``$rows``."""
+    body = re.sub(r"\$(\w+)", lambda match: f"row.{match.group(1)}", cypher)
+    return f"UNWIND $rows AS row\n{body}"
+
+
+_MERGE_QUOTES_CYPHER = _unwind(_MERGE_QUOTE_CYPHER)
+_MERGE_SPEAKERS_CYPHER = _unwind(_MERGE_SPEAKER_CYPHER)
+_MERGE_TERMS_CYPHER = _unwind(_MERGE_TERM_CYPHER)
+_MERGE_SUPERSESSIONS_CYPHER = _unwind(_MERGE_SUPERSESSION_CYPHER)
+
 _WRITE_SYNC_METADATA_CYPHER = """
 MERGE (m:ProjectionMetadata {key: 'media_quotes'})
 SET m.last_synced_at = $last_synced_at,
@@ -90,15 +105,40 @@ SET m.last_synced_at = $last_synced_at,
 
 
 def project_records_to_graph(
-    records: Sequence[ExportQuoteRecord | Mapping[str, Any]],
+    records: Iterable[ExportQuoteRecord | Mapping[str, Any]],
     session: GraphSessionProtocol,
 ) -> GraphSyncStats:
-    """Project a sequence of verified quote records into Neo4j using idempotent MERGE."""
+    """Project verified quote records with deterministic UNWIND MERGE batches."""
     quotes_count = 0
     sources_seen: set[str] = set()
     articles_seen: set[str] = set()
     speakers_seen: set[str] = set()
     errors: list[str] = []
+    quote_rows: list[dict[str, Any]] = []
+    speaker_rows: list[dict[str, Any]] = []
+    term_rows: list[dict[str, Any]] = []
+    supersession_rows: list[dict[str, Any]] = []
+    pending = 0
+
+    def flush() -> None:
+        nonlocal pending, quotes_count
+        if not pending:
+            return
+        for cypher, rows in (
+            (_MERGE_QUOTES_CYPHER, quote_rows),
+            (_MERGE_SPEAKERS_CYPHER, speaker_rows),
+            (_MERGE_TERMS_CYPHER, term_rows),
+            (_MERGE_SUPERSESSIONS_CYPHER, supersession_rows),
+        ):
+            if rows:
+                try:
+                    session.run(cypher, {"rows": list(rows)})
+                except Exception as exc:  # one batch failure must not abort the whole sync
+                    errors.append(f"Error projecting batch: {exc}")
+                    if cypher is _MERGE_QUOTES_CYPHER:
+                        quotes_count -= len(rows)
+                rows.clear()
+        pending = 0
 
     for rec in records:
         try:
@@ -125,82 +165,73 @@ def project_records_to_graph(
                 _get_val(rec, "quote_text_original") or _get_val(rec, "quote_text_raw") or ""
             )
 
-            quote_params: dict[str, Any] = {
-                "source_id": source_id,
-                "source_name": str(_get_val(rec, "source_name", source_id)),
-                "source_tier": int(_get_val(rec, "source_tier", 1)),
-                "source_country_region": str(
-                    _get_val(rec, "source_country_region", "international")
-                ),
-                "source_type": source_type_str,
-                "claim_only": bool(_get_val(rec, "claim_only", False)),
-                "rights_status": rights_str,
-                "article_url": article_url,
-                "article_name": str(_get_val(rec, "article_name", "")),
-                "article_author": str(_get_val(rec, "article_author", "")),
-                "publication_date": pub_date_str,
-                "content_hash": str(_get_val(rec, "content_hash", "")),
-                "quote_id": quote_id,
-                "quote_text_raw": quote_text_raw,
-                "quote_text_en": str(_get_val(rec, "quote_text_en", "")),
-                "quote_language": str(_get_val(rec, "quote_language", "")),
-                "is_obsolete": bool(_get_val(rec, "is_obsolete", False)),
-                "obsolete_reason": str(_get_val(rec, "obsolete_reason", "")),
-                "topic_id": str(_get_val(rec, "topic_id", "ukraine-war")),
-                "section_id": str(_get_val(rec, "section_id", "other")),
-            }
-
-            session.run(_MERGE_QUOTE_CYPHER, quote_params)
+            quote_rows.append(
+                {
+                    "source_id": source_id,
+                    "source_name": str(_get_val(rec, "source_name", source_id)),
+                    "source_tier": int(_get_val(rec, "source_tier", 1)),
+                    "source_country_region": str(
+                        _get_val(rec, "source_country_region", "international")
+                    ),
+                    "source_type": source_type_str,
+                    "claim_only": bool(_get_val(rec, "claim_only", False)),
+                    "rights_status": rights_str,
+                    "article_url": article_url,
+                    "article_name": str(_get_val(rec, "article_name", "")),
+                    "article_author": str(_get_val(rec, "article_author", "")),
+                    "publication_date": pub_date_str,
+                    "content_hash": str(_get_val(rec, "content_hash", "")),
+                    "quote_id": quote_id,
+                    "quote_text_raw": quote_text_raw,
+                    "quote_text_en": str(_get_val(rec, "quote_text_en", "")),
+                    "quote_language": str(_get_val(rec, "quote_language", "")),
+                    "is_obsolete": bool(_get_val(rec, "is_obsolete", False)),
+                    "obsolete_reason": str(_get_val(rec, "obsolete_reason", "")),
+                    "topic_id": str(_get_val(rec, "topic_id", "ukraine-war")),
+                    "section_id": str(_get_val(rec, "section_id", "other")),
+                }
+            )
             quotes_count += 1
             sources_seen.add(source_id)
             articles_seen.add(article_url)
 
-            # Speaker projection
             speaker = str(_get_val(rec, "speaker") or "").strip()
             if not speaker:
                 speaker = str(_get_val(rec, "article_author") or "").strip()
             if speaker:
                 speaker_key = _normalize_speaker_key(speaker)
                 if speaker_key:
-                    session.run(
-                        _MERGE_SPEAKER_CYPHER,
+                    speaker_rows.append(
                         {
                             "quote_id": quote_id,
                             "speaker_key": speaker_key,
                             "speaker_name": speaker,
-                        },
+                        }
                     )
                     speakers_seen.add(speaker_key)
 
-            # Terms projection
-            matched_terms = _get_val(rec, "matched_terms") or []
-            for term in matched_terms:
+            for term in _get_val(rec, "matched_terms") or []:
                 term_clean = re.sub(r"[^\w\s-]", "", str(term).strip().lower())
                 term_key = re.sub(r"[-\s]+", "_", term_clean)
                 if term_key:
-                    session.run(
-                        _MERGE_TERM_CYPHER,
-                        {"quote_id": quote_id, "term_key": term_key},
-                    )
+                    term_rows.append({"quote_id": quote_id, "term_key": term_key})
 
-            # Supersession projection. `superseded_by` carries the *newer* quotes that
-            # replaced this one, so those edges run newer -> older. The notes-regex path
-            # is the fallback for records without that list (this quote supersedes an
-            # older one), so it runs in the opposite direction.
+            # `superseded_by` holds newer quotes: edges run newer -> older. The notes
+            # fallback is the opposite direction for records without that list.
             superseded_ids = _get_val(rec, "superseded_by")
             newer_ids = (
                 [str(item) for item in superseded_ids if item]
                 if isinstance(superseded_ids, list)
                 else []
             )
+            reason = str(_get_val(rec, "obsolete_reason", "superseded"))
             for newer_id in newer_ids:
-                session.run(
-                    _MERGE_SUPERSESSION_CYPHER,
+                supersession_rows.append(
                     {
                         "newer_quote_id": newer_id,
                         "older_quote_id": quote_id,
-                        "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
-                    },
+                        "reason": reason,
+                    }
                 )
             superseded_id = _get_val(rec, "superseded_id")
             if not superseded_id and not newer_ids:
@@ -209,17 +240,21 @@ def project_records_to_graph(
                 if m:
                     superseded_id = m.group(1)
             if superseded_id:
-                session.run(
-                    _MERGE_SUPERSESSION_CYPHER,
+                supersession_rows.append(
                     {
                         "newer_quote_id": quote_id,
                         "older_quote_id": str(superseded_id),
-                        "reason": str(_get_val(rec, "obsolete_reason", "superseded")),
-                    },
+                        "reason": reason,
+                    }
                 )
+
+            pending += 1
+            if pending >= _BATCH_SIZE:
+                flush()
         except Exception as exc:
             errors.append(f"Error projecting quote {getattr(rec, 'quote_id', '?')}: {exc}")
 
+    flush()
     stats = GraphSyncStats(
         quotes_projected=quotes_count,
         sources_projected=len(sources_seen),
@@ -302,10 +337,8 @@ def sync_postgres_to_graph(
         "topic_id": topic_id,
         "report_date": report_date,
     }
-    records: list[dict[str, Any]] = []
+    # Stream the result: batching in project_records_to_graph bounds memory even for
+    # large range syncs, so no second full list of rows is accumulated here.
     with engine.connect() as conn:
         result = conn.execute(text(query), params)
-        for row in result.mappings():
-            records.append(dict(row))
-
-    return project_records_to_graph(records, session)
+        return project_records_to_graph((dict(row) for row in result.mappings()), session)

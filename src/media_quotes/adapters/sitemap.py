@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING
 
 import defusedxml.ElementTree as ET
 
+from ..text_utils import local_xml_tag as _local_tag
 from .quote_extractor import is_topic_relevant
-from .rss import _local_tag, _parse_feed_date
+from .rss import _parse_feed_date
 
 if TYPE_CHECKING:
     from ..topics import TopicPack

@@ -10,13 +10,13 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from ..admission import probe_source_live
+from ..ai.llm import make_provider
 from ..config import DEFAULT_TOPIC_ID, Settings
-from ..digest import write_digest
 from ..enums import AcquisitionProvenance
 from ..exceptions import ConfigError
-from ..export import atomic_write_text, local_store_path, read_jsonl, write_jsonl
-from ..llm import make_provider
+from ..ingestion.admission import probe_source_live
+from ..processing.digest import write_digest
+from ..processing.export import atomic_write_text, local_store_path, read_jsonl, write_jsonl
 from ..registry import SourceRegistryRow
 from ..risk_controls import budget_gate, estimate_backfill
 from ..source_configs import scaffold_source_config, sync_sources_to_csv
@@ -133,7 +133,7 @@ def _do_backfill(  # pragma: no cover
         raise ConfigError("--max-cost is required to execute a backfill")
     if execute and not dry_run:
         if source_mode == "live":
-            from ..backfill import run_historical_backfill
+            from ..ingestion.backfill import run_historical_backfill
 
             if max_cost is None:
                 raise ConfigError("--max-cost is required to execute a backfill")
@@ -184,7 +184,7 @@ def _do_backfill(  # pragma: no cover
 
     if settings.persist_to_postgres:
         from ..db.repository import finish_pipeline_run, start_pipeline_run
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
         run_id = f"backfill-{start.isoformat()}-{end.isoformat()}"
         stats = {
@@ -194,7 +194,7 @@ def _do_backfill(  # pragma: no cover
             "span_days": span,
             "cached_hashes": cached_hashes,
         }
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             start_pipeline_run(
                 session,
                 run_id=run_id,
@@ -222,7 +222,7 @@ def _do_audit_quotes(
 ) -> int:  # pragma: no cover
     import json
 
-    from ..quote_audit import audit_missed_quotes, write_report
+    from ..ai.quote_audit import audit_missed_quotes, write_report
 
     report, path = audit_missed_quotes(
         settings,
@@ -325,7 +325,7 @@ def _do_sources(
                 f"source {cleaned!r} is not usable for backfill; complete rights approval "
                 "and run `mq sources --action sync-csv` before backfilling"
             )
-        from ..backfill import run_historical_backfill
+        from ..ingestion.backfill import run_historical_backfill
 
         summary = run_historical_backfill(
             settings,
@@ -452,8 +452,8 @@ def _do_digest(
         return EXIT_FAILURE
     from datetime import UTC, datetime, time
 
-    from ..curation import review_badge
     from ..pipeline import _LIVE_NOTICE
+    from ..processing.curation import review_badge
     from .common import load_review_flags
 
     review_flags = load_review_flags(settings, provenance)
@@ -500,9 +500,9 @@ def _do_export(
     )
     if from_db:
         from ..db.repository import read_export_records
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             records = read_export_records(
                 session,
                 report_date=report_date,
@@ -522,13 +522,12 @@ def _do_export(
             file=sys.stderr,
         )
         return EXIT_FAILURE
-    export_root = (
-        settings.export_dir / "fixtures" if provenance == "fixture" else settings.export_dir
-    )
-    default_export = (
-        export_root / active_topic_id / "quotes.jsonl"
-        if active_topic_id != DEFAULT_TOPIC_ID
-        else export_root / "quotes.jsonl"
+    # Default to the dated store read_jsonl/graph sync use, not a bare quotes.jsonl mirror.
+    default_export = local_store_path(
+        settings.export_dir,
+        report_date,
+        topic_id=active_topic_id,
+        provenance=provenance,
     )
     path = Path(out) if out else default_export
     count = write_jsonl(records, path)

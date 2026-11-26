@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from ..config import get_settings
 from ..source_configs import load_routes_from_sources, load_source_configs
 from ..source_topics import validate_topic_configuration
 from ..topics import load_all_topic_rules
@@ -38,7 +39,13 @@ def validate_data_dir(data_dir: Path) -> list[str]:
     by_id = check_sources(sources, errors)
     section_ids = check_sections(sections, errors)
     topic_packs = check_topic_packs(data_dir / "topics", errors)
-    check_source_configs(data_dir / "sources", by_id, topic_packs, errors)
+    check_source_configs(
+        data_dir / "sources",
+        by_id,
+        topic_packs,
+        errors,
+        routes_csv=data_dir / "source_topic_routes.csv",
+    )
     try:
         configs = load_source_configs(data_dir / "sources")
         routes = load_routes_from_sources(
@@ -61,5 +68,12 @@ def validate_data_dir(data_dir: Path) -> list[str]:
     valid_sections = set(section_ids)
     for pack in topic_packs.values():
         valid_sections.update(pack.section_ids())
-    check_quotes(data_dir / "quotes.jsonl", by_id, valid_sections, schema, errors)
+    mode = str(get_settings().translation_mode).strip().lower()
+    quote_files = [data_dir / "quotes.example.jsonl", data_dir / "quotes.jsonl"]
+    derived_root = data_dir.parent / "var" / "output" / "quotes"
+    if derived_root.is_dir():
+        quote_files.extend(sorted(derived_root.rglob("quotes-*.jsonl")))
+    for quote_file in quote_files:
+        if quote_file.is_file():
+            check_quotes(quote_file, by_id, valid_sections, schema, errors, translation_mode=mode)
     return errors

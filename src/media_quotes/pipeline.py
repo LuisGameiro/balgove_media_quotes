@@ -7,23 +7,29 @@ settings, date and their own session context when they want dependency injection
 
 from __future__ import annotations
 
-import importlib
+import hashlib
 import inspect
 import json
+import threading
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
-from functools import cache
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+from .ai.judge import make_judge as _make_judge_impl
+from .ai.language import detect_language as _detect_language_impl
+from .ai.translation import translate_quote as _translate_quote_impl
 from .config import DEFAULT_TOPIC_ID, Settings
 from .db.resources import SessionContextFactory
 from .enums import AcquisitionProvenance
 from .exceptions import ConfigError
+from .governance.relevance import evaluate_topic as _evaluate_topic_impl
+from .governance.relevance import load_topic_rules as _load_topic_rules_impl
 from .models import ExportQuoteRecord
 from .risk_controls.models import ObsolescenceFlag
+from .source_topics import load_source_topic_routes as _load_source_topic_routes_impl
 
 _LIVE_NOTICE = (
     "LIVE COLLECTION: quotes below were acquired from rights-cleared publisher feeds. "
@@ -132,11 +138,6 @@ class TopicAssessment:
     judge: JudgeDecisionSnapshot | None = None
 
 
-def _api(module: str, attribute: str) -> Any:
-    """Import an optional pure module lazily so offline defaults stay import-safe."""
-    return getattr(importlib.import_module(module), attribute)
-
-
 def _field(value: Any, name: str, default: Any) -> Any:
     if isinstance(value, Mapping):
         return value.get(name, default)
@@ -163,33 +164,22 @@ def _strings(value: Any) -> tuple[str, ...]:
     return ()
 
 
+# Thin wrappers keep the historical ``media_quotes.pipeline`` API while the
+# implementations are imported directly from their defining modules.
 def load_source_topic_routes(path: Path) -> dict[str, list[SourceTopicRoute]]:
-    loader = cast(
-        Callable[[Path], dict[str, list[SourceTopicRoute]]],
-        _api("media_quotes.source_topics", "load_source_topic_routes"),
-    )
-    return loader(path)
+    return cast(dict[str, list[SourceTopicRoute]], _load_source_topic_routes_impl(path))
 
 
 def load_topic_rules(path: Path) -> dict[str, dict[str, Any]]:
-    loader = cast(
-        Callable[[Path], dict[str, dict[str, Any]]],
-        _api("media_quotes.relevance", "load_topic_rules"),
-    )
-    return loader(path)
+    return _load_topic_rules_impl(path)
 
 
 def evaluate_topic(rule: Mapping[str, Any], article: Mapping[str, Any]) -> Any:
-    evaluator = cast(
-        Callable[[dict[str, Any], dict[str, Any]], Any],
-        _api("media_quotes.relevance", "evaluate_topic"),
-    )
-    return evaluator(dict(rule), dict(article))
+    return _evaluate_topic_impl(dict(rule), dict(article))
 
 
 def detect_language(text: str) -> Any:
-    detector = cast(Callable[[str], Any], _api("media_quotes.language", "detect_language"))
-    return detector(text)
+    return _detect_language_impl(text)
 
 
 def translate_quote(
@@ -199,13 +189,25 @@ def translate_quote(
     settings: Settings,
     provider: Any = None,
 ) -> Any:
-    translator = cast(Callable[..., Any], _api("media_quotes.translation", "translate_quote"))
-    return translator(text, source_language=source_language, settings=settings, provider=provider)
+    return _translate_quote_impl(
+        text, source_language=source_language, settings=settings, provider=provider
+    )
 
 
-def make_judge(settings: Settings) -> JudgeProvider:
-    factory = cast(Callable[[Settings], JudgeProvider], _api("media_quotes.judge", "make_judge"))
-    return factory(settings)
+def _call_factory(factory: Callable[..., Any], settings: Settings, **kwargs: Any) -> Any:
+    """Bind the full call up front so a factory that cannot take the context fails loudly.
+
+    Errors raised inside the factory are deliberately not caught here.
+    """
+    signature = inspect.signature(factory)
+    signature.bind(settings, **kwargs)
+    return factory(settings, **kwargs)
+
+
+def make_judge(
+    settings: Settings, *, session_context: SessionContextFactory | None = None
+) -> JudgeProvider:
+    return _call_factory(_make_judge_impl, settings, session_context=session_context)
 
 
 def normalise_topic_decision(value: Any) -> TopicDecisionSnapshot:
@@ -262,17 +264,53 @@ def ask_judge(judge: JudgeProvider, *, task: str, payload: Mapping[str, Any]) ->
     """Call a judge provider without depending on its exact call signature."""
     methods = [getattr(judge, name, None) for name in ("judge", "decide", "evaluate")]
     methods.append(judge if callable(judge) else None)
-    errors: list[Exception] = []
     for method in methods:
         if not callable(method):
             continue
+        # Validate the provider shape with signature binding only; a TypeError raised
+        # inside the provider must propagate rather than trigger another candidate.
         try:
-            return _call_judge_method(method, task=task, payload=payload)
-        except TypeError as exc:
-            errors.append(exc)
-    if errors:
-        raise errors[-1]
+            args, kwargs = _bound_judge_call(method, task=task, payload=payload)
+        except TypeError:
+            continue  # this candidate cannot accept the call shape
+        return method(*args, **kwargs)
     raise TypeError("judge provider exposes no callable entry point")
+
+
+def _bound_judge_call(
+    method: Callable[..., Any], *, task: str, payload: Mapping[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Bind a judge call to the provider signature, returning (args, kwargs)."""
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return (), {"task": task, "payload": dict(payload)}
+    names = set(signature.parameters)
+    accepts_kwargs = any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+    accepts_positional = any(
+        param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for param in signature.parameters.values()
+    )
+    if "task" in names:
+        kwargs: dict[str, Any] = {"task": task}
+        for key in ("context", "payload", "input", "input_data", "data", "article", "decision"):
+            if key in names or accepts_kwargs:
+                kwargs[key] = dict(payload)
+                break
+        signature.bind(**kwargs)  # shape check only
+        return (), kwargs
+    if accepts_kwargs:
+        kwargs = {"task": task, **dict(payload)}
+        signature.bind(**kwargs)
+        return (), kwargs
+    if accepts_positional:
+        signature.bind(task, dict(payload))
+        return (task, dict(payload)), {}
+    kwargs = {"task": task, "payload": dict(payload)}
+    signature.bind(**kwargs)
+    return (), kwargs
 
 
 def _call_judge_method(method: Callable[..., Any], *, task: str, payload: Mapping[str, Any]) -> Any:
@@ -404,19 +442,56 @@ class DailyPipelineResult:
     persistence: dict[str, Any] = field(default_factory=dict)
 
 
-@cache
+# One engine per process; the URL is only ever held as a sha256 digest, not as a cache key.
+_engine_lock = threading.Lock()
+_shared_engine_state: dict[str, Any] = {}
+
+
 def _shared_session_factory(database_url: str) -> Any:
-    """One engine per database URL, reused across every call in this process."""
+    """Reuse one engine/factory, replacing (and disposing) it when the URL changes."""
     from .db.engine import create_db_engine_from_url, make_session_factory
 
-    return make_session_factory(create_db_engine_from_url(database_url))
+    key = hashlib.sha256(database_url.encode("utf-8")).hexdigest()
+    with _engine_lock:
+        if _shared_engine_state.get("key") != key:
+            previous_engine = _shared_engine_state.get("engine")
+            if previous_engine is not None:
+                previous_engine.dispose()
+            engine = create_db_engine_from_url(database_url)
+            _shared_engine_state.update(
+                key=key, engine=engine, factory=make_session_factory(engine)
+            )
+        return _shared_engine_state["factory"]
 
 
 @contextmanager
-def _default_session_context(settings: Settings) -> Any:
+def default_session_context(settings: Settings) -> Any:
     """Yield a caller-owned session from the process-wide engine."""
     with _shared_session_factory(settings.database_url_value)() as session:
         yield session
+
+
+_default_session_context = default_session_context  # frozen alias for legacy callers
+
+
+def _record_persistence_failure(
+    result: DailyPipelineResult,
+    settings: Settings,
+    *,
+    session_context: SessionContextFactory | None,
+) -> None:
+    """Best-effort failure marker in a fresh short session; never masks the original error."""
+    from .db.repository import finish_pipeline_run
+
+    # Best-effort: a broken session factory must not mask the original error.
+    with suppress(Exception), (session_context or default_session_context)(settings) as session:
+        finish_pipeline_run(
+            session,
+            run_id=result.run_id,
+            status="failed",
+            stats={"persistence_error": True},
+            commit=True,
+        )
 
 
 def _persist_result(
@@ -426,7 +501,6 @@ def _persist_result(
     pipeline: str,
     session_context: SessionContextFactory | None,
 ) -> dict[str, Any]:
-    from .cli.common import _window
     from .db.repository import (
         append_audit_events,
         finish_pipeline_run,
@@ -436,12 +510,13 @@ def _persist_result(
         persist_quote_classifications,
         start_pipeline_run,
     )
+    from .processing.window import window
 
-    window_start, _ = _window(result.report_date, settings)
+    window_start, _ = window(result.report_date, settings)
     assigned_by = "llm" if settings.llm_provider == "openrouter" else "rule"
     # Defence in depth: only topic-accepted records may ever reach quote tables.
     publishable = [record for record in result.records if record.topic_status == "accepted"]
-    context_factory = session_context or _default_session_context
+    context_factory = session_context or default_session_context
     try:
         with context_factory(settings) as session:
             start_pipeline_run(
@@ -492,8 +567,10 @@ def _persist_result(
             )
             session.commit()
     except Exception as exc:
+        _record_persistence_failure(result, settings, session_context=session_context)
         raise RuntimeError(
-            f"Failed to persist pipeline results to PostgreSQL: {exc}. "
+            f"Failed to persist pipeline results to PostgreSQL: "
+            f"{type(exc).__name__}: {exc}. "
             "Check the database host or set PERSIST_TO_POSTGRES=false "
             "to run in offline/file-backed mode."
         ) from exc
@@ -527,13 +604,16 @@ def run_daily_pipeline(
         raise ConfigError("source_ids cannot be empty; pass None to select all sources")
     if source_mode in {"live", "blobs", "archive"} and provenance == "fixture":
         provenance = "live_feed"
-    from .cli.audit import _audit_report, _write_audit
-    from .cli.common import (
+    from .ai.llm import make_provider
+    from .governance.rights_guard import apply_rights_limits
+    from .ingestion.collect import (
         _MANDATORY,
         _NOTICE,
+        _collect,
         _digest_path,
         _event,
         _load_registry,
+        _load_review_flags,
         _load_topic_pack,
         _queue_lock,
         _run_id,
@@ -542,12 +622,10 @@ def run_daily_pipeline(
         review_queue_path,
         run_scope,
     )
-    from .cli.run import _collect, _load_review_flags
-    from .curation import dedupe_quotes, review_badge
-    from .digest import write_digest
-    from .export import atomic_write_text, local_store_path, write_jsonl
-    from .llm import make_provider
-    from .rights_guard import apply_rights_limits
+    from .processing.audit import _audit_report, _write_audit
+    from .processing.curation import dedupe_quotes, review_badge
+    from .processing.digest import write_digest
+    from .processing.export import atomic_write_text, local_store_path, write_jsonl
 
     provisional_scope = run_scope(
         source_mode, tier=tier, source_ids=source_ids, provenance=provenance
@@ -573,6 +651,7 @@ def run_daily_pipeline(
         tier=tier,
         prefetched_refs=prefetched_refs,
         source_ids=source_ids,
+        session_context=session_context,
     )
     if (source_mode in {"live", "blobs", "archive"} or provenance != "fixture") and any(
         record.provenance == "fixture" for record in records
@@ -584,7 +663,7 @@ def run_daily_pipeline(
     if len(collected_provenances) == 1:
         only_provenance = next(iter(collected_provenances))
         if only_provenance != "fixture":
-            provenance = only_provenance
+            provenance = cast(AcquisitionProvenance, only_provenance)
 
     # Collection may settle the run-level provenance (e.g. all live_bing records). Only
     # then can the scope and default run ID be final; events carry the provisional ID.
@@ -659,16 +738,15 @@ def run_daily_pipeline(
     try:
         from .risk_controls.obsolescence import propose_obsolescence as _propose_obsolescence
 
-        _judge = make_judge(settings)
+        _judge = _call_factory(make_judge, settings, session_context=session_context)
         _speakers = {
             quote_id: str(meta.get("speaker") or "")
             for quote_id, meta in offsets.items()
             if isinstance(meta, Mapping)
         }
-        # Every non-off judge mode uses the pinned OpenRouter provider, so cap judge calls
-        # at 20 and disclose the count. Off mode uses a free local stand-in.
-        _judge_mode = str(getattr(settings, "ai_judge_mode", "off")).strip().lower()
-        _max_pairs = None if _judge_mode == "off" else 20
+        # Bound every judge mode: even the free local stand-in must not trigger an
+        # unbounded O(n^2) scan. Twenty pairs is the disclosed cap for all modes.
+        _max_pairs = 20
         _proposal = _propose_obsolescence(
             list(kept), now=now, judge=_judge, speakers=_speakers, max_pairs=_max_pairs
         )
@@ -738,7 +816,9 @@ def run_daily_pipeline(
             ),
             sections_csv=settings.sections_csv,
             topic_pack=topic_pack,
-            provider=make_provider(settings, topic_pack=topic_pack),
+            provider=_call_factory(
+                make_provider, settings, topic_pack=topic_pack, session_context=session_context
+            ),
             obsolescence_flags=review_flags,
             review_badges=review_badges,
             notice=_LIVE_NOTICE if provenance != "fixture" else _NOTICE,
@@ -790,7 +870,8 @@ def run_daily_pipeline(
     )
     _write_json(audit_json_path.parent / f"{actual_run_id}.json", report)
 
-    status = "failed" if failed_live else ("partial" if gaps else "succeeded")
+    gates_pass = bool(report["checks"].get("gates_pass", False))
+    status = "failed" if failed_live or not gates_pass else "partial" if gaps else "succeeded"
     result = DailyPipelineResult(
         run_id=actual_run_id,
         report_date=report_date,

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .extraction import ExtractionParams
+    from .processing.extraction import ExtractionParams
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -33,7 +33,7 @@ from .enums import (
     RightsStatus,
     SourceType,
 )
-from .export import atomic_write_text
+from .processing.export import atomic_write_text
 from .registry import EXPECTED_COLUMNS, SourceRegistryRow, load_sources_csv
 from .source_topics import SourceTopicRoute, load_source_topic_routes
 
@@ -70,6 +70,24 @@ _ROUTES_COLUMNS: tuple[str, ...] = (
 )
 
 
+def robots_parser(robots_txt_content: str) -> Any:
+    """Parse robots.txt with the stdlib parser; returns a RobotFileParser-compatible object."""
+    from urllib.robotparser import RobotFileParser
+
+    parser = RobotFileParser()
+    parser.parse(robots_txt_content.splitlines())
+    return parser
+
+
+def robots_allows(
+    robots_txt_content: str | None, url: str, user_agent: str = "MediaQuotesBot/0.1"
+) -> bool:
+    """Check one URL against robots.txt; absent content is treated as allow-all."""
+    if not url or robots_txt_content is None:
+        return True
+    return bool(robots_parser(robots_txt_content).can_fetch(user_agent, url))
+
+
 def probe_source_admission(
     homepage_url: str,
     *,
@@ -77,6 +95,7 @@ def probe_source_admission(
     robots_txt_content: str | None = None,
     feed_sample_content: str | None = None,
     sample_article_html: str | None = None,
+    sample_article_url: str = "",
     archive_start_date: date | None = None,
     user_agent: str = "MediaQuotesBot/0.1",
 ) -> dict[str, Any]:
@@ -85,25 +104,14 @@ def probe_source_admission(
     Safe for offline execution via supplied content; live probing can inject HTTP bodies.
     Returns a structured dictionary of admission findings.
     """
-    # 1. robots.txt check
-    robots_ok = True
-    disallow_rules: list[str] = []
-    if robots_txt_content is not None:
-        current_agent_matches = False
-        for line in robots_txt_content.splitlines():
-            line = line.strip()
-            if line.lower().startswith("user-agent:"):
-                agent = line.split(":", 1)[1].strip()
-                current_agent_matches = agent == "*" or user_agent.lower().startswith(agent.lower())
-            elif current_agent_matches and line.lower().startswith("disallow:"):
-                path = line.split(":", 1)[1].strip()
-                if path:
-                    disallow_rules.append(path)
-                    if path == "/":
-                        robots_ok = False
-    else:
-        # Default assumption without content
-        robots_ok = True
+    # 1. robots.txt check via the stdlib parser, including group-specific agents.
+    checked_urls = [url for url in (feed_url, sample_article_url) if url]
+    disallow_rules = [
+        f"{url}: disallowed"
+        for url in checked_urls
+        if not robots_allows(robots_txt_content, url, user_agent)
+    ]
+    robots_ok = not disallow_rules
 
     # 2. Archive / feed depth check
     entries_found = 0
@@ -165,7 +173,7 @@ class ExtractorHints(BaseModel):
     render_js: bool = False  # opt-in to the optional browser fallback; off for every source today
 
     def to_extraction_params(self) -> ExtractionParams:
-        from .extraction import ExtractionParams
+        from .processing.extraction import ExtractionParams
 
         return ExtractionParams(
             favor_precision=self.favor_precision,
@@ -428,11 +436,16 @@ def load_routes_from_sources(
         source_routes = [route.to_source_topic_route(cfg.source_id) for route in cfg.routes]
         source_routes.sort(key=lambda item: (item.priority, item.route_id))
         routes[cfg.source_id] = source_routes
-    if routes:
-        return {source_id: routes[source_id] for source_id in sorted(routes)}
+    # CSV routes are additive per source: a JSON route wins on route_id collision,
+    # but a source with only CSV routes must not disappear from the combined view.
     if fallback_csv is not None and Path(fallback_csv).is_file():
-        return load_source_topic_routes(Path(fallback_csv))
-    return {}
+        for source_id, csv_routes in load_source_topic_routes(Path(fallback_csv)).items():
+            combined = routes.setdefault(source_id, [])
+            known = {route.route_id for route in combined}
+            combined.extend(route for route in csv_routes if route.route_id not in known)
+    for source_routes in routes.values():
+        source_routes.sort(key=lambda item: (item.priority, item.route_id))
+    return {source_id: routes[source_id] for source_id in sorted(routes)}
 
 
 def _csv_bool_str(value: bool) -> str:
@@ -452,7 +465,7 @@ def sync_sources_to_csv(
     routes_csv: Path | None = None,
 ) -> tuple[int, int]:
     """Regenerate ``data/sources.csv`` (and optionally ``data/source_topic_routes.csv``)
-    from ``data/sources/*.json`` so tabular contracts and docs QA stay in sync.
+    from ``data/sources/*.json`` so tabular contracts and documentation stay in sync.
     """
     configs = load_source_configs(sources_dir)
     by_id = {cfg.source_id: cfg for cfg in configs}

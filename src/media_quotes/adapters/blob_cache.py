@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..config import get_settings
-from ..export import safe_replace
+from ..processing.export import safe_replace
 
 __all__ = ["BlobCache", "FixtureSource"]
 
@@ -97,7 +97,9 @@ class BlobCache:
             temp_path = Path(f.name)
             f.write(raw)
         try:
-            safe_replace(temp_path, target, tolerate_existing=True)
+            # Metadata is an update, not immutable content: a persistent Windows lock
+            # must surface instead of silently keeping a stale sidecar.
+            safe_replace(temp_path, target)
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise

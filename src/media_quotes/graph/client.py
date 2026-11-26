@@ -42,7 +42,7 @@ def get_driver(settings: Settings) -> GraphDriverProtocol:
     except ImportError as err:
         raise RuntimeError(
             "The 'neo4j' library is required for graph projection features. "
-            "Install with 'uv pip install neo4j' or 'pip install .[graph]'."
+            "Install with 'uv sync --extra graph'."
         ) from err
 
     driver = GraphDatabase.driver(

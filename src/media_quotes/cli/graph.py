@@ -15,7 +15,6 @@ from ..config import Settings
 from ..context_pack import build_graph_context_pack
 from ..db.engine import create_db_engine
 from ..enums import AcquisitionProvenance
-from ..export import local_store_path, read_jsonl
 from ..graph import (
     check_graph_connectivity,
     fetch_cross_tier_divergence,
@@ -28,6 +27,7 @@ from ..graph import (
     project_records_to_graph,
     sync_postgres_to_graph,
 )
+from ..processing.export import local_store_path, read_jsonl
 from .common import EXIT_FAILURE, EXIT_OK
 
 

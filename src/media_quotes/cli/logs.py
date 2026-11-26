@@ -14,9 +14,9 @@ def _do_logs(settings: Settings, *, run_id: str, trace_id: str | None) -> int:  
     require_safe_id(run_id, "run_id")
     if settings.persist_to_postgres:
         from ..db.repository import read_audit_events
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             events = read_audit_events(session, run_id, trace_id=trace_id)
         for event in events:
             details = event.get("details") or {}
@@ -26,9 +26,9 @@ def _do_logs(settings: Settings, *, run_id: str, trace_id: str | None) -> int:  
                 else "(none)"
             )
             print(
-                f"{event['step']} {event['status']} "
-                f"source={event['entity_id'] or event['entity_type'] or '(none)'} "
-                f"trace={event['trace_id']} license_reference={license_ref}"
+                f"{event.get('step', 'unknown')} {event.get('status', 'unknown')} "
+                f"source={event.get('entity_id') or event.get('entity_type') or '(none)'} "
+                f"trace={event.get('trace_id', '(none)')} license_reference={license_ref}"
             )
         if not events:
             print(f"no audit events for run_id={run_id} trace_id={trace_id or '(all)'}")
@@ -48,8 +48,9 @@ def _do_logs(settings: Settings, *, run_id: str, trace_id: str | None) -> int:  
             shown += 1
             license_ref = event.get("license_reference", "(none)")
             print(
-                f"{event['step']} {event['status']} source={event['source_id']} "
-                f"trace={event['trace_id']} license_reference={license_ref}"
+                f"{event.get('step', 'unknown')} {event.get('status', 'unknown')} "
+                f"source={event.get('source_id', '(none)')} "
+                f"trace={event.get('trace_id', '(none)')} license_reference={license_ref}"
             )
     if not shown:
         print(f"no log events for run_id={run_id} trace_id={trace_id or '(all)'}")

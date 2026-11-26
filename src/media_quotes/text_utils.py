@@ -29,6 +29,16 @@ _WS = re.compile(r"\s+")
 _SAFE_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 
+def word_count(text: str) -> int:
+    """Count words on strict Unicode whitespace (DEC-10 licence limit)."""
+    return len(text.split())
+
+
+def local_xml_tag(tag: str) -> str:
+    """Strip an XML namespace prefix: ``{http://x}name`` -> ``name``."""
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
 def require_safe_id(value: str, name: str = "id") -> str:
     """Accept only simple lowercase ids: these values are used as filenames."""
     cleaned = value.strip()

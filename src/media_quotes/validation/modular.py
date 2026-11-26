@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..enums import APPROVED_RIGHTS, AVAILABILITY_STATUSES
+from ..enums import APPROVED_RIGHTS, PERMITTED_ACCESS
 from ..source_configs import SourceConfig, load_source_config_file
+from ..source_topics import load_source_topic_routes
 from ..topics import TopicPack, load_topic_pack_file
 
 __all__ = ["check_source_configs", "check_topic_packs"]
@@ -42,6 +43,7 @@ def check_source_configs(
     csv_by_id: dict[str, dict[str, str]],
     topic_packs: dict[str, TopicPack],
     errors: list[str],
+    routes_csv: Path | None = None,
 ) -> dict[str, SourceConfig]:
     """Validate all JSON source configs under ``data/sources/`` and check CSV parity."""
     if not sources_dir.is_dir():
@@ -74,8 +76,8 @@ def check_source_configs(
             errors.append(f"{where}: T0 gate - enabled sources need approved rights_status")
         if cfg.enabled and str(cfg.discovery_method) == "web":
             errors.append(f"{where}: T0 gate - enabled sources cannot use web discovery")
-        if str(cfg.availability_status) not in AVAILABILITY_STATUSES:
-            errors.append(f"{where}: unknown availability_status {cfg.availability_status!r}")
+        if cfg.enabled and str(cfg.access_mode) not in PERMITTED_ACCESS:
+            errors.append(f"{where}: T0 gate - enabled sources need a permitted access_mode")
         if cfg.tier_block and not cfg.blocker_reason.strip():
             errors.append(f"{where}: tier_block sources need a blocker_reason")
         if str(cfg.rights_status) in APPROVED_RIGHTS and not cfg.license_reference:
@@ -140,6 +142,7 @@ def check_source_configs(
                 ("access_mode", str(cfg.access_mode), csv_row["access_mode"]),
                 ("source_type", str(cfg.source_type), csv_row["source_type"]),
                 ("claim_only", "true" if cfg.claim_only else "false", csv_row["claim_only"]),
+                ("notes", cfg.notes, csv_row.get("notes", "")),
             )
             for field, json_val, csv_val in checks:
                 if json_val != csv_val:
@@ -147,4 +150,18 @@ def check_source_configs(
                         f"sources/{sid}.json: {field}={json_val!r} differs from "
                         f"sources.csv ({csv_val!r}); run `mq sources --action sync-csv`"
                     )
+    if routes_csv is not None and routes_csv.is_file():
+        csv_routes = load_source_topic_routes(routes_csv)
+        json_routes = {
+            source_id: {route.route_id for route in cfg.routes}
+            for source_id, cfg in configs.items()
+        }
+        for source_id in sorted(set(csv_routes) | set(json_routes)):
+            csv_ids = {route.route_id for route in csv_routes.get(source_id, [])}
+            json_ids = json_routes.get(source_id, set())
+            if csv_ids != json_ids:
+                errors.append(
+                    f"source_topic_routes.csv: {source_id} route ids "
+                    f"{sorted(csv_ids)} differ from JSON {sorted(json_ids)}"
+                )
     return configs

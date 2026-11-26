@@ -1,6 +1,6 @@
 """Minimal SQLAlchemy Core table definitions used by bootstrap loaders and repository writes.
 
-The authoritative DDL lives in db/schema.sql; these definitions exist so SQLAlchemy
+The authoritative DDL lives in migrations/schema.sql; these definitions exist so SQLAlchemy
 can build type-safe INSERT/UPDATE/SELECT statements across all PostgreSQL tables.
 """
 

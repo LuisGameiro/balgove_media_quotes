@@ -6,15 +6,14 @@ exposing mutating endpoints. A secure read-only interface into the operational s
 
 from __future__ import annotations
 
-import contextlib
 import csv
+import hashlib
 import hmac
 import json
-import os
 import re
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import date, timedelta
 from importlib import import_module
 from pathlib import Path
@@ -23,25 +22,32 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from .config import Settings
 
-# Streamlit executes this file directly, leaving __package__ empty, so resolve the
-# config module both as a package import and as a standalone script.
-if __package__:
-    config_module = import_module(".config", __package__)
-else:
-    src_dir = str(Path(__file__).resolve().parents[1])
-    if src_dir not in sys.path:
-        sys.path.insert(0, src_dir)
-    config_module = import_module("media_quotes.config")
+# Package imports resolve configuration directly. Streamlit may execute this file by
+# path with an empty __package__; that path setup happens only in the __main__ guard.
+DEFAULT_TOPIC_ID = "ukraine-war"
 
-get_settings: Any = config_module.get_settings
-DEFAULT_TOPIC_ID: str = config_module.DEFAULT_TOPIC_ID
+
+def get_settings() -> Any:
+    """Resolve settings lazily so script execution needs no import-time sys.path change."""
+    if __package__:
+        module = import_module(".config", __package__)
+    else:  # pragma: no cover - Streamlit script execution
+        src_dir = str(Path(__file__).resolve().parents[1])
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+        module = import_module("media_quotes.config")
+
+    return module.get_settings()
+
 
 AUTH_TTL_SECONDS = 8 * 60 * 60
 AUTH_MAX_ATTEMPTS = 5
 AUTH_LOCK_SECONDS = 15 * 60
-AUTH_LOCK_STALE_SECONDS = 60.0
-AUTH_STATE_KEYS = ("attempts", "locked_until", "updated_at")
 FIXTURE_DIGEST_MARKER = "OFFLINE FIXTURE REPLAY"
+
+# Cache keys must not hold the credential-bearing URL; keep hash -> (real URL, seen at).
+_DB_COUNT_URLS: dict[str, tuple[str, float]] = {}
+_DB_COUNT_TTL_SECONDS = 5 * 60
 
 
 def _legacy_provenance(payload: dict[str, Any]) -> bool:
@@ -223,10 +229,13 @@ def coverage_by_day_matrix(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def browse_quotes(
-    export_dir: Path, topic_id: str | None = None, limit: int = 500
+    export_dir: Path, topic_id: str | None = None, limit: int | None = None
 ) -> list[dict[str, Any]]:
-    """Read governed JSONL exports for one topic, newest files first."""
-    if limit <= 0 or not export_dir.is_dir():
+    """Read governed JSONL exports for one topic, newest files first.
+
+    ``limit=None`` loads every quote; ``limit=0`` returns nothing.
+    """
+    if (limit is not None and limit <= 0) or not export_dir.is_dir():
         return []
 
     display_fields = (
@@ -276,8 +285,7 @@ def browse_quotes(
                             rows.append(
                                 {key: record[key] for key in display_fields if key in record}
                             )
-                            # shortcut: cap at 500 newest quotes; add pagination if needed.
-                            if len(rows) >= limit:
+                            if limit is not None and len(rows) >= limit:
                                 return rows
                 except OSError:
                     continue
@@ -337,7 +345,26 @@ def schema_summary(schema_sql: Path) -> list[str]:  # pragma: no cover
     return re.findall(r"(?i)CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([\w.]+)", text)
 
 
-def registered_sources(sources_csv: Path) -> list[dict[str, str]]:  # pragma: no cover
+def registered_sources(
+    sources_csv: Path, *, settings: Any | None = None
+) -> list[dict[str, str]]:  # pragma: no cover
+    """Read the registry through the CLI resolver when settings are available.
+
+    The CSV-only path stays for direct callers/tests, but the dashboard itself uses the
+    same authoritative resolver as ``mq`` so JSON source configs are not invisible.
+    """
+    if settings is not None:
+        common = (
+            import_module(".cli.common", __package__)
+            if __package__
+            else import_module("media_quotes.cli.common")
+        )
+        try:
+            rows = common._load_registry(settings)
+        except (OSError, ValueError):
+            # A partial/missing CSV stays displayable through the legacy mirror path.
+            return registered_sources(sources_csv)
+        return [row.model_dump(mode="python") for row in rows]
     if not sources_csv.is_file():
         return []
     with sources_csv.open(encoding="utf-8", newline="") as handle:
@@ -345,7 +372,7 @@ def registered_sources(sources_csv: Path) -> list[dict[str, str]]:  # pragma: no
 
 
 def _db_counts(database_url: str) -> dict[str, int | str]:  # pragma: no cover
-    """Read-only row counts keyed by a hashable URL, so Streamlit can cache them."""
+    """Read-only row counts; audit_events uses a cheap pg_class estimate."""
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
 
@@ -361,17 +388,55 @@ def _db_counts(database_url: str) -> dict[str, int | str]:  # pragma: no cover
             "articles": text("SELECT count(*) FROM articles"),
             "quotes": text("SELECT count(*) FROM quotes"),
             "pipeline_runs": text("SELECT count(*) FROM pipeline_runs"),
-            "audit_events": text("SELECT count(*) FROM audit_events"),
         }
+        # Sum the parent and its partitions; reltuples is -1 where never analysed.
+        audit_estimate = text(
+            "SELECT sum(GREATEST(c.reltuples, 0)) FROM pg_class c "
+            "WHERE c.oid = to_regclass('audit_events') "
+            "OR c.oid IN (SELECT i.inhrelid FROM pg_inherits i "
+            "WHERE i.inhparent = to_regclass('audit_events'))"
+        )
+        audit_exact = text("SELECT count(*) FROM audit_events")
         with engine.connect() as connection:
-            return {
+            counts: dict[str, int | str] = {
                 name: int(connection.execute(statement).scalar_one())
                 for name, statement in counts_sql.items()
             }
+            try:
+                estimate = connection.execute(audit_estimate).scalar()
+                if estimate is None or int(estimate) < 0:
+                    raise ValueError("no usable reltuples estimate")
+                counts["audit_events"] = int(estimate)
+            except Exception:
+                # A failed statement aborts the transaction in SQLAlchemy 2.0.
+                connection.rollback()
+                counts["audit_events"] = int(connection.execute(audit_exact).scalar_one())
+            return counts
     except SQLAlchemyError as exc:
         return {"error": type(exc).__name__}
     finally:
         engine.dispose()
+
+
+def _remember_db_url(database_url: str) -> str:
+    """Return a digest only; the credential-bearing URL never enters a cache key."""
+    return hashlib.sha256(database_url.encode()).hexdigest()
+
+
+def _db_counts_by_hash(url_digest: str) -> dict[str, int | str]:
+    """Re-read the current settings and verify the digest before querying."""
+    settings = get_settings()
+    database_url = settings.database_url_value
+    if hashlib.sha256(database_url.encode()).hexdigest() != url_digest:
+        return {"error": "DatabaseUrlMissing"}
+    return _db_counts(database_url)
+
+
+def _make_db_counts_cached(cached_by_hash: Any) -> Any:
+    def _db_counts_cached(database_url: str) -> dict[str, int | str]:
+        return cast(dict[str, int | str], cached_by_hash(_remember_db_url(database_url)))
+
+    return _db_counts_cached
 
 
 def database_summary(settings: Settings) -> dict[str, int | str]:  # pragma: no cover
@@ -431,13 +496,15 @@ if st is not None and hasattr(st, "cache_data"):
     latest_digests_cached = st.cache_data(ttl="30s", max_entries=32)(latest_digests)
     daily_source_coverage_cached = st.cache_data(ttl="30s", max_entries=32)(daily_source_coverage)
     browse_quotes_cached = st.cache_data(ttl="30s", max_entries=16)(browse_quotes)
-    _db_counts_cached = st.cache_data(ttl="30s", max_entries=8)(_db_counts)
+    _db_counts_cached = _make_db_counts_cached(
+        st.cache_data(ttl=300, max_entries=8)(_db_counts_by_hash)
+    )
 else:  # pragma: no cover - Streamlit is optional for CLI imports
     _latest_audit_cached = _latest_audit
     latest_digests_cached = latest_digests
     daily_source_coverage_cached = daily_source_coverage
     browse_quotes_cached = browse_quotes
-    _db_counts_cached = _db_counts
+    _db_counts_cached = _make_db_counts_cached(_db_counts_by_hash)
 
 
 def _session_active(state: Any, now: float) -> bool:
@@ -448,91 +515,6 @@ def _session_active(state: Any, now: float) -> bool:
     if isinstance(auth_time, bool) or not isinstance(auth_time, (int, float)):
         return False
     return 0 <= now - auth_time < AUTH_TTL_SECONDS
-
-
-def _auth_state_path(logs_dir: Path) -> Path:
-    return logs_dir / ".dashboard-auth.json"
-
-
-def _read_auth_state(logs_dir: Path) -> dict[str, int | float]:
-    """Read only the three allowed counters; never load arbitrary stored keys."""
-    state: dict[str, int | float] = {"attempts": 0, "locked_until": 0.0, "updated_at": 0.0}
-    try:
-        raw = json.loads(_auth_state_path(logs_dir).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return state
-    if isinstance(raw, dict):
-        for key in AUTH_STATE_KEYS:
-            value = raw.get(key)
-            if not isinstance(value, bool) and isinstance(value, (int, float)):
-                state[key] = value
-    return state
-
-
-def _write_auth_state(logs_dir: Path, state: dict[str, int | float]) -> None:
-    path = _auth_state_path(logs_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Only counters are persisted: never a password, IP, token or session identifier.
-    path.write_text(json.dumps({key: state[key] for key in AUTH_STATE_KEYS}), encoding="utf-8")
-
-
-def _mutate_auth_state(
-    logs_dir: Path, mutate: Callable[[dict[str, int | float]], dict[str, int | float]]
-) -> dict[str, int | float]:
-    """Locked read-modify-write; contention or IO errors fail open with the last read."""
-    last_read = _read_auth_state(logs_dir)
-    path = _auth_state_path(logs_dir)
-    lock = path.with_name(path.name + ".lock")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        for _attempt in range(2):
-            try:
-                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                break
-            except FileExistsError:
-                try:
-                    if time.time() - lock.stat().st_mtime <= AUTH_LOCK_STALE_SECONDS:
-                        return last_read
-                    lock.unlink(missing_ok=True)
-                except OSError:
-                    return last_read
-        else:  # pragma: no cover - both attempts were removed by another process
-            return last_read
-    except OSError:
-        return last_read
-    try:
-        state = mutate(_read_auth_state(logs_dir))
-        _write_auth_state(logs_dir, state)
-        return state
-    except OSError:
-        return last_read
-    finally:
-        os.close(fd)
-        with contextlib.suppress(OSError):
-            lock.unlink()
-
-
-def _record_auth_failure(logs_dir: Path, now: float) -> dict[str, int | float]:
-    def mutate(state: dict[str, int | float]) -> dict[str, int | float]:
-        attempts = int(state["attempts"]) + 1
-        state["attempts"] = attempts
-        state["updated_at"] = now
-        if attempts >= AUTH_MAX_ATTEMPTS:
-            state["locked_until"] = now + AUTH_LOCK_SECONDS
-        return state
-
-    return _mutate_auth_state(logs_dir, mutate)
-
-
-def _reset_auth_state(logs_dir: Path, now: float) -> dict[str, int | float]:
-    def mutate(state: dict[str, int | float]) -> dict[str, int | float]:
-        return {"attempts": 0, "locked_until": 0.0, "updated_at": now}
-
-    return _mutate_auth_state(logs_dir, mutate)
-
-
-def _is_locked(state: dict[str, int | float], now: float) -> bool:
-    return now < state["locked_until"]
 
 
 def _render_overview(
@@ -664,7 +646,7 @@ def _render_data(cfg: Settings, schema_sql: Path, queue: list[dict[str, Any]]) -
             st.write("No review flags in the latest audit.")
 
         st.subheader("Sources (registry and T0 gate)")
-        sources = registered_sources(cfg.sources_csv)
+        sources = registered_sources(cfg.sources_csv, settings=cfg)
         if sources:
             st.dataframe(sources, hide_index=True, alt="Registered sources and rights gate")
 
@@ -729,7 +711,7 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
         st.stop()
         return
 
-    # Authentication Gate: 8-hour session TTL plus a server-wide attempt state
+    # Authentication Gate: 8-hour session TTL plus a per-session attempt lockout
     if hasattr(st, "session_state"):
         state = st.session_state
         now = time.time()
@@ -738,8 +720,8 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
             state["authenticated"] = False
 
         if not state.get("authenticated", False):
-            # Check the server-wide lockout before rendering any login form.
-            if _is_locked(_read_auth_state(cfg.logs_dir), now):
+            # This viewer's lockout never affects another viewer's session.
+            if now < float(state.get("auth_locked_until", 0.0) or 0.0):
                 st.error("Too many attempts. Wait 15 minutes before retrying.")
                 st.stop()
                 return
@@ -757,14 +739,17 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
 
             if submit:
                 if hmac.compare_digest(entered.encode("utf-8"), password_val.encode("utf-8")):
-                    _reset_auth_state(cfg.logs_dir, now)
+                    state["auth_attempts"] = 0
+                    state["auth_locked_until"] = 0.0
                     state["authenticated"] = True
                     state["auth_time"] = now
                     if hasattr(st, "rerun"):
                         st.rerun()
                 else:
-                    updated = _record_auth_failure(cfg.logs_dir, now)
-                    if _is_locked(updated, now):
+                    attempts = int(state.get("auth_attempts", 0) or 0) + 1
+                    state["auth_attempts"] = attempts
+                    if attempts >= AUTH_MAX_ATTEMPTS:
+                        state["auth_locked_until"] = now + AUTH_LOCK_SECONDS
                         st.error("Too many attempts. Wait 15 minutes before retrying.")
                     else:
                         st.error("Incorrect password.")
@@ -828,8 +813,8 @@ def main(settings: Settings | None = None) -> None:  # pragma: no cover
     queue = (
         [row for row in queue_rows if isinstance(row, dict)] if isinstance(queue_rows, list) else []
     )
-    sources = registered_sources(cfg.sources_csv)
-    schema_sql = Path(__file__).resolve().parent / "db" / "schema.sql"
+    sources = registered_sources(cfg.sources_csv, settings=cfg)
+    schema_sql = Path(__file__).resolve().parents[2] / "migrations" / "schema.sql"
 
     tabs = st.tabs(
         ["Overview", "Coverage", "Digests and logs", "Quotes", "Data"],
@@ -868,5 +853,5 @@ __all__ = [
     "schema_summary",
 ]
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - Streamlit script execution
     main()

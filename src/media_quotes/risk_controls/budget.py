@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from ..exceptions import BudgetExceededError
 from .models import BackfillEstimate
 
@@ -24,9 +26,11 @@ def estimate_backfill(
         price_per_call,
         articles_per_hour,
     )
+    if any(not math.isfinite(rate) for rate in rates):
+        raise ValueError("all rates/counts must be finite")
     if min(rates) <= 0:
         raise ValueError("all rates/counts must be positive")
-    if not 0.0 <= expected_cache_hit_rate < 1.0:
+    if not math.isfinite(expected_cache_hit_rate) or not 0.0 <= expected_cache_hit_rate < 1.0:
         raise ValueError("cache hit rate must be in [0, 1)")
     articles = round(articles_per_source_day * sources * days)
     billed_calls = round(articles * calls_per_article * (1.0 - expected_cache_hit_rate))
@@ -46,7 +50,7 @@ def budget_gate(estimate: BackfillEstimate, max_cost: float) -> str:
         raise ValueError("max_cost must be positive and finite")
     if estimate.cost > max_cost:
         raise BudgetExceededError(
-            f"estimated cost {estimate.cost} exceeds budget {max_cost}; "
+            f"estimated cost {estimate.cost} exceeds estimated-cost ceiling {max_cost}; "
             "raise --max-cost or narrow the span"
         )
     if estimate.cost >= 0.8 * max_cost:

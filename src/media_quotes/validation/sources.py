@@ -11,36 +11,15 @@ from ..enums import (
     AVAILABILITY_STATUSES,
     BOOLEANS,
     DISCOVERY_METHODS,
+    PERMITTED_ACCESS,
     RIGHTS_STATUSES,
     SOURCE_TYPES,
     TIERS,
 )
+from ..registry import EXPECTED_COLUMNS as SOURCE_COLUMNS
 from .common import check_columns
 
-SOURCE_COLUMNS = [
-    "source_id",
-    "source_name",
-    "homepage_url",
-    "feed_url",
-    "tier",
-    "cadence_hours",
-    "country_region",
-    "source_type",
-    "claim_only",
-    "language",
-    "requires_translation",
-    "paywalled",
-    "rights_status",
-    "access_mode",
-    "license_reference",
-    "discovery_method",
-    "archive_start_date",
-    "enabled",
-    "tier_block",
-    "blocker_reason",
-    "availability_status",
-    "notes",
-]
+__all__ = ["SOURCE_COLUMNS", "check_sources"]
 
 
 def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str, dict[str, str]]:
@@ -48,6 +27,10 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
     by_id: dict[str, dict[str, str]] = {}
     for line, row in enumerate(sources, start=2):
         where = f"sources.csv line {line}"
+        if not isinstance(row, dict):
+            errors.append(f"{where}: row must be a JSON object")
+            continue
+        row = {key: str(value) for key, value in row.items() if value is not None}
         if any(row.get(column) is None for column in SOURCE_COLUMNS):
             # check_columns already reported the header problem; never index a missing key.
             continue
@@ -80,6 +63,8 @@ def check_sources(sources: list[dict[str, str]], errors: list[str]) -> dict[str,
             errors.append(f"{where}: T0 gate - enabled sources need approved rights_status")
         if row["enabled"] == "true" and row["discovery_method"] == "web":
             errors.append(f"{where}: T0 gate - enabled sources cannot use web discovery")
+        if row["enabled"] == "true" and row["access_mode"] not in PERMITTED_ACCESS:
+            errors.append(f"{where}: T0 gate - enabled sources need a permitted access_mode")
         if row["availability_status"] not in AVAILABILITY_STATUSES:
             errors.append(f"{where}: unknown availability_status {row['availability_status']!r}")
         if row["tier_block"] == "true" and not row["blocker_reason"].strip():

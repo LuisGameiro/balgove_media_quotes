@@ -15,8 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .ai.llm_live import LLMRequest
 from .exceptions import DuplicateBatchRequestError
-from .llm_live import LLMRequest
 
 STRICT = ConfigDict(strict=True, extra="forbid")
 MAX_BATCH_REQUESTS = 50_000

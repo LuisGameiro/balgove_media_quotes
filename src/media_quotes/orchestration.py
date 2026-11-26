@@ -186,7 +186,7 @@ def _store_path(
     scope: str | None = None,
 ) -> Path:
     """Resolve the export path for the topic/scope the partition actually ran with."""
-    from .export import local_store_path
+    from .processing.export import local_store_path
 
     safe_topic = _clean_slug(topic_id, settings.active_topic)
     return local_store_path(
@@ -317,6 +317,18 @@ def _observed_retention_months(settings: Settings, database: DatabaseResourceHan
 
 def build_definitions() -> dg.Definitions:
     """Build Dagster definitions lazily so importing this module never starts a daemon."""
+    runtime_settings = get_settings()
+    configure_observability(runtime_settings)  # once per process, not once per asset run
+    schedule_status = (
+        dg.DefaultScheduleStatus.RUNNING
+        if runtime_settings.enable_tier1_schedules
+        else dg.DefaultScheduleStatus.STOPPED
+    )
+    sensor_status = (
+        dg.DefaultSensorStatus.RUNNING
+        if runtime_settings.enable_review_sla_sensor
+        else dg.DefaultSensorStatus.STOPPED
+    )
     partitions_def = dg.DailyPartitionsDefinition(
         start_date=PARTITION_START, end_offset=1, timezone=SCHEDULE_TIMEZONE
     )
@@ -426,8 +438,10 @@ def build_definitions() -> dg.Definitions:
                     g_stats = project_records_to_graph(result.records, g_sess)
                 metadata["neo4j_quotes_projected"] = g_stats.quotes_projected
             except Exception as g_err:
-                context.log.warning(f"Neo4j sync failed: {g_err}")
+                # Enabled sync is mandatory: a projection failure must fail the asset.
+                context.log.error(f"Neo4j sync failed: {g_err}")
                 metadata["neo4j_sync_error"] = str(g_err)
+                raise RuntimeError(f"Neo4j sync failed: {g_err}") from g_err
             finally:
                 if g_driver is not None:
                     g_driver.close()
@@ -536,7 +550,7 @@ def build_definitions() -> dg.Definitions:
         settings: dg.ResourceParam[Settings],
         database: dg.ResourceParam[DatabaseResourceHandle],
     ) -> dict[str, Any]:
-        from .restore_drill import retention_readiness
+        from .governance.restore_drill import retention_readiness
         from .risk_controls.retention import RetentionPolicy
 
         today = settings.report_date
@@ -577,7 +591,7 @@ def build_definitions() -> dg.Definitions:
         database: dg.ResourceParam[DatabaseResourceHandle],
     ) -> dg.AssetCheckResult:
         del context
-        from .restore_drill import retention_readiness
+        from .governance.restore_drill import retention_readiness
         from .risk_controls.retention import RetentionPolicy
 
         today = settings.report_date
@@ -605,7 +619,7 @@ def build_definitions() -> dg.Definitions:
         config: CheckConfig,
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
-        from .export import read_jsonl
+        from .processing.export import read_jsonl
 
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
@@ -695,7 +709,7 @@ def build_definitions() -> dg.Definitions:
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
         from .cli.common import _fixture_mode, _load_registry
-        from .export import read_jsonl
+        from .processing.export import read_jsonl
 
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
@@ -752,8 +766,8 @@ def build_definitions() -> dg.Definitions:
         config: CheckConfig,
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
-        from .export import read_jsonl
-        from .rights_guard import apply_rights_limits
+        from .governance.rights_guard import apply_rights_limits
+        from .processing.export import read_jsonl
 
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
@@ -803,7 +817,7 @@ def build_definitions() -> dg.Definitions:
         config: CheckConfig,
         settings: dg.ResourceParam[Settings],
     ) -> dg.AssetCheckResult:
-        from .export import read_jsonl
+        from .processing.export import read_jsonl
 
         app_settings = settings
         report_date = _check_date(context, app_settings, config.topic_id)
@@ -899,7 +913,7 @@ def build_definitions() -> dg.Definitions:
         job=job,
         cron_schedule=SCHEDULE_CRON,
         execution_timezone=SCHEDULE_TIMEZONE,
-        default_status=dg.DefaultScheduleStatus.STOPPED,
+        default_status=schedule_status,
     )
     def daily_digest_schedule(context: dg.ScheduleEvaluationContext) -> dg.RunRequest:
         scheduled = getattr(context, "scheduled_execution_time", None)
@@ -921,7 +935,7 @@ def build_definitions() -> dg.Definitions:
         job=job,
         cron_schedule=TIER1_SCHEDULE_CRON,
         execution_timezone=SCHEDULE_TIMEZONE,
-        default_status=dg.DefaultScheduleStatus.STOPPED,
+        default_status=schedule_status,
     )
     def tier1_six_hourly_schedule(context: dg.ScheduleEvaluationContext) -> dg.RunRequest:
         scheduled = getattr(context, "scheduled_execution_time", None)
@@ -939,7 +953,7 @@ def build_definitions() -> dg.Definitions:
     @dg.sensor(
         name="review_queue_sla_sensor",
         minimum_interval_seconds=300,
-        default_status=dg.DefaultSensorStatus.STOPPED,
+        default_status=sensor_status,
         description=(
             "RSK-07 / CHK-15: Monitors each acquisition-provenance obsolescence review queue "
             "for pending flags and 1-working-day SLA breaches without leaking "
@@ -950,7 +964,9 @@ def build_definitions() -> dg.Definitions:
         from .cli.common import load_review_flags
         from .risk_controls.obsolescence import ReviewQueue
 
-        app_settings = get_settings()
+        # Use the settings captured when definitions were built; do not re-read the
+        # environment at sensor execution time.
+        app_settings = runtime_settings
         now = datetime.now(UTC)
         previous_queues: dict[str, Any] = {}
         if context.cursor:
@@ -1031,6 +1047,14 @@ def build_definitions() -> dg.Definitions:
     )
 
 
-configure_observability(get_settings())  # once per process, not once per asset run
+_defs: dg.Definitions | None = None
 
-defs: dg.Definitions = build_definitions()
+
+def __getattr__(name: str) -> Any:
+    """Build Dagster definitions only when a caller actually asks for ``defs``."""
+    if name != "defs":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    global _defs
+    if _defs is None:
+        _defs = build_definitions()
+    return _defs

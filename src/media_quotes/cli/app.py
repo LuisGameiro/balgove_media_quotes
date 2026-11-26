@@ -24,6 +24,7 @@ from .common import (
     EXIT_FAILURE,
     EXIT_OK,
     _load_registry,
+    _parse_report_date,
     _translation_readiness_warning,
     _version_manifest,
     render_errors,
@@ -46,10 +47,7 @@ def _bootstrap() -> int:
 
 
 def _do_doctor(settings: Settings) -> int:  # pragma: no cover
-    # Resolve through the package so callers can replace cli._validate at runtime.
-    from . import _validate as validate
-
-    result = validate()
+    result = _validate()
     if result != EXIT_OK:
         return result
     rows = _load_registry(settings)
@@ -302,6 +300,11 @@ def _build_parser() -> argparse.ArgumentParser:
     prune = subparsers.add_parser("blob-prune", help="prune old, tombstoned blobs", **shared)
     prune.add_argument("--tombstones", dest="tombstones", required=True, type=Path)
     prune.add_argument("--execute", action="store_true", help="delete files; without it only plan")
+    prune.add_argument(
+        "--ack-no-references",
+        action="store_true",
+        help="acknowledge pruning without referenced-digest verification (offline only)",
+    )
     subparsers.add_parser("retention", help="retention and lock readiness plan", **shared)
     drill = subparsers.add_parser("restore-drill", help="compare two derived exports", **shared)
     drill.add_argument(
@@ -359,42 +362,39 @@ def _ensure_utf8_output() -> None:
 def cli_entry(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
     """CLI-only entry point: fix the console encoding, then run main()."""
     _ensure_utf8_output()
-    configure_observability(get_settings())  # once per process, not once per pipeline run
     return main(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    # Look up commands through the package at call time so monkeypatched cli
-    # attributes are honoured rather than stale app-module bindings.
-    from . import (
-        _bootstrap,
-        _do_audit,
-        _do_audit_quotes,
-        _do_backfill,
-        _do_batch,
+    # Resolve handlers from their defining modules at call time so tests can patch them.
+    from .audit import _do_audit
+    from .batch import _do_batch
+    from .eval import _do_eval
+    from .fetch import _do_fetch
+    from .logs import _do_logs
+    from .maintenance import (
         _do_blob_prune,
-        _do_dagster,
-        _do_dashboard,
-        _do_digest,
-        _do_doctor,
-        _do_eval,
-        _do_export,
-        _do_fetch,
-        _do_logs,
         _do_restore_drill,
         _do_retention,
         _do_review,
-        _do_run,
+    )
+    from .ops import (
+        _do_audit_quotes,
+        _do_backfill,
+        _do_dashboard,
+        _do_digest,
+        _do_export,
         _do_sources,
         _do_topics,
-        _parse_report_date,
     )
-    from . import _version_manifest as package_version_manifest
+    from .orchestration_info import _do_dagster
+    from .run import _do_run
 
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
         settings = get_settings()
+        configure_observability(settings)  # once per CLI invocation, inside the error boundary
         command = str(args.command)
         topic_arg = getattr(args, "topic", None)
         if command == "batch":
@@ -405,13 +405,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ConfigError(
                     "batch requires --requests PATH (or --status BATCH_ID without --apply)"
                 )
+            dry_run = not bool(getattr(args, "execute", False))
+            if getattr(args, "apply", False) and dry_run:
+                raise ConfigError("batch --apply requires --execute (dry-run cannot write)")
             return _do_batch(
                 settings,
                 requests_path=Path(requests_arg) if requests_arg else Path("."),
                 max_cost=getattr(args, "max_cost", None),
                 execute=bool(getattr(args, "execute", False)),
                 status_id=getattr(args, "status_id", None),
-                dry_run=not bool(getattr(args, "execute", False)),
+                dry_run=dry_run,
                 apply=bool(getattr(args, "apply", False)),
             )
         if command in {"doctor", "validate"}:
@@ -421,7 +424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "version":
             print(
                 json.dumps(
-                    package_version_manifest(settings), ensure_ascii=False, sort_keys=True, indent=2
+                    _version_manifest(settings), ensure_ascii=False, sort_keys=True, indent=2
                 )
             )
             return EXIT_OK
@@ -444,6 +447,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 tombstones_path=Path(str(args.tombstones)),
                 execute=bool(getattr(args, "execute", False))
                 and not bool(getattr(args, "dry_run", False)),
+                acknowledge_unverified=bool(getattr(args, "ack_no_references", False)),
             )
         if command == "retention":
             return _do_retention(settings, dry_run=bool(args.dry_run))
@@ -684,7 +688,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 (
                     ConfigError,
                     BudgetExceededError,
-                    ValueError,
                     PydanticValidationError,
                     FileNotFoundError,
                 ),

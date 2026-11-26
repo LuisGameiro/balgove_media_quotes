@@ -1,4 +1,4 @@
-"""Database engine and session factory (schema setup lives in bootstrap/Alembic)."""
+"""Database engine and session factory (schema setup lives in bootstrap)."""
 
 from __future__ import annotations
 

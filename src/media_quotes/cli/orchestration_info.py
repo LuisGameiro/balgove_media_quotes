@@ -37,10 +37,7 @@ def _do_dagster(settings: Settings) -> int:  # pragma: no cover - operator guida
         "Schedules: daily_digest_schedule (06:00) and tier1_six_hourly_schedule (tier 1, every "
         "6h); both stopped by default and explicitly live"
     )
-    print(
-        "Fixture default: --fixtures writes var/test-output and is skipped by the graph asset; "
-        "explicit config is required"
-    )
+    print("Fixture default: artifacts live under var/output/fixtures; explicit config is required")
     print("Sensor: review_queue_sla_sensor (300s interval, stopped by default)")
     print("Start UI: uv run dagster dev -m media_quotes.orchestration")
     print("Set DAGSTER_HOME=var/dagster to use var/dagster/dagster.yaml")

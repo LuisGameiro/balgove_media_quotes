@@ -59,7 +59,10 @@ def _redact(value: Any) -> Any:
         return redacted
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
         return [_redact(item) for item in value]
-    return value
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    # Exceptions and other objects can hide secrets in their string form.
+    return _scrub_string(str(value))
 
 
 def redact_event_dict(

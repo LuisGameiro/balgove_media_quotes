@@ -11,15 +11,15 @@ from uuid import NAMESPACE_URL, uuid5
 from ..adapters import BlobCache, FixtureSource, build_adapter
 from ..config import Settings
 from ..enums import SECTION_IDS, AcquisitionProvenance
-from ..evaluation import AcceptanceThresholds, evaluate_metrics, obsolete_precision
 from ..exceptions import SourceNotPermitted
-from ..gold_set import load_gold_set, split_articles, split_for
+from ..governance.evaluation import AcceptanceThresholds, evaluate_metrics, obsolete_precision
+from ..governance.gold_set import load_gold_set, split_articles, split_for
+from ..governance.relevance import evaluate_topic, load_topic_rules
 from ..models import QuoteCandidate
 from ..pipeline import detect_language, normalise_language_decision
-from ..relevance import evaluate_topic, load_topic_rules
+from ..processing.verification import verify_quote
 from ..risk_controls.obsolescence import obsoletion_allowed
 from ..text_utils import normalise_text, require_safe_id
-from ..verification import verify_quote
 from .common import (
     EXIT_FAILURE,
     EXIT_OK,
@@ -94,9 +94,9 @@ def evaluate_gold_set_report(
     consecutive_failures = 0
     if settings.persist_to_postgres:
         from ..db.repository import eval_recent_failures
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             consecutive_failures = eval_recent_failures(session, gold_set)
     drift_guard_ok = obsoletion_allowed(
         obsolete_precision=held_out_precision, consecutive_failures=consecutive_failures
@@ -428,11 +428,14 @@ def evaluate_gold_set_report(
         metrics["pass"] = False
     suffix = "" if selected_split == "all" else f"-{selected_split}"
     _write_json(settings.audit_dir / f"eval-{gold_set}{suffix}.json", metrics)
+    if suffix:
+        # Checks read the canonical path; keep it in sync with split-specific runs.
+        _write_json(settings.audit_dir / f"eval-{gold_set}.json", metrics)
     if settings.persist_to_postgres:
         from ..db.repository import record_eval_run, sync_gold_set_labels
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             sync_gold_set_labels(session, gold_data)
             record_eval_run(
                 session,

@@ -42,7 +42,7 @@ from media_quotes.db.tables import (
     quote_classifications_table,
     quotes_table,
 )
-from media_quotes.gold_set import GoldArticle, GoldQuoteLabel, GoldSet
+from media_quotes.governance.gold_set import GoldArticle, GoldQuoteLabel, GoldSet
 from media_quotes.registry import SourceRegistryRow, load_sources_csv
 from media_quotes.risk_controls.models import ObsolescenceEvidence, ObsolescenceFlag
 
@@ -68,7 +68,7 @@ def test_uuid_backed_columns_use_uuid_types() -> None:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCES_CSV = REPO_ROOT / "data" / "sources.csv"
-SCHEMA_SQL = REPO_ROOT / "src" / "media_quotes" / "db" / "schema.sql"
+SCHEMA_SQL = REPO_ROOT / "migrations" / "schema.sql"
 
 
 def test_schema_sql_has_t0_constraints() -> None:
@@ -85,6 +85,45 @@ def test_session_factory_produces_session() -> None:
     session = factory()
     assert session is not None
     session.close()
+
+
+def test_shared_session_factory_disposes_engine_when_url_changes(monkeypatch) -> None:
+    import hashlib
+
+    import media_quotes.pipeline as pipeline
+
+    created: list[str] = []
+    disposed: list[str] = []
+
+    class FakeEngine:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def dispose(self) -> None:
+            disposed.append(self.url)
+
+    def create(url: str) -> FakeEngine:
+        created.append(url)
+        return FakeEngine(url)
+
+    monkeypatch.setattr("media_quotes.db.engine.create_db_engine_from_url", create)
+    monkeypatch.setattr(
+        "media_quotes.db.engine.make_session_factory", lambda engine: f"factory:{engine.url}"
+    )
+    monkeypatch.setattr(pipeline, "_shared_engine_state", {})
+
+    url_a = "postgresql://user:secret@host/db-a"
+    url_b = "postgresql://user:secret@host/db-b"
+    factory_a = pipeline._shared_session_factory(url_a)
+    assert pipeline._shared_session_factory(url_a) is factory_a
+    assert created == [url_a]
+    assert pipeline._shared_engine_state["key"] == hashlib.sha256(url_a.encode()).hexdigest()
+    assert url_a not in pipeline._shared_engine_state
+
+    factory_b = pipeline._shared_session_factory(url_b)
+    assert factory_b != factory_a
+    assert created == [url_a, url_b]
+    assert disposed == [url_a]
 
 
 def test_session_scope_commits_on_success() -> None:
@@ -237,6 +276,76 @@ def test_persist_articles_and_quotes_persists_when_offsets_present() -> None:
     # Two INSERTs plus the canonical-id collision lookup SELECT.
     assert session.execute.call_count >= 2
     assert session.commit.call_count == 1
+
+
+def test_quote_insert_collision_retries_with_remapped_id() -> None:
+    """Another backfill taking our guessed id must not fail the whole write."""
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.sql import Insert, Select
+
+    class RetryResult:
+        def __init__(self, rows: list[tuple[object, ...]] | None = None) -> None:
+            self.rows = rows or []
+            self.rowcount = 1
+
+        def __iter__(self):
+            return iter(self.rows)
+
+        def all(self):
+            return self.rows
+
+    class CollisionSession:
+        def __init__(self, taken_id: str) -> None:
+            self.taken_id = taken_id
+            self.executed: list[object] = []
+            self.quote_selects = 0
+            self.quote_attempts = 0
+
+        def execute(self, statement, *args, **kwargs):
+            self.executed.append(statement)
+            if isinstance(statement, Select):
+                if {column.key for column in statement.selected_columns} & {"canonical_quote_id"}:
+                    self.quote_selects += 1
+                    if self.quote_selects == 2:
+                        # A competing process inserted our id under a different business key.
+                        return RetryResult([(self.taken_id, "other-article", "", 0, 0)])
+                return RetryResult()
+            if isinstance(statement, Insert) and statement.table.name == "quotes":
+                self.quote_attempts += 1
+                if self.quote_attempts == 1:
+                    raise IntegrityError("INSERT", {}, Exception("duplicate canonical_quote_id"))
+            return RetryResult()
+
+        def begin_nested(self):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+        def commit(self) -> None:
+            pass
+
+    records = _collect(Settings(_env_file=None), run_id="test", report_date=date(2026, 11, 19))[0]
+    first = records[0]
+    offsets = {
+        first.quote_id: {
+            "char_start": 0,
+            "char_end": len(first.quote_text_original),
+            "content_hash": first.content_hash,
+        }
+    }
+    session = CollisionSession(first.quote_id)
+    articles, quotes = persist_articles_and_quotes(session, [first], offsets)
+    assert (articles, quotes) == (1, 1)
+    assert session.quote_attempts == 2
+    assert session.quote_selects == 2
+    inserts = [
+        stmt
+        for stmt in session.executed
+        if isinstance(stmt, Insert) and stmt.table.name == "quotes"
+    ]
+    assert len(inserts) == 2
+    assert inserts[0].compile().params["canonical_quote_id_m0"] == first.quote_id
+    assert inserts[1].compile().params["canonical_quote_id_m0"] != first.quote_id
 
 
 def test_quote_insert_writes_topic_and_translation_columns() -> None:
@@ -744,6 +853,11 @@ def test_fixture_quote_spans_are_skipped_for_live_articles() -> None:
                 return ReplayResult([])
             return ReplayResult([])
 
+        def begin_nested(self):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
         def commit(self) -> None:
             self.commits += 1
 
@@ -970,70 +1084,6 @@ def test_observed_audit_months_and_sync_storage_partitions() -> None:
     assert observed_audit_months(empty) == []
     assert sync_storage_partitions(empty) == 0
     assert empty.commits == 0
-
-
-@pytest.mark.integration
-def test_provenance_downgrade_keeps_deterministic_survivors() -> None:
-    """Needs a real Postgres: set MQ_TEST_DATABASE_URL to run this test."""
-    import os
-    from importlib.util import module_from_spec, spec_from_file_location
-
-    from sqlalchemy import create_engine, text
-
-    from media_quotes.db.tables import metadata
-
-    url = os.environ.get("MQ_TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("set MQ_TEST_DATABASE_URL to run the Postgres downgrade test")
-    path = Path(__file__).resolve().parents[2] / "migrations/versions/0010_article_provenance.py"
-    spec = spec_from_file_location("mq_0010_provenance", path)
-    assert spec is not None and spec.loader is not None
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    schema = "mq_downgrade_test"
-    engine = create_engine(url)
-    try:
-        with engine.begin() as conn:
-            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            conn.execute(text(f"CREATE SCHEMA {schema}"))
-            conn.execute(text(f"SET search_path TO {schema}, public"))
-            metadata.create_all(conn, tables=[digests_table])
-            rows = [
-                ("t1", "00000000-0000-0000-0000-000000000001", "fixture"),
-                ("t1", "00000000-0000-0000-0000-000000000002", "live_feed"),
-                ("t2", "00000000-0000-0000-0000-000000000003", "live_bing"),
-                ("t2", "00000000-0000-0000-0000-000000000004", "manual_sample"),
-                ("t3", "00000000-0000-0000-0000-000000000005", "live_bing"),
-                ("t3", "00000000-0000-0000-0000-000000000006", "live_feed"),
-            ]
-            for topic, digest_id, provenance in rows:
-                conn.execute(
-                    text(
-                        "INSERT INTO digests (digest_id, digest_date, window_start, window_end, "
-                        "md_path, topic_id, provenance) VALUES "
-                        "(:digest_id, DATE '2026-11-19', DATE '2026-11-13', "
-                        "DATE '2026-11-19', 'digests/d.md', :topic, :provenance)"
-                    ),
-                    {"digest_id": digest_id, "topic": topic, "provenance": provenance},
-                )
-            for statement in module._DOWNGRADE_DEDUPE_SQL:
-                conn.execute(text(statement))
-            survivors = {
-                row[0]: row[1]
-                for row in conn.execute(
-                    text("SELECT topic_id, digest_id FROM digests ORDER BY topic_id")
-                ).all()
-            }
-            assert survivors == {
-                "t1": "00000000-0000-0000-0000-000000000002",  # live beats fixture
-                "t2": "00000000-0000-0000-0000-000000000003",  # lowest digest_id wins
-                "t3": "00000000-0000-0000-0000-000000000006",  # live_feed wins over lower id
-            }
-    finally:
-        with engine.begin() as conn:
-            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        engine.dispose()
 
 
 def test_sync_sources_upserts_rows_without_database() -> None:

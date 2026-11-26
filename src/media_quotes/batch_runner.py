@@ -1,6 +1,6 @@
 """OpenRouter Batch API submit/poll wrapper with an injectable HTTP client.
 
-Policy: an operator must pass an explicit cost cap, no network call happens on
+Policy: an operator must pass an explicit estimated-cost ceiling, no network call happens on
 dry-run, and only successful results are applied to decision_cache by custom_id.
 """
 

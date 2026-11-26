@@ -10,12 +10,13 @@ import os
 from collections.abc import Mapping
 from datetime import date
 from difflib import get_close_matches
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .text_utils import word_count
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ENV_FILE_UNSET = object()
@@ -71,7 +72,6 @@ class Settings(BaseSettings):
     audit_dir: Path = Path("var/output/audit")
     export_dir: Path = Path("var/output/quotes")
     logs_dir: Path = Path("var/output/logs")
-    alembic_ini: Path = Path("alembic.ini")
 
     # REPORT_DATE defaults to today but is normally pinned by --date for replay.
     report_date: date = Field(default_factory=date.today)
@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     attribution_format: str = Field(default=ATTRIBUTION_FORMAT, min_length=1)
     licence_territory: str = Field(default=LICENCE_TERRITORY, min_length=1)
     persist_to_postgres: bool = False  # C4: Dagster persists run/audit rows only when enabled
+
+    # C4: Dagster automations stay STOPPED unless explicitly enabled (safe default).
+    enable_tier1_schedules: bool = False
+    enable_review_sla_sensor: bool = False
 
     # Inference provider is selected by environment only. There is no CLI flag.
     # local keeps all runs offline; openrouter uses the OpenAI-compatible API.
@@ -106,11 +110,11 @@ class Settings(BaseSettings):
     translation_prompt_version: str = "translation-v1"
     extraction_fallback: str = "off"  # off | static | rendered
 
-    # Batch backfill policy (Opt-in; requires an explicit cost cap on the CLI).
+    # Batch backfill policy (opt-in; requires an explicit estimated-cost ceiling on the CLI).
     batch_model_snapshot: str = ""
     batch_endpoint: str = "/v1/responses"
 
-    # Live fetch policy (used by scripts/test_scraper.py and mq fetch).
+    # Live fetch policy (used by scripts/diagnostics/test_scraper.py and mq fetch).
     fetch_timeout_seconds: float = Field(default=10.0, gt=0)
     fetch_requests_per_second: float = Field(default=1.0, gt=0)
     fetch_max_bytes: int = Field(default=5_000_000, gt=0)
@@ -124,25 +128,6 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr | None = None
     neo4j_database: str = "neo4j"
-
-    def for_source_mode(self, source_mode: str) -> Settings:
-        """Return settings with fixture artifacts isolated from operational output."""
-        if source_mode != "fixtures":
-            return self
-        root = self.output_dir.parent
-        if self.audit_dir != self.output_dir / "audit":
-            root = self.audit_dir.parent
-        test_output = root / "test-output"
-        return self.model_copy(
-            update={
-                "output_dir": test_output,
-                "digest_dir": test_output / "digests",
-                "blob_dir": test_output / "raw",
-                "audit_dir": test_output / "audit",
-                "export_dir": test_output / "quotes",
-                "logs_dir": test_output / "logs",
-            }
-        )
 
     @model_validator(mode="before")
     @classmethod
@@ -178,7 +163,6 @@ class Settings(BaseSettings):
         "audit_dir",
         "export_dir",
         "logs_dir",
-        "alembic_ini",
         mode="before",
     )
     @classmethod
@@ -282,7 +266,7 @@ class Settings(BaseSettings):
 
     def quote_within_limits(self, quote_text: str) -> bool:
         """DEC-10 word-count gate; strict counting on Unicode whitespace."""
-        return len(quote_text.split()) <= self.max_quote_words
+        return word_count(quote_text) <= self.max_quote_words
 
 
 def unknown_setting_env_vars(environ: Mapping[str, str]) -> list[str]:
@@ -295,6 +279,10 @@ def unknown_setting_env_vars(environ: Mapping[str, str]) -> list[str]:
     )
 
 
-@lru_cache
 def get_settings() -> Settings:
+    """Build settings from the current environment on every call.
+
+    Uncached on purpose: long-lived processes (e.g. the Dagster daemon) must
+    observe .env changes rather than keep stale settings.
+    """
     return Settings()

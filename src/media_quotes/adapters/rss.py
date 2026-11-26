@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import defusedxml.ElementTree as ET
 
+from ..text_utils import local_xml_tag as _local_tag
 from .quote_extractor import is_topic_relevant
 
 if TYPE_CHECKING:
@@ -29,11 +30,6 @@ def _parse_feed_date(raw_date: str) -> date | None:
     with contextlib.suppress(Exception):
         return datetime.fromisoformat(cleaned.replace("Z", "+00:00")).date()
     return None
-
-
-def _local_tag(tag: str) -> str:
-    """Strip XML namespace ``{http://...}name`` -> ``name``."""
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
 def parse_rss_feed(

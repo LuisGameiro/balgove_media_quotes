@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from ..extraction import ExtractionParams, RenderingFallback, extract_article, find_span
+from ..processing.extraction import ExtractionParams, RenderingFallback, extract_article, find_span
 from .quote_extractor import (
     _QUOTE_RE,
     _extract_quotes,

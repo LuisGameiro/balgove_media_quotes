@@ -81,7 +81,8 @@ def fetch_speaker_timeline(
            s.tier AS source_tier,
            s.country_region AS country_region,
            q.is_obsolete AS is_obsolete
-    ORDER BY q.publication_date ASC, q.canonical_quote_id ASC
+    ORDER BY CASE WHEN sp.speaker_key = $speaker_key THEN 0 ELSE 1 END ASC,
+             q.publication_date ASC, q.canonical_quote_id ASC
     """
     res = session.run(
         query,

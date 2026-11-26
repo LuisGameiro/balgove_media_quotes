@@ -11,8 +11,8 @@ from collections.abc import Sequence
 from typing import Any
 
 from .config import DEFAULT_TOPIC_ID
-from .export import content_hash
 from .models import ExportQuoteRecord
+from .processing.export import content_hash
 from .text_utils import require_safe_id
 
 GENERATOR_VERSION = "context-pack-v1"

@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from ..ai.llm_live import LLMRequest, contains_instruction_override, is_refusal_text
 from ..batch import (
     batch_payload,
     build_batch_requests,
@@ -18,7 +19,6 @@ from ..batch import (
 from ..batch_runner import OpenRouterBatchClient
 from ..config import Settings
 from ..exceptions import ConfigError
-from ..llm_live import LLMRequest, contains_instruction_override, is_refusal_text
 from ..risk_controls.budget import budget_gate
 from ..risk_controls.models import BackfillEstimate
 from .common import _PRICE_PER_CALL, EXIT_FAILURE, EXIT_OK
@@ -92,14 +92,14 @@ def _apply_results(
     results: list[dict[str, Any]],
     requests: list[LLMRequest],
 ) -> tuple[int, int]:
+    from ..ai.llm_cache import _ENVELOPE
     from ..db.repository import DecisionCacheEntry, upsert_decision_cache
-    from ..llm_cache import _ENVELOPE
-    from ..pipeline import _default_session_context
+    from ..pipeline import default_session_context
 
     by_cache_key = {custom_id(item.cache_key): item for item in requests}
     applied = 0
     unmatched = 0
-    with _default_session_context(settings) as session:
+    with default_session_context(settings) as session:
         for result in results:
             request = by_cache_key.get(str(result.get("custom_id") or ""))
             text = _extract_text(result)
@@ -142,6 +142,8 @@ def _do_batch(
     apply: bool = False,
 ) -> int:
     if status_id:
+        if apply and (dry_run or not execute):
+            raise ConfigError("batch --apply requires --execute (dry-run cannot write)")
         client = OpenRouterBatchClient(settings)
         try:
             job = client.status(status_id)
@@ -158,10 +160,10 @@ def _do_batch(
                 _require_matching_model(requests, settings.batch_model_snapshot)
                 applied, unmatched = _apply_results(settings, job.results, requests)
                 from ..db.repository import finish_pipeline_run, start_pipeline_run
-                from ..pipeline import _default_session_context
+                from ..pipeline import default_session_context
 
                 run_id = f"batch-{status_id}"
-                with _default_session_context(settings) as session:
+                with default_session_context(settings) as session:
                     start_pipeline_run(
                         session,
                         run_id=run_id,
@@ -203,7 +205,11 @@ def _do_batch(
             cost=round(len(requests) * _PRICE_PER_CALL, 4),
             duration_hours=0.0,
         )
-        note = budget_gate(estimate, max_cost) if max_cost is not None else "no cost cap supplied"
+        note = (
+            budget_gate(estimate, max_cost)
+            if max_cost is not None
+            else "no estimated-cost ceiling supplied"
+        )
         print(
             json.dumps(
                 {
@@ -246,7 +252,8 @@ def _do_batch(
     )
     budget_gate(estimate, max_cost)
     print(
-        "warning: --max-cost checks a flat estimate only; it cannot cap provider spend.",
+        "warning: --max-cost checks a flat estimated-cost ceiling only; "
+        "it cannot cap provider spend.",
         file=sys.stderr,
     )
 
@@ -261,7 +268,7 @@ def _do_batch(
     if settings.persist_to_postgres:
         run_id = f"batch-{batch_id}"
         from ..db.repository import finish_pipeline_run, start_pipeline_run
-        from ..pipeline import _default_session_context
+        from ..pipeline import default_session_context
 
         stats = {
             "batch_id": batch_id,
@@ -269,7 +276,7 @@ def _do_batch(
             "estimated_cost": estimate.cost,
             "max_cost": max_cost,
         }
-        with _default_session_context(settings) as session:
+        with default_session_context(settings) as session:
             start_pipeline_run(
                 session,
                 run_id=run_id,

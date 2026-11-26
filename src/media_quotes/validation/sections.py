@@ -13,6 +13,10 @@ def check_sections(sections: list[dict[str, str]], errors: list[str]) -> set[str
     ids: set[str] = set()
     for line, row in enumerate(sections, start=2):
         where = f"sections.csv line {line}"
+        if not isinstance(row, dict):
+            errors.append(f"{where}: row must be a JSON object")
+            continue
+        row = {key: str(value) for key, value in row.items() if value is not None}
         if any(row.get(column) is None for column in SECTION_COLUMNS):
             # check_columns already reported the header problem; never index a missing key.
             continue

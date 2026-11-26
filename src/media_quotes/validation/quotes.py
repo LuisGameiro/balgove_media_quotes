@@ -17,6 +17,8 @@ def check_quotes(
     sections: set[str],
     schema: dict[str, Any],
     errors: list[str],
+    *,
+    translation_mode: str = "translate",
 ) -> None:
     if not store.exists():
         return
@@ -52,12 +54,16 @@ def check_quotes(
                     ("license_reference", "license_reference"),
                     ("discovery_method", "discovery_method"),
                 ):
-                    expected: Any = (
-                        source[column] == "true" if column == "claim_only" else source[column]
-                    )
+                    raw = source.get(column, "")
+                    expected: Any = raw == "true" if column == "claim_only" else raw
                     if record.get(key) != expected:
                         errors.append(f"{where}: {key} does not match sources.csv ({expected!r})")
-                if record.get("source_tier") != int(source["tier"]):
+                try:
+                    expected_tier = int(source.get("tier", ""))
+                except (TypeError, ValueError):
+                    errors.append(f"{where}: sources.csv tier is not an integer")
+                    expected_tier = None
+                if expected_tier is not None and record.get("source_tier") != expected_tier:
                     errors.append(f"{where}: source_tier does not match sources.csv")
                 if source["rights_status"] == "blocked":
                     errors.append(f"{where}: quote cannot be stored from a blocked source")
@@ -93,5 +99,9 @@ def check_quotes(
             needs_translation = record.get("source_language") not in (None, "en") or (
                 quote_language not in ("", "en", "und")
             )
-            if needs_translation and not record.get("quote_text_en"):
+            if (
+                translation_mode == "translate"
+                and needs_translation
+                and not record.get("quote_text_en")
+            ):
                 errors.append(f"{where}: non-English quotes need quote_text_en")

@@ -20,7 +20,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import PROJECT_ROOT
-from .relevance import TopicDecision, _folded, _matches, evaluate_topic, load_topic_rules
+from .governance.relevance import TopicDecision, _folded, _matches, evaluate_topic, load_topic_rules
 from .text_utils import normalise_text
 
 __all__ = [
@@ -209,7 +209,18 @@ class TopicPack(BaseModel):
         if has_exclusion and not has_anchor:
             return False
         if has_anchor and not has_exclusion:
-            return True
+            # An anchor alone is a screening hit, not a relevance decision: require a
+            # supporting term so the shortcut cannot bypass the full rule engine.
+            supporting = [
+                term.strip()
+                for terms in self.relevance.supporting_terms.values()
+                for term in terms
+                if term.strip()
+            ]
+            if not supporting or any(
+                _matches(term, combined, folded_combined) for term in supporting
+            ):
+                return True
         if (
             self.quick_keywords
             and not has_exclusion
