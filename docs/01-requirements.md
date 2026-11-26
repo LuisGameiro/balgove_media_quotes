@@ -10,17 +10,17 @@ missing or disabled.
 
 Status comes first so the open items are easy to scan.
 
-| ID | Status | Brief requirement | Current implementation |
-| --- | --- | --- | --- |
-| FR-2.1 | Implemented in persistent mode | Auditable quote database and LLM-friendly storage | Postgres schema, strict JSONL export, content hashes, offsets, audit events and optional Neo4j. Offline JSONL is a local replay store. |
-| FR-2.2 | Partial | Deterministic daily Reuters/BBC checks | Versioned topic rules, rights-gated adapters, exact-span verification and `mq run --live`; full runs fail closed when mandatory sources have zero quotes. Schedules are stopped and Reuters returns HTTP 401. |
-| FR-2.3a | Implemented | Extract and verify quote text and metadata | Exact-span verifier, attribution and junk checks, first-hand evidence and rights guard. Covers fixtures, blobs and live pages. |
-| FR-2.3b | Partial | Collect from 2026-10-01 onward | `BACKFILL_START=2026-10-01`, bounded archive discovery and resumable partitions. No completed production backfill. |
-| FR-2.3c | Implemented | Select a historical period on request | `mq backfill --from ... --to ...` with a 365-day cap and `--source-id` filter. |
-| FR-2.3d | Partial | Onboard another source on request | `mq sources --action add --probe --live` scaffolds a blocked config and probes admission. Rights grants and first-hand sign-off stay manual. |
-| FR-2.4 | Partial | Daily 14-day digest with sections and inference | Deterministic renderer, six sections, obsolescence proposals and injectable inference. Text fields are capped and human review evidence is pending. |
-| OUT-3 | Partial | Dashboard and GitHub repository | Tabbed Streamlit dashboard, read-only quote browser, structured logs, read-only Postgres counts and a configured remote. Deployment pending. |
-| Q-4 | Partial | Relevant, clean, accurate, auditable, fault-tolerant processing | Verification, coverage gaps, audit reports, gold-set evaluation and CI gates. Real-source completeness is unproven. |
+| ID      | Status                         | Brief requirement                                               | Current implementation                                                                                                                                                                                        |
+| ------- | ------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR-2.1  | Implemented in persistent mode | Auditable quote database and LLM-friendly storage               | Postgres schema, strict JSONL export, content hashes, offsets, audit events and optional Neo4j. Offline JSONL is a local replay store.                                                                        |
+| FR-2.2  | Partial                        | Deterministic daily Reuters/BBC checks                          | Versioned topic rules, rights-gated adapters, exact-span verification and `mq run --live`; full runs fail closed when mandatory sources have zero quotes. Schedules are stopped and Reuters returns HTTP 401. |
+| FR-2.3a | Implemented                    | Extract and verify quote text and metadata                      | Exact-span verifier, attribution and junk checks, first-hand evidence and rights guard. Covers fixtures, blobs and live pages.                                                                                |
+| FR-2.3b | Partial                        | Collect from 2026-10-01 onward                                  | `BACKFILL_START=2026-10-01`, bounded archive discovery and resumable partitions. No completed production backfill.                                                                                            |
+| FR-2.3c | Implemented                    | Select a historical period on request                           | `mq backfill --from ... --to ...` with a 365-day cap and `--source-id` filter.                                                                                                                                |
+| FR-2.3d | Partial                        | Onboard another source on request                               | `mq sources --action add --probe --live` scaffolds a blocked config and probes admission. Rights grants and first-hand sign-off stay manual.                                                                  |
+| FR-2.4  | Partial                        | Daily 14-day digest with sections and inference                 | Deterministic renderer, six sections, obsolescence proposals and injectable inference. Text fields are capped and human review evidence is pending.                                                           |
+| OUT-3   | Partial                        | Dashboard and GitHub repository                                 | Tabbed Streamlit dashboard, read-only quote browser, structured logs, read-only Postgres counts and a configured remote. Deployment pending.                                                                  |
+| Q-4     | Partial                        | Relevant, clean, accurate, auditable, fault-tolerant processing | Verification, coverage gaps, audit reports, gold-set evaluation and CI gates. Real-source completeness is unproven.                                                                                           |
 
 ## Quote metadata
 

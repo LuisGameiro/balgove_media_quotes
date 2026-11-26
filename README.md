@@ -11,7 +11,8 @@ immutable. Start with the [documentation index](docs/README.md).
 ## Quick start
 
 You need Git and [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs
-Python 3.12 for you. Docker is only needed for Postgres.
+Python 3.12 for you. Docker is only needed for Postgres — start Docker Desktop before the optional
+Postgres commands.
 
 ```bash
 uv python install 3.12
@@ -24,6 +25,8 @@ uv run python -m media_quotes run --date 2026-11-23
 ```
 
 `mq` and `python -m media_quotes` are the same entry point; both forms work everywhere in these docs.
+Copy only the command, not a pasted `PS C:\...>` prompt: PowerShell reads `PS` as `Get-Process` and
+the rest as arguments. Run the commands from the repository root.
 
 Set `DASHBOARD_PASSWORD` in `.env` before starting the dashboard. Exit code `2` from `mq run`
 means disclosed coverage gaps, not a crash. Everything is written under `var/output/`.
