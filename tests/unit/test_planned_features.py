@@ -12,29 +12,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from conftest import settings_for
+from media_quotes.ai.llm_cache import DbDecisionCache
+from media_quotes.ai.llm_live import LLMDecision, LLMRequest
 from media_quotes.cli import app, ops
 from media_quotes.cli.common import _load_registry
 from media_quotes.config import Settings
-from media_quotes.llm_cache import DbDecisionCache
-from media_quotes.llm_live import LLMDecision, LLMRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def _settings(tmp_path: Path, **overrides: object) -> Settings:
-    values: dict[str, object] = {
-        "sources_csv": ROOT / "data/sources.csv",
-        "sources_dir": ROOT / "data/sources",
-        "sections_csv": ROOT / "data/sections.csv",
-        "schema_path": ROOT / "data/quotes.schema.json",
-        "fixtures_dir": ROOT / "data/fixtures",
-        "gold_set_dir": ROOT / "data/gold_set",
-        "audit_dir": tmp_path / "audit",
-        "export_dir": tmp_path / "export",
-        "persist_to_postgres": True,
-    }
+    values: dict[str, object] = {"persist_to_postgres": True}
     values.update(overrides)
-    return Settings(_env_file=None, **values)  # type: ignore[arg-type]
+    return settings_for(tmp_path, **values)
 
 
 def _request() -> LLMRequest:
@@ -81,6 +72,31 @@ def test_db_decision_cache_roundtrip(tmp_path: Path, monkeypatch: Any) -> None:
     assert restored.cached is True
 
 
+def test_db_decision_cache_rejects_stale_row_metadata(tmp_path: Path, monkeypatch: Any) -> None:
+    import media_quotes.db.repository as repo
+
+    session = MagicMock()
+
+    @contextmanager
+    def fake_context(settings: Settings) -> Any:
+        yield session
+
+    monkeypatch.setattr(
+        "media_quotes.pipeline.default_session_context", fake_context, raising=False
+    )
+    row = {
+        "cache_key": "k1",
+        "model_snapshot": "model-v2",
+        "prompt_version": "prompt-v1",
+        "schema_hash": "schema-v1",
+        "input_hash": "in",
+        "output": {"text": "stale"},
+    }
+    monkeypatch.setattr(repo, "get_decision_cache", lambda s, key: row, raising=False)
+    cache = DbDecisionCache(_settings(tmp_path))
+    assert cache.lookup(_request()) is None
+
+
 def test_export_from_db_flag(tmp_path: Path, monkeypatch: Any) -> None:
     import media_quotes.db.repository as repo
     from media_quotes.models import ExportQuoteRecord
@@ -93,6 +109,24 @@ def test_export_from_db_flag(tmp_path: Path, monkeypatch: Any) -> None:
     target = tmp_path / "from-db.jsonl"
     assert app.main(["export", "--from-db", "--date", "2026-11-19", "--out", str(target)]) == 0
     assert target.is_file()
+
+
+def test_export_default_path_is_dated_store(tmp_path: Path, monkeypatch: Any) -> None:
+    from media_quotes.models import ExportQuoteRecord
+    from media_quotes.processing.export import local_store_path, write_jsonl
+
+    settings = _settings(tmp_path)
+    record = ExportQuoteRecord.model_validate(
+        json.loads((ROOT / "data/quotes.example.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    )
+    store = local_store_path(
+        settings.export_dir, date(2026, 11, 19), topic_id="ukraine-war", provenance="fixture"
+    )
+    write_jsonl([record], store)
+    monkeypatch.setattr(app, "get_settings", lambda: settings)
+    assert app.main(["export", "--date", "2026-11-19"]) == 0
+    assert store.is_file()
+    assert not (settings.export_dir / "fixtures" / "quotes.jsonl").exists()
 
 
 def test_backfill_persists_estimate(tmp_path: Path, monkeypatch: Any) -> None:
@@ -238,7 +272,7 @@ def test_backfill_retry_empty_flag_is_forwarded(tmp_path: Path, monkeypatch: Any
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("media_quotes.cli._do_backfill", fake_backfill)
+    monkeypatch.setattr("media_quotes.cli.ops._do_backfill", fake_backfill)
     args = ["backfill", "--from", "2026-11-18", "--to", "2026-11-19", "--max-cost", "10"]
 
     assert app.main([*args, "--retry-empty"]) == 0

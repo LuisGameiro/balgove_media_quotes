@@ -231,12 +231,13 @@ def test_propose_obsolescence_caps_judge_calls_and_reports_counts() -> None:
     judge = CountingJudge()
     capped = propose_obsolescence(records, now=now, judge=judge, max_pairs=4)
     assert capped.flags == []
-    assert (capped.pairs_evaluated, capped.pairs_skipped) == (4, 11)
+    # The cap stops scanning entirely: one further pair is observed as skipped.
+    assert (capped.pairs_evaluated, capped.pairs_skipped) == (4, 1)
     assert judge.calls == 4
 
     zero = CountingJudge()
     none = propose_obsolescence(records, now=now, judge=zero, max_pairs=0)
-    assert (none.pairs_evaluated, none.pairs_skipped) == (0, 15)
+    assert (none.pairs_evaluated, none.pairs_skipped) == (0, 1)
     assert zero.calls == 0
 
 

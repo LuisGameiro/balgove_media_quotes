@@ -9,9 +9,9 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 
 from media_quotes.models import QuoteCandidate
+from media_quotes.processing.verification import verify_quote
 from media_quotes.registry import load_sources_csv
 from media_quotes.text_utils import require_safe_id
-from media_quotes.verification import verify_quote
 
 ROW = load_sources_csv(Path("data/sources.csv"))[0]
 

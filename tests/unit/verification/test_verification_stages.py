@@ -1,0 +1,142 @@
+"""C3 — two-stage verifier: pre-LLM filtering and publishable-only output."""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
+
+import pytest
+
+from media_quotes.adapters import FixtureSource, build_adapter
+from media_quotes.models import QuoteCandidate
+from media_quotes.processing.verification import _as_date, _attribution_ok, _junk_free, verify_quote
+from media_quotes.processing.verification_stages import (
+    PipelineResult,
+    pre_llm_filter,
+    verify_pipeline,
+)
+from media_quotes.registry import load_sources_csv
+
+ROOT = Path(__file__).resolve().parents[3]
+CSV = ROOT / "data/sources.csv"
+FIXTURE = "fixture://reuters/synthetic-reuters-2026-11-18.html"
+ROW = load_sources_csv(CSV)[0]  # reuters, blocked but fixture replay is allowed
+FIXTURES = FixtureSource(ROOT / "data/fixtures")
+ADAPTER = build_adapter(ROW, FIXTURES, replay=True)
+META = ADAPTER.parse_metadata(FIXTURES.read(FIXTURE))
+TEXT = str(META["article_text"])
+FLAGS = dict(ADAPTER.policy_flags()) | {
+    "source_id": ROW.source_id,
+    "original_reporting_flag": "first-hand",
+}
+
+
+def candidate(quote_text: str, start: int) -> QuoteCandidate:
+    return QuoteCandidate(
+        quote_text=quote_text,
+        article_id=uuid5(NAMESPACE_URL, FIXTURE),
+        char_start=start,
+        char_end=start + len(quote_text),
+        speaker="Analyst",
+        attribution_span="said",
+    )
+
+
+def real_candidates() -> list[QuoteCandidate]:
+    out = []
+    for span in META["quote_spans"]:
+        text = str(span["quote_text"])
+        start = int(span["char_start"])
+        out.append(candidate(text, start))
+    return out
+
+
+def test_stage1_drops_mismatch_short_and_overlimit() -> None:
+    good = real_candidates()
+    assert good
+    bad_span = candidate("Completely fabricated quote for testing.", 0)
+    too_long = candidate(" ".join(["word"] * 31), TEXT.find("A"))
+    result = pre_llm_filter([*good, bad_span, too_long], text=TEXT, policy_flags=FLAGS)
+    assert len(result.kept) == len(good)
+    assert result.rejected.get("span_mismatch", 0) >= 1
+    assert result.rejected.get("over_word_limit", 0) == 0  # invalid span dropped first
+
+
+def test_stage1_requires_first_hand() -> None:
+    no_flags = dict(FLAGS) | {"original_reporting_flag": "relayed wire copy"}
+    result = pre_llm_filter(real_candidates(), text=TEXT, policy_flags=no_flags)
+    assert result.kept == []
+    assert result.rejected["not_first_hand"] > 0
+
+
+def test_pipeline_publishable_only_verified() -> None:
+    pipeline = verify_pipeline(
+        real_candidates(),
+        text=TEXT,
+        source_row=ROW,
+        policy_flags=FLAGS,
+        metadata=META,
+        window_start=date(2026, 11, 1),
+        window_end=date(2026, 11, 30),
+    )
+    assert isinstance(pipeline, PipelineResult)
+    for item in pipeline.results:
+        if item.candidate in pipeline.publishable:
+            assert item.status == "verified"
+    assert len(pipeline.publishable) <= len(pipeline.prefilter.kept)
+    for item in pipeline.results:
+        if item.status != "verified":
+            assert item.candidate not in pipeline.publishable
+
+
+def test_word_limits_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        pre_llm_filter([], text=TEXT, policy_flags=FLAGS, max_quote_words=0)
+
+
+def test_as_date_parsing() -> None:
+    d = date(2026, 11, 19)
+    assert _as_date(d) == d
+    assert _as_date("2026-11-19T00:00:00Z") == d
+    assert _as_date("invalid-date-string") is None
+    assert _as_date(12345) is None
+
+
+def test_junk_free_and_attribution_helpers() -> None:
+    assert _junk_free("Valid long enough quote with normal alphabetic text.")
+    assert not _junk_free("short")
+    assert not _junk_free("Quote with forbidden symbol © inside text here.")
+    assert not _junk_free("Advertisement message and promotion details here.")
+
+    assert _attribution_ok(
+        context="John Doe said that negotiations would proceed.",
+        near_text="john doe said that negotiations would proceed",
+        speaker="John Doe",
+        author="",
+        attribution_span="said",
+        quote="negotiations would proceed",
+    )
+    assert not _attribution_ok(
+        context="Context without any names.",
+        near_text="context without any names",
+        speaker="",
+        author="",
+        attribution_span="",
+        quote="negotiations would proceed",
+    )
+
+
+def test_verify_quote_rejection_and_unverified() -> None:
+    cand = candidate("A valid quote string for testing.", 0)
+    # Span mismatch causes rejection
+    res = verify_quote(
+        cand,
+        article_text="Different text without matching span.",
+        source_row=ROW,
+        policy_flags=FLAGS,
+        metadata=META,
+        window_start=date(2026, 11, 1),
+        window_end=date(2026, 11, 30),
+    )
+    assert res.status == "rejected"

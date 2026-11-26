@@ -97,6 +97,55 @@ def test_check_columns_reports_empty_and_bad_shapes() -> None:
 # --- check_sources --------------------------------------------------------------------------
 
 
+def test_check_sources_enabled_source_requires_permitted_access_mode() -> None:
+    row = _approved_source_row()
+    row["access_mode"] = "scraped_prohibited"
+    errors: list[str] = []
+    check_sources([row], errors)
+    assert any("permitted access_mode" in message for message in errors)
+
+
+def test_check_sources_reports_non_object_rows_without_crashing() -> None:
+    errors: list[str] = []
+    check_sources(["not-a-row"], errors)  # type: ignore[list-item]
+    assert any("row must be a JSON object" in message for message in errors)
+
+
+def test_check_sections_reports_non_object_rows_without_crashing() -> None:
+    errors: list[str] = []
+    check_sections(["not-a-row"], errors)  # type: ignore[list-item]
+    assert any("row must be a JSON object" in message for message in errors)
+
+
+def test_check_quotes_reports_non_integer_source_tier(tmp_path: Path) -> None:
+    import json
+
+    sources = _sources_map()
+    bad = dict(next(iter(sources.values())))
+    bad["tier"] = "not-a-number"
+    store = tmp_path / "quotes.jsonl"
+    store.write_text(json.dumps(_record()), encoding="utf-8")
+    errors: list[str] = []
+    check_quotes(store, {"reuters": bad}, _section_ids(), OPEN_SCHEMA, errors)
+    assert any("tier is not an integer" in message for message in errors)
+
+
+def test_check_source_configs_enabled_source_requires_permitted_access_mode(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from media_quotes.validation.modular import check_source_configs
+
+    payload = json.loads((DATA_DIR / "sources" / "guardian.json").read_text(encoding="utf-8"))
+    payload["enabled"] = True
+    payload["access_mode"] = "scraped_prohibited"
+    (tmp_path / "guardian.json").write_text(json.dumps(payload), encoding="utf-8")
+    errors: list[str] = []
+    check_source_configs(tmp_path, {}, {}, errors)
+    assert any("permitted access_mode" in message for message in errors)
+
+
 def test_check_sources_accepts_valid_rows() -> None:
     errors: list[str] = []
     by_id = check_sources([_source_row()], errors)

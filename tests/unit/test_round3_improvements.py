@@ -19,7 +19,7 @@ from media_quotes.cli.eval import evaluate_gold_set_report
 from media_quotes.cli.maintenance import _do_restore_drill
 from media_quotes.config import Settings
 from media_quotes.dashboard import _latest_audit, latest_digests
-from media_quotes.extraction import ExtractionParams, extract_article, find_span
+from media_quotes.processing.extraction import ExtractionParams, extract_article, find_span
 from media_quotes.source_configs import (
     ExtractorHints,
     SourceConfig,
@@ -103,7 +103,7 @@ def test_eval_uses_default_session_context(monkeypatch: pytest.MonkeyPatch, tmp_
         session_opened = True
         yield FakeSession()
 
-    monkeypatch.setattr("media_quotes.pipeline._default_session_context", fake_session_context)
+    monkeypatch.setattr("media_quotes.pipeline.default_session_context", fake_session_context)
     monkeypatch.setattr("media_quotes.db.repository.sync_gold_set_labels", lambda session, data: 0)
     monkeypatch.setattr(
         "media_quotes.db.repository.record_eval_run",
