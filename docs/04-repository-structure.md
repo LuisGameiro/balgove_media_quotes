@@ -3,92 +3,74 @@
 ## Root
 
 ```text
-README.md                 entry point and operator overview
-pyproject.toml            project metadata, dependencies and tool config
-uv.lock                   locked dependency resolution
-Makefile / scripts/check.ps1   one-command quality gate
-docker-compose.yml        local Postgres (Neo4j runs separately for graph features)
-alembic.ini               Alembic configuration
-requirements.txt          generated deployment artifact for Streamlit Cloud
-data/                     registry, frozen schema, fixtures, gold set, topics
-docs/                     this documentation set and the original brief
-migrations/               Alembic environment and revision chain
-scripts/                  repository, CI and validation scripts
-src/                      Python application package
-tests/                    unit, integration and contract tests
-var/output/               generated output root (digests, quotes, audit, logs, raw)
+README.md                  operator quick start
+pyproject.toml             metadata, dependencies and tool configuration
+uv.lock                    locked dependency resolution
+requirements.txt           generated deployment artifact for Streamlit Cloud
+Makefile                   one-command quality gate (`make check`)
+docker-compose.yml         local Postgres, OTLP collector and optional Neo4j graph profile
+otelcol-config.yaml        collector configuration
+.env.example               every supported setting with safe defaults
+my_article.html            optional local sample page for test_scraper.py --html-file
+data/                      registry, source configs, topic packs, fixtures and gold sets
+docs/                      this document set and the immutable original brief
+migrations/schema.sql      single authoritative DDL file
+scripts/                   CI, ops, data and diagnostic helpers
+src/                       Python application package
+tests/                     unit and integration tests
+var/output/                generated output root
 ```
+
+## Scripts
+
+```text
+scripts/ci/          check.ps1 (full gate) and validate_data.py
+scripts/ops/         run_all.ps1 (turnkey fixture verification), run_dagster.ps1,
+                     enable_automation.ps1, blob_prune_scheduled.ps1 (tombstone-gated prune)
+scripts/data/        gold-fixture and topic-matrix generators
+scripts/diagnostics/ source_proof.py and test_scraper.py (the implementation modules)
+scripts/source_proof.py, scripts/test_scraper.py   compatibility shims for old import paths
+```
+
+Documentation is edited by hand; there is no automated docs checker.
 
 ## Application package
 
 ```text
 src/media_quotes/
-├── __init__.py / __main__.py / cli/   package marker, module entry, parser and handlers
-├── adapters/                   source adapters, blob cache, RSS/sitemap, HTML and PDF parsing
-├── archive.py                  bounded historical RSS/sitemap/sitemap-index discovery
-├── db/                         engine, table definitions, schema.sql, session helpers
-├── graph/                      derived Neo4j projection, queries and GraphRAG protocol
-├── risk_controls/              review queue, budget gate, retention policy
-├── validation/                 data-asset validation for registry, schema and exports
-├── batch.py / batch_runner.py  OpenRouter batch payloads and submit/poll client
-├── blob_prune.py               tombstone-gated raw blob pruning
-├── context_pack.py             bounded, provenance-tagged context packs
-├── bootstrap.py                Alembic upgrade plus source sync
-├── config.py                   Settings, pinned defaults and path resolution
-├── curation.py                 section assignment, dedupe and review badges
-├── dashboard.py                Streamlit read-only dashboard
-├── digest.py                   deterministic Markdown renderer
-├── enums.py / exceptions.py    canonical values and domain error hierarchy
-├── evaluation.py               acceptance-threshold contract
-├── export.py                   strict JSONL export with atomic writes
-├── extraction.py               trafilatura extraction, quality gate and offsets
-├── fetch.py                    rate-limited, rights-gated HTTP client policy
-├── gold_set.py                 versioned gold set and 60/20/20 splits
-├── judge.py                    optional AI-judge boundary
-├── language.py                 offline quote-language detection
-├── live.py                     shared feed/article fetch loop
-├── llm.py / llm_live.py         provider protocol and pinned LLM boundary
-├── llm_cache.py                decision-cache hooks
-├── llm_openrouter.py           OpenRouter chat-completions provider
-├── models.py                   strict Pydantic boundary models
-├── observability.py            structlog redaction and optional OTLP tracing
-├── orchestration.py            Dagster assets, checks, jobs, schedules and sensor
-├── pipeline.py                 daily pipeline service shared by CLI and Dagster
-├── py.typed                    PEP 561 typing marker
-├── registry.py                 CSV registry and T0 policy
-├── relevance.py                deterministic versioned topic rules
-├── restore_drill.py            export integrity and retention readiness
-├── rights_guard.py             word limits and attribution policy guard
-├── source_configs.py           per-source JSON config and registry projection
-├── source_topics.py            strict topic-route loader
-├── text_utils.py               Unicode folding and safe artifact ids
-├── topics.py                   topic pack model and loaders
-├── translation.py              optional pinned-boundary translation
-├── verification.py             exact-span verifier
-└── verification_stages.py      pre-LLM filter and publishable-only pipeline
-```
+├── adapters/               feed sitemap/RSS parsers, HTML/PDF extraction and blob cache
+├── ai/                     LLM boundary, cache, judge, translation, language and quote audit
+├── cli/                    argument parsing and command handlers
+├── db/                     engine, table definitions and repository writes
+├── governance/             evaluation, gold sets, relevance, rights, restore and blob pruning
+├── graph/                  optional Neo4j projection and GraphRAG protocol
+├── ingestion/              fetch policy, live collection, archive, Bing and admission
+├── processing/             extraction, verification, curation, digest and export
+├── risk_controls/          obsolescence review, budget gate and retention policy
+├── validation/             registry, schema and export validation
+├── pipeline.py             daily pipeline shared by CLI and Dagster
+├── orchestration.py        Dagster assets, checks, jobs and schedules
+├── dashboard.py            read-only Streamlit dashboard
+├── config.py               settings, pinned defaults and path resolution
+└── source_configs.py       per-source JSON configs and CSV mirror
 
-## Documentation set
+## Generated output
 
 ```text
-docs/README.md                 index
-docs/01-requirements.md        requirement traceability and current status
-docs/02-architecture.md        how it is built
-docs/03-sources.md             source catalogue and rights state
-docs/04-repository-structure.md this file
-docs/05-command-reference.md   commands, flags and configuration
-docs/06-whats-left.md          remaining steps
-docs/07-decision-log.md        design decisions and rationale
-docs/Test_News.md              immutable original assignment
+var/output/digests/    daily Markdown, with fixtures/ and runs/<scope>/ trees
+var/output/quotes/     daily JSONL exports
+var/output/audit/      audit JSON/Markdown and review queues
+var/output/logs/       one JSONL log file per run
+var/output/raw/        downloaded HTML blobs
+var/output/proof/      per-source proof reports
+var/dagster/           local Dagster home
 ```
 
 ## Placement rules
 
 - Business logic belongs in `src/media_quotes/`, with a unit test.
-- Database changes go through Alembic; `schema.sql` is the base DDL source.
-- Runtime output belongs under `var/output/` (or `OUTPUT_DIR`), never in the source package.
-- Canonical daily files are reserved for a complete `live_feed` run with no tier/source filter;
-  partial runs write under `var/output/runs/<scope>/`, create no canonical Postgres digest
-  manifest, and fixture replay keeps its own `fixtures/` tree.
+- Schema changes go in `migrations/schema.sql`; `mq bootstrap` applies it idempotently.
+- Runtime output belongs under `var/output/`, never inside the source package.
+- Canonical daily files belong to a complete `live_feed` run; partial runs use `runs/<scope>/`.
 - Canonical values live in `enums.py`; do not duplicate them as literals.
-- Generated Python modules stay single-purpose; split only on independent change reasons.
+- Keep modules single-purpose; split only on independent change reasons.

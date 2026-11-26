@@ -125,6 +125,25 @@ class Settings(BaseSettings):
     neo4j_password: SecretStr | None = None
     neo4j_database: str = "neo4j"
 
+    def for_source_mode(self, source_mode: str) -> Settings:
+        """Return settings with fixture artifacts isolated from operational output."""
+        if source_mode != "fixtures":
+            return self
+        root = self.output_dir.parent
+        if self.audit_dir != self.output_dir / "audit":
+            root = self.audit_dir.parent
+        test_output = root / "test-output"
+        return self.model_copy(
+            update={
+                "output_dir": test_output,
+                "digest_dir": test_output / "digests",
+                "blob_dir": test_output / "raw",
+                "audit_dir": test_output / "audit",
+                "export_dir": test_output / "quotes",
+                "logs_dir": test_output / "logs",
+            }
+        )
+
     @model_validator(mode="before")
     @classmethod
     def _derive_output_paths(cls, values: object) -> object:

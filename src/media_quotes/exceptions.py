@@ -27,6 +27,14 @@ class SourceNotPermitted(T0GateError):
     """Raised when a source has not cleared the T0 gate."""
 
 
+class SourceBlockedError(ConfigError):
+    """Raised when a source is operationally blocked from live collection."""
+
+
+class FeedParseError(MediaQuotesError):
+    """Raised when a discovery feed cannot be parsed."""
+
+
 class RateLimitExceededError(MediaQuotesError, RuntimeError):
     """Raised when an HTTP or API request violates rate limits."""
 

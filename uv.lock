@@ -1562,7 +1562,6 @@ name = "media-quotes"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "alembic" },
     { name = "defusedxml" },
     { name = "httpx" },
     { name = "jsonschema" },
@@ -1597,6 +1596,8 @@ orchestration = [
 [package.dev-dependencies]
 dev = [
     { name = "build" },
+    { name = "dagster" },
+    { name = "dagster-webserver" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -1618,7 +1619,6 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.13" },
     { name = "dagster", marker = "extra == 'orchestration'", specifier = ">=1.8" },
     { name = "dagster-webserver", marker = "extra == 'orchestration'", specifier = ">=1.8" },
     { name = "defusedxml", specifier = ">=0.7" },
@@ -1642,6 +1642,8 @@ provides-extras = ["dashboard", "orchestration", "extraction", "llm", "graph"]
 [package.metadata.requires-dev]
 dev = [
     { name = "build", specifier = ">=1.2" },
+    { name = "dagster", specifier = ">=1.8" },
+    { name = "dagster-webserver", specifier = ">=1.8" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },

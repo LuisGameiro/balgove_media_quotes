@@ -47,7 +47,11 @@
     },
     "exclusions": {
       "$ref": "#/$defs/localeTermMap",
-      "description": "Terms for other wars, sport and entertainment that veto relevance."
+      "description": "Soft terms for other contexts that reduce relevance but do not hard-reject."
+    },
+    "hard_exclusions": {
+      "$ref": "#/$defs/localeTermMap",
+      "description": "Terms that reject an article before scoring, for example sports and entertainment."
     },
     "weights": {
       "type": "object",

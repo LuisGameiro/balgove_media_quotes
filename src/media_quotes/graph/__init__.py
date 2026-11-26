@@ -6,7 +6,7 @@ deterministic, idempotent projections, schema constraints, and analytical querie
 
 from __future__ import annotations
 
-from .client import check_graph_connectivity, get_driver, graph_session
+from .client import Neo4jResourceHandle, check_graph_connectivity, get_driver, graph_session
 from .protocol import (
     GraphDriverProtocol,
     GraphRecordProtocol,
@@ -32,6 +32,7 @@ __all__ = [
     "GraphResultProtocol",
     "GraphSessionProtocol",
     "GraphSyncStats",
+    "Neo4jResourceHandle",
     "check_graph_connectivity",
     "fetch_cross_tier_divergence",
     "fetch_graphrag_subgraph",

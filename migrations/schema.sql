@@ -1,5 +1,6 @@
--- Append-oriented audit schema. Alembic is the only supported way to apply it
--- (revision 0001_initial); all timestamps are UTC.
+-- Single authoritative PostgreSQL schema for Media Quotes.
+-- Bootstrap applies this file once (idempotently); there is no migration chain.
+-- All timestamps are UTC. Re-running is safe and preserves existing rows.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -245,3 +246,77 @@ CREATE TABLE IF NOT EXISTS storage_partitions (
     state TEXT NOT NULL CHECK (state IN ('hot', 'cold', 'detached')),
     PRIMARY KEY (table_name, month)
 );
+
+-- Convert a pre-existing plain audit_events table to monthly range partitioning.
+-- Fresh databases already have the plain table created above; this block is idempotent.
+DO $schema$
+DECLARE
+    is_partitioned boolean;
+    month_start date;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_partitioned_table p ON p.partrelid = c.oid
+        WHERE c.relname = 'audit_events' AND n.nspname = current_schema()
+    ) INTO is_partitioned;
+
+    IF NOT is_partitioned THEN
+        ALTER TABLE audit_events RENAME TO audit_events_legacy;
+        ALTER SEQUENCE audit_events_event_id_seq OWNED BY NONE;
+        DROP INDEX IF EXISTS audit_events_run_idx;
+        DROP INDEX IF EXISTS audit_events_trace_idx;
+        ALTER TABLE audit_events_legacy DROP CONSTRAINT IF EXISTS audit_events_pkey;
+        ALTER TABLE audit_events_legacy DROP CONSTRAINT IF EXISTS audit_events_run_id_fkey;
+
+        CREATE TABLE audit_events (
+            event_id    BIGINT NOT NULL DEFAULT nextval('audit_events_event_id_seq'),
+            run_id      UUID REFERENCES pipeline_runs(run_id),
+            trace_id    TEXT,
+            step        TEXT NOT NULL,
+            entity_type TEXT,
+            entity_id   TEXT,
+            status      TEXT NOT NULL,
+            details     JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (event_id, created_at)
+        ) PARTITION BY RANGE (created_at);
+
+        FOR month_start IN
+            SELECT DISTINCT date_trunc('month', created_at AT TIME ZONE 'UTC')::date
+            FROM audit_events_legacy
+            ORDER BY 1
+        LOOP
+            EXECUTE format(
+                'CREATE TABLE audit_events_%s PARTITION OF audit_events '
+                'FOR VALUES FROM (%L) TO (%L)',
+                to_char(month_start, 'YYYY_MM'),
+                (month_start::timestamp AT TIME ZONE 'UTC'),
+                ((month_start + INTERVAL '1 month')::timestamp AT TIME ZONE 'UTC')
+            );
+        END LOOP;
+
+        CREATE TABLE audit_events_default PARTITION OF audit_events DEFAULT;
+        CREATE INDEX audit_events_run_idx ON audit_events (run_id, created_at);
+        CREATE INDEX audit_events_trace_idx ON audit_events (trace_id);
+
+        INSERT INTO audit_events (
+            event_id, run_id, trace_id, step, entity_type, entity_id, status, details, created_at
+        )
+        SELECT event_id, run_id, trace_id, step, entity_type, entity_id, status, details, created_at
+        FROM audit_events_legacy;
+
+        IF (SELECT count(*) FROM audit_events_legacy) <> (SELECT count(*) FROM audit_events) THEN
+            RAISE EXCEPTION 'audit_events partition copy lost rows';
+        END IF;
+
+        PERFORM setval(
+            'audit_events_event_id_seq',
+            GREATEST(COALESCE((SELECT max(event_id) FROM audit_events), 1), 1)
+        );
+        ALTER SEQUENCE audit_events_event_id_seq OWNED BY audit_events.event_id;
+        DROP TABLE audit_events_legacy;
+    END IF;
+END
+$schema$;

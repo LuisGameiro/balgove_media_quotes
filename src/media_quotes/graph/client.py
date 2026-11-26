@@ -10,6 +10,28 @@ from ..config import Settings
 from .protocol import GraphDriverProtocol, GraphSessionProtocol
 
 
+class Neo4jResourceHandle:
+    """Lazy driver owner used by Dagster and other long-lived callers."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._driver: GraphDriverProtocol | None = None
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings
+
+    def get_driver(self) -> GraphDriverProtocol:
+        if self._driver is None:
+            self._driver = get_driver(self._settings)
+        return self._driver
+
+    def close(self) -> None:
+        if self._driver is not None:
+            self._driver.close()
+            self._driver = None
+
+
 def get_driver(settings: Settings) -> GraphDriverProtocol:
     """Instantiate a Neo4j driver using the configured settings.
 

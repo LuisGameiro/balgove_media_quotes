@@ -17,6 +17,8 @@ services:
       retries: 10
 
   otel-collector:
+    # Pinned to the 0.111.x otelcol release used by otelcol-config.yaml; local-only
+    # tracing, no network dependency beyond the compose network.
     image: otel/opentelemetry-collector:0.111.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
@@ -26,9 +28,9 @@ services:
 
   neo4j:
     profiles: ["graph"]
-    image: neo4j:5-community
+    image: neo4j:5.26.33-community
     environment:
-      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/password123}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password123}
     ports:
       - "127.0.0.1:7474:7474"
       - "127.0.0.1:7687:7687"

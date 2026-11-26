@@ -5,22 +5,9 @@ function check {
     $here = Get-Location
     try {
         if ($Path -ne ".") { Set-Location $Path }
-        Write-Host "== docs QA ==" -ForegroundColor Cyan
-        python scripts/docs_qa.py; if ($LASTEXITCODE -ne 0) { throw "docs QA failed" }
-        Write-Host "== format ==" -ForegroundColor Cyan
-        python -m ruff format --check .; if ($LASTEXITCODE -ne 0) { throw "format failed" }
-        Write-Host "== lint ==" -ForegroundColor Cyan
-        python -m ruff check .; if ($LASTEXITCODE -ne 0) { throw "lint failed" }
-        Write-Host "== typecheck ==" -ForegroundColor Cyan
-        python -m mypy --strict src/; if ($LASTEXITCODE -ne 0) { throw "typecheck failed" }
-        Write-Host "== tests ==" -ForegroundColor Cyan
-        python -m pytest --cov=media_quotes --cov-fail-under=85; if ($LASTEXITCODE -ne 0) { throw "tests failed" }
-        Write-Host "== build ==" -ForegroundColor Cyan
-        python -m build; if ($LASTEXITCODE -ne 0) { throw "build failed" }
-        Write-Host "== smoke ==" -ForegroundColor Cyan
-        python -m media_quotes --help | Out-Null
-        python -m media_quotes.cli --help | Out-Null
-        Write-Host "ALL CHECKS PASSED" -ForegroundColor Green
+        $gate = Join-Path (Get-Location) "scripts\check.ps1"
+        if (-not (Test-Path $gate)) { throw "check.ps1 not found at $gate" }
+        & $gate
     }
     finally { Set-Location $here }
 }
