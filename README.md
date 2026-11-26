@@ -1,248 +1,98 @@
 # Media Quotes Collection System
 
-A rights-gated Python CLI that collects quotes from registered media sources, verifies them
-against deterministic rules, and writes a daily digest, JSONL export, audit report and logs.
-It runs offline with synthetic fixtures by default; live fetching and paid inference are explicit
-opt-ins. The original brief is immutable in [`docs/Test_News.md`](docs/Test_News.md).
+A rights-gated Python CLI that collects quotes from registered news sources, verifies them with
+deterministic rules, and writes a daily Markdown digest, a strict JSONL export, an audit report
+and correlated logs.
 
-## Documentation
+Offline fixture replay is the default. Live fetching, Postgres writes and paid model calls are
+explicit opt-ins. The original assignment is in [`docs/Test_News.md`](docs/Test_News.md) and is
+immutable. Start with the [documentation index](docs/README.md).
 
-Start with the [documentation index](docs/README.md). Key references:
+## Quick start
 
-| Doc | Use it for |
-|---|---|
-| [Requirements](docs/01-requirements.md) | Guarantees, outputs and acceptance targets |
-| [Architecture](docs/02-architecture.md) | Data flow, settings and quality standards |
-| [Sources](docs/03-sources.md) | Registry, tiers and the T0 rights gate |
-| [Repository structure](docs/04-repository-structure.md) | Where each file and artifact belongs |
-| [Command reference](docs/05-command-reference.md) | All commands, flags and configuration |
-| [What is left](docs/06-whats-left.md) | Remaining production work |
-| [Decision log](docs/07-decision-log.md) | Why the design is this way |
-
-## Requirements
-
-- **OS:** Windows 11, macOS 13+, or a modern Linux distribution. No single OS is required.
-- **Internet:** needed once to install tools and dependencies. Live collection, Dagster and
-  OpenRouter need network access later.
-- **Git:** to clone the repository.
-- **uv:** installs and manages Python 3.12 for you. You do not need a system Python.
-
-The repository already contains the source registry (`data/sources.csv`, `data/sources/*.json`)
-and synthetic fixture articles for offline replay. Cloning the repo is enough for a local run —
-there is nothing to download or backfill first. “Backfill” in this project means historical
-ingestion of real articles from live sources, which is a separate, rights-gated task.
-
-## Fresh install — Windows, macOS or Linux
-
-### 1. Install Git and uv
-
-**Windows (PowerShell):**
-
-```powershell
-winget install --id Git.Git -e --source winget
-winget install --id Astral-Sh.uv -e --source winget
-```
-
-**macOS (Homebrew):**
-
-```bash
-brew install git uv
-```
-
-**Linux (Debian/Ubuntu):**
-
-```bash
-sudo apt-get update && sudo apt-get install -y git curl
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-For other Linux distributions, follow the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
-Restart your shell after installing so `git` and `uv` are on `PATH`.
-
-### 2. Get the code and Python
-
-Works the same on all three operating systems:
+You need Git and [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs
+Python 3.12 for you. Docker is only needed for Postgres.
 
 ```bash
 uv python install 3.12
 git clone https://github.com/LuisGameiro/balgove_media_quotes.git balgoveinnovations
 cd balgoveinnovations
-```
-
-### 3. Create local config
-
-**Windows:** `Copy-Item .env.example .env`
-**macOS/Linux:** `cp .env.example .env`
-
-Open `.env` and set a dashboard password:
-
-```dotenv
-DASHBOARD_PASSWORD=choose-a-local-password
-```
-
-Keep `LLM_PROVIDER=local` and `PERSIST_TO_POSTGRES=false` for a free, offline run. Never commit
-`.env`.
-
-### 4. Install dependencies and run
-
-```bash
+cp .env.example .env          # Windows: Copy-Item .env.example .env
 uv sync --frozen --extra dashboard --extra extraction --group dev
 uv run python -m media_quotes doctor
 uv run python -m media_quotes run --date 2026-11-23
 ```
 
-Exit code `2` is normal while sources disclose coverage gaps. The run writes everything under
-`var/output/`; no database or network access is needed.
+`mq` and `python -m media_quotes` are the same entry point; both forms work everywhere in these docs.
 
-## See the data
+Set `DASHBOARD_PASSWORD` in `.env` before starting the dashboard. Exit code `2` from `mq run`
+means disclosed coverage gaps, not a crash. Everything is written under `var/output/`.
 
-The default `mq run` replays fixtures, so its artifacts live under `fixtures/` subdirectories.
-A complete live run (`--live` with no tier or source filter) uses the canonical paths below.
-
-```bash
-# Windows
-Get-ChildItem var/output
-Get-Content var/output/quotes/fixtures/quotes-2026-11-23.jsonl -First 5
-
-# macOS/Linux
-ls -R var/output
-head -n 5 var/output/quotes/fixtures/quotes-2026-11-23.jsonl
-```
+## What a run produces
 
 | Artifact | Offline fixtures (default) | Complete live run |
-|---|---|---|
-| Human-readable digest | `var/output/digests/fixtures/YYYY-MM-DD.md` | `var/output/digests/YYYY-MM-DD.md` |
-| Verified quotes | `var/output/quotes/fixtures/quotes-YYYY-MM-DD.jsonl` | `var/output/quotes/quotes-YYYY-MM-DD.jsonl` |
-| Gates, coverage gaps and version manifest | `var/output/audit/fixtures/audit-YYYY-MM-DD.json` | `var/output/audit/audit-YYYY-MM-DD.json` |
-| Correlated run logs | `var/output/logs/<run-id>.jsonl` | `var/output/logs/<run-id>.jsonl` |
-| Raw pages | `data/fixtures/<source-id>/*.html` (read-only) | `var/output/raw/<source-id>/<sha>.html` |
+| --- | --- | --- |
+| Digest | `var/output/digests/fixtures/YYYY-MM-DD.md` | `var/output/digests/YYYY-MM-DD.md` |
+| Quotes | `var/output/quotes/fixtures/quotes-YYYY-MM-DD.jsonl` | `var/output/quotes/quotes-YYYY-MM-DD.jsonl` |
+| Audit | `var/output/audit/fixtures/audit-YYYY-MM-DD.json` | `var/output/audit/audit-YYYY-MM-DD.json` |
+| Logs | `var/output/logs/<run-id>.jsonl` | `var/output/logs/<run-id>.jsonl` |
+| Raw pages | `data/fixtures/` (read-only) | `var/output/raw/<source-id>/<sha>.html` |
 
-Scoped live runs (for example with `--tier` or `--source-id`) write under
+Scoped runs (`--tier`, `--source-id`, `--from-blobs`, `live_bing`, `manual_sample`) write under
 `var/output/*/runs/<scope>/` instead of the canonical paths.
 
-To inspect the registry: `uv run python -m media_quotes sources`.
+## Modes
 
-## Dashboard
+| Mode | Command | Network | Database |
+| --- | --- | --- | --- |
+| Fixture replay | `mq run --date D` | no | no |
+| Blob ingest | `mq run --date D --from-blobs` | no | optional |
+| Live collection | `mq run --date D --live` | official feeds first | optional |
+| Backfill | `mq backfill ... --execute --live` | registered archives | optional |
+| Persistent | set `PERSIST_TO_POSTGRES=true` | as above | Postgres |
 
-**Windows:**
+Live mode never falls back to fixtures. Each article, quote, export and digest carries its
+acquisition provenance (`fixture`, `live_feed`, `live_bing`, `manual_sample`). See
+[Sources and rights](docs/03-sources.md).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/run_dashboard.ps1
-```
-
-**macOS/Linux:**
+## Common tasks
 
 ```bash
+# Dashboard
 uv run streamlit run src/media_quotes/dashboard.py --server.address 127.0.0.1
-```
 
-Open `http://localhost:8501` and enter the `DASHBOARD_PASSWORD` from `.env`.
-The **Quotes** tab is a read-only, topic-scoped browser over the governed JSONL exports; it
-shows quote text and article metadata/links, not article bodies.
-
-## Collecting new days
-
-The normal flow is one command per day. Change the date to any day in your window:
-
-```bash
-uv run python -m media_quotes run --date YYYY-MM-DD
-uv run python -m media_quotes audit --date YYYY-MM-DD
-```
-
-### Store results in Postgres
-
-Docker is only needed if you want database rows. It is not needed for the offline run above.
-
-```bash
+# Postgres (optional)
 docker compose up -d --wait
-```
-
-Set `PERSIST_TO_POSTGRES=true` in `.env`, then:
-
-```bash
 uv run python -m media_quotes bootstrap
-uv run python -m media_quotes run --date YYYY-MM-DD
-```
+uv run python -m media_quotes run --date 2026-11-23 --live
 
-`mq bootstrap` applies the schema and syncs the committed source configs into Postgres. It is only
-needed when you use the database; it does not download sources. Inspect rows with
-`docker compose exec postgres psql -U news -d news`.
-
-### Gather live articles
-
-Live collection is rights-gated. `mq run --date YYYY-MM-DD --live` collects current articles from
-each usable source's official feed or sitemap first; Bing News is used only as an opt-in discovery
-fallback. Live mode never falls back to fixtures — if no usable live route yields articles, the run
-reports a coverage gap rather than replaying synthetic data. Provenance is recorded per article,
-quote, export, digest and review flag as `fixture`, `live_feed`, `live_bing` or `manual_sample`,
-and fixture artifacts are isolated from live outputs. `mq fetch` is the separate plan/download step
-that writes HTML blobs locally; it does not write quote rows:
-
-```bash
-uv run python -m media_quotes fetch --source-id guardian
+# Live fetch, then ingest the downloaded pages
 uv run python -m media_quotes fetch --source-id guardian --live
-uv run python -m media_quotes run --date YYYY-MM-DD --live
-uv run python -m media_quotes run --date YYYY-MM-DD --from-blobs
-```
+uv run python -m media_quotes run --date 2026-11-23 --from-blobs
 
-`--from-blobs` ingests pages already downloaded by `fetch`; it does not contact a source. See
-[Sources](docs/03-sources.md) for the registry and T0 gate.
+# Backfill an estimated range, then execute it
+uv run python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50
+uv run python -m media_quotes backfill --from 2026-11-18 --to 2026-11-20 --max-cost 50 --execute
 
-### Backfill a date range
-
-A backfill replays one partition per day. The first command estimates cost; `--execute` runs it.
-`--max-cost` checks a flat estimate, not a provider-side spend cap. `--live` discovers historical
-articles from registered RSS/sitemap/sitemap-index archives with bounded recursion, date filtering
-and resumable atomic manifests; `--source-id` restricts the run. The window is capped at 365 days
-and paid historical inference fails closed. A full production backfill has not yet been executed.
-
-```bash
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute --live --source-id bbc
-uv run python -m media_quotes backfill --from 2026-10-01 --to 2026-11-23 --max-cost 10 --execute --from-blobs
-```
-
-See the [command reference](docs/05-command-reference.md) for all flags.
-
-### Change sources and topics
-
-The source registry and topic packs are files in the repository. Edit them, then sync the CSV
-contracts:
-
-```bash
+# Registry and topics
 uv run python -m media_quotes sources --action list
-uv run python -m media_quotes sources --action add --source-id <id> --name "<name>" --homepage-url <url>
-uv run python -m media_quotes sources --action sync-csv
 uv run python -m media_quotes topics --action list
-uv run python -m media_quotes topics --action show --topic ukraine-war
-uv run python -m media_quotes topics --action init --name ai-policy --description "AI policy"
-```
 
-Edit `data/sources/*.json`, `data/source_topic_routes.csv`, `data/topics/*.json`,
-`data/topic_rules.json` and `data/sections.csv` as needed. Select a topic per command with
-`--topic ID`, or set `ACTIVE_TOPIC` in `.env`. Details are in
-[Sources](docs/03-sources.md) and the [command reference](docs/05-command-reference.md).
-
-### Run on a schedule with Dagster
-
-Install the orchestration extra, then start the UI:
-
-```bash
-uv sync --frozen --extra orchestration --group dev
-uv run python -m media_quotes dagster
+# Dagster
+uv sync --frozen --extra dashboard --extra extraction --extra orchestration --group dev
 uv run dagster dev -m media_quotes.orchestration
 ```
 
-On Windows you can also run `scripts/run_dagster.ps1`. Schedules and the review SLA sensor are
-stopped by default; when enabled, the daily and Tier-1 schedules request `source_mode=live` rather
-than fixture replay. Enable `daily_digest_schedule` in the Dagster UI after rights review. Set
-`PERSIST_TO_POSTGRES=true` to write run rows and audit events. Concurrency limits live in
-`var/dagster/dagster.yaml`.
+`--max-cost` checks a flat local estimate; it does not cap provider spend. Dagster schedules and
+the review sensor are stopped by default; set `ENABLE_TIER1_SCHEDULES=true` and
+`ENABLE_REVIEW_SLA_SENSOR=true` in `.env`, then start the existing ones with
+`scripts/ops/enable_automation.ps1 -EnableSchedules -EnableSensor`. The switches are required:
+without them the script starts nothing.
 
-### Model-backed section summaries
+## Model-backed summaries
 
-Live model calls cost money. Keep `LLM_PROVIDER=local` for deterministic, free summaries. To use
-OpenRouter, set a pinned model, a key and Postgres caching:
+Keep `LLM_PROVIDER=local` for deterministic, free summaries. Live inference needs a pinned model,
+a key and Postgres caching:
 
 ```dotenv
 LLM_PROVIDER=openrouter
@@ -251,43 +101,32 @@ OPENROUTER_API_KEY=your-key
 PERSIST_TO_POSTGRES=true
 ```
 
-The model writes only 1–2 sentence section summaries. It does not change quote selection,
-verification or the T0 source gate. Live fetching remains rights-gated and never bypasses the
-registry check.
-
-For every setting, see [`.env.example`](.env.example) and the
-[command reference](docs/05-command-reference.md).
-
-## Troubleshooting
-
-- `docker compose up` fails: start Docker Desktop (Windows/macOS) or Docker Engine (Linux).
-- Dashboard refuses to render: set `DASHBOARD_PASSWORD` in `.env` and restart the dashboard.
-- Exit code `2` from `mq run`: disclosed coverage gaps, not a failure.
-- `python: command not found`: use `uv run python ...` or install Python through `uv python install 3.12`.
+The model only writes section summaries. It does not choose quotes, verify them or bypass the
+source gate.
 
 ## Quality gate
 
-**Windows:**
+Windows (PowerShell):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ci\check.ps1
 ```
 
-**macOS/Linux:**
+macOS/Linux (or Git Bash on Windows):
 
 ```bash
-uv run make check
+make check
 ```
 
-This runs docs QA, format, lint, strict typing, tests with the 85% coverage floor, packaging and
-CLI smoke checks. Engineering standards are in [docs/02](docs/02-architecture.md).
+The gate runs format and lint checks, strict typing, tests with an 85% branch-coverage floor, a
+package build and CLI smoke checks. CI also checks the lockfile and scans for secrets.
 
-## Source proof report
+## Read next
 
-```bash
-uv run python -m scripts.source_proof --offline
-uv run python -m scripts.source_proof --live --limit 5
-```
-
-The proof report is written to `var/output/proof/source-proof-YYYY-MM-DD.json` and `.md`.
-It distinguishes live, manual-sample and fixture evidence and lists blockers per source.
+- [Requirements and current status](docs/01-requirements.md)
+- [Architecture](docs/02-architecture.md)
+- [Sources and rights](docs/03-sources.md)
+- [Repository structure](docs/04-repository-structure.md)
+- [Command reference](docs/05-command-reference.md)
+- [What is left](docs/06-whats-left.md)
+- [Decision log](docs/07-decision-log.md)
