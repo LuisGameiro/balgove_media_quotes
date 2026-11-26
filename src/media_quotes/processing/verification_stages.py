@@ -1,4 +1,4 @@
-"""C3 — two-stage, fail-closed quote verification (docs/12 Phase C).
+"""C3 — two-stage, fail-closed quote verification.
 
 Stage 1 runs BEFORE any LLM call and drops boilerplate, overlength and unverified spans so we
 never spend tokens on junk. Stage 2 is the existing deterministic verifier (exact span,

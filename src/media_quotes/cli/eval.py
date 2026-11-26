@@ -331,7 +331,7 @@ def evaluate_gold_set_report(
                 language_attempted += 1
             except (ImportError, ValueError, TypeError):
                 language = None
-            # Source language is only a hint (docs/16 §5); mixed-language quotes are
+            # Source language is only a hint; mixed-language quotes are
             # expected. A detected, non-unknown code is the measurable success signal.
             if language is not None and language.language and language.language != "und":
                 language_checked += 1

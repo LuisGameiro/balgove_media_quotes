@@ -1,4 +1,4 @@
-"""CHK-15/16/17 — unit level checks for the RSK-07/08/11 mitigation plan (docs/10)."""
+"""CHK-15/16/17 — unit level checks for the RSK-07/08/11 mitigation plan."""
 
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta

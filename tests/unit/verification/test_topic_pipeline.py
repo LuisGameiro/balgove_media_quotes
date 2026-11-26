@@ -1,4 +1,4 @@
-"""Topic gate, language fields and AI-judge review integration (docs/16)."""
+"""Topic gate, language fields and AI-judge review integration."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""F2 — offline restore drill and retention readiness (docs/12 Phase F).
+"""F2 — offline restore drill and retention readiness.
 
 No live Postgres or load generator required: compares deterministic quote ids and content
 hashes between an exported snapshot and a restored copy, and reports the retention/lock plan

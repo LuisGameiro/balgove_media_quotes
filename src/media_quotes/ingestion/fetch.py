@@ -1,4 +1,4 @@
-"""C1 — live-capable, rights-gated HTTP fetching (docs/12 Phase C).
+"""C1 — live-capable, rights-gated HTTP fetching.
 
 No source is activated by this module: every call requires both the T0 gate in the registry
 row AND an explicit Track A approval flag. Track B ( Reuters/BBC/commercial ) stays blocked

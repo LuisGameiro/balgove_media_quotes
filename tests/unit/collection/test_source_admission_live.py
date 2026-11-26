@@ -275,3 +275,28 @@ def test_private_ip_host_is_rejected_before_transport_call(
     assert report["network_calls"] == 0
     assert any("non-global IP" in error for error in report["errors"])
     assert report["sample_url"] == ""
+
+
+def test_live_probe_pins_validated_ip_and_keeps_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = {"/robots.txt": "User-agent: *\nDisallow: /\n", "/feed.xml": _FEED_XML}.get(
+            request.url.path
+        )
+        return httpx.Response(200, text=body) if body is not None else httpx.Response(404)
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, **kwargs: Any) -> None:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr("media_quotes.ingestion.admission.httpx.AsyncClient", Client)
+    probe_source_live(_config(), settings=_settings(tmp_path), topic_id=TOPIC)
+
+    assert seen
+    assert all(request.url.host == "93.184.216.34" for request in seen)
+    assert all(request.headers["host"] == "www.example.com" for request in seen)

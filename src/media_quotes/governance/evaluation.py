@@ -31,7 +31,7 @@ class AcceptanceThresholds(BaseModel):
     false_quote_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     obsolete_precision: float = Field(default=0.90, ge=0.0, le=1.0)
     judge_kappa: float = Field(default=0.70, ge=0.0, le=1.0)
-    # Topic/language/category acceptance criteria (docs/16 §8). New metrics are only
+    # Topic/language/category acceptance criteria. New metrics are only
     # enforced when a report actually measured them so older gold sets stay comparable.
     topic_recall: float = Field(default=0.75, ge=0.0, le=1.0)
     topic_precision: float = Field(default=0.90, ge=0.0, le=1.0)

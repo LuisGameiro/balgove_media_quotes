@@ -76,7 +76,7 @@ class BackfillEstimate:
 
 @dataclass(frozen=True, slots=True)
 class RetentionPolicy:
-    """Defaults from docs/02 §4 and docs/10 §3; audit rows are never dropped."""
+    """Defaults from docs/02 §4; audit rows are never dropped."""
 
     blob_days: int = 180
     log_days: int = 90

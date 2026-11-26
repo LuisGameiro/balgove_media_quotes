@@ -19,7 +19,7 @@ import httpx
 from ..adapters import parse_rss_feed, parse_sitemap_xml
 from ..processing.export import atomic_write_text
 from ..source_configs import probe_source_admission, robots_allows
-from .fetch import assert_url_permitted_async, fetch_policy_from
+from .fetch import _url_with_host, assert_url_permitted_async, fetch_policy_from
 
 if TYPE_CHECKING:
     from ..config import Settings
@@ -95,7 +95,7 @@ def probe_source_live(
                 errors.append(f"{url}: host is not registered for source {config.source_id}")
                 return None
             try:
-                await assert_url_permitted_async(
+                pinned_ip = await assert_url_permitted_async(
                     url,
                     config.to_registry_row(),
                     extra_hosts=frozenset(allowed_hosts),
@@ -105,8 +105,19 @@ def probe_source_live(
                 errors.append(f"{url}: {exc}")
                 return None
             network_calls += 1
+            stream_url = url
+            stream_kwargs: dict[str, Any] = {}
+            if transport is None and pinned_ip:
+                # Connect to the validated IP but keep TLS SNI and Host on the original name.
+                stream_kwargs = {
+                    "headers": {"Host": parsed.netloc},
+                    "extensions": {"sni_hostname": parsed.hostname or ""},
+                }
+                stream_url = _url_with_host(url, pinned_ip)
             try:
-                async with client.stream("GET", url, follow_redirects=False) as response:
+                async with client.stream(
+                    "GET", stream_url, follow_redirects=False, **stream_kwargs
+                ) as response:
                     if 300 <= response.status_code < 400:
                         raise ValueError(
                             f"unexpected redirect (HTTP {response.status_code}) from {url}"
