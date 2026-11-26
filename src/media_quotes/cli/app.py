@@ -97,6 +97,14 @@ def _build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--apply", action="store_true")
 
     subparsers.add_parser("doctor", help="validate config, registry and schema", **shared)
+    preflight_parser = subparsers.add_parser(
+        "preflight", help="report readiness of optional services", **shared
+    )
+    preflight_parser.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="report settings only; do not connect to Postgres or Neo4j",
+    )
     subparsers.add_parser("validate", help="alias for doctor", **shared)
     subparsers.add_parser("bootstrap", help="initialise database and sync sources", **shared)
     run_parser = subparsers.add_parser(
@@ -161,6 +169,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=ACQUISITION_PROVENANCES,
         default="live_feed",
         help="acquisition provenance to audit (default: live_feed)",
+    )
+    missed_parser.add_argument(
+        "--source-id",
+        dest="audit_source_id",
+        help="restrict the audit to one registered source",
     )
     subparsers.add_parser("logs", help="correlated JSON logs for a run", **shared)
     eval_parser = subparsers.add_parser("eval", help="metrics on a synthetic gold set", **shared)
@@ -388,6 +401,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _do_topics,
     )
     from .orchestration_info import _do_dagster
+    from .preflight import _do_preflight
     from .run import _do_run
 
     parser = _build_parser()
@@ -419,6 +433,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if command in {"doctor", "validate"}:
             return _do_doctor(settings)
+        if command == "preflight":
+            return _do_preflight(settings, probe=not bool(getattr(args, "no_probe", False)))
         if command == "bootstrap":
             return _bootstrap()
         if command == "version":
@@ -563,6 +579,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 provenance=cast(
                     AcquisitionProvenance, str(getattr(args, "provenance", "live_feed"))
                 ),
+                source_id=getattr(args, "audit_source_id", None),
             )
         if command == "logs":
             run_id = getattr(args, "run_id", None)

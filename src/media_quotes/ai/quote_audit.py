@@ -115,6 +115,7 @@ def _load_articles(
     topic_id: str,
     limit: int,
     provenance: AcquisitionProvenance = "live_feed",
+    source_id: str | None = None,
 ) -> tuple[list[_Article], list[str]]:
     from ..cli.common import (
         _load_registry,
@@ -126,6 +127,11 @@ def _load_articles(
     topic_pack = _load_topic_pack(settings, topic_id, strict=True)
     configs = _load_source_configs(settings)
     rows = _load_registry(settings)
+    if source_id is not None:
+        by_id = {row.source_id: row for row in rows}
+        if source_id not in by_id:
+            raise ConfigError(f"unknown --source-id: {source_id}")
+        rows = [by_id[source_id]]
     start, end = _window(report_date, settings)
     is_fixture = provenance == "fixture"
     # Live provenance never touches the fixture tree: blobs and their sidecars only.
@@ -227,11 +233,16 @@ def _published_texts(
     report_date: date,
     topic_id: str,
     provenance: AcquisitionProvenance = "live_feed",
+    source_id: str | None = None,
 ) -> set[str]:
     records = read_jsonl(
         local_store_path(settings.export_dir, report_date, topic_id=topic_id, provenance=provenance)
     )
-    return {normalise_text(str(record.quote_text_original)) for record in records}
+    return {
+        normalise_text(str(record.quote_text_original))
+        for record in records
+        if source_id is None or getattr(record, "source_id", None) == source_id
+    }
 
 
 def _request(article: _Article, published: set[str], *, model_snapshot: str) -> LLMRequest:
@@ -351,13 +362,16 @@ def audit_missed_quotes(
     client: PinnedOpenAIClient | None = None,
     provenance: AcquisitionProvenance = "live_feed",
     session_context: SessionContextFactory | None = None,
+    source_id: str | None = None,
 ) -> tuple[dict[str, Any], Path]:
     """Run the shadow audit and write its report; never touch the digest."""
     if limit <= 0:
         raise ConfigError("--limit must be positive")
     active_topic = str(topic_id or getattr(settings, "active_topic", DEFAULT_TOPIC_ID))
-    articles, skipped = _load_articles(settings, report_date, active_topic, limit, provenance)
-    published = _published_texts(settings, report_date, active_topic, provenance)
+    articles, skipped = _load_articles(
+        settings, report_date, active_topic, limit, provenance, source_id=source_id
+    )
+    published = _published_texts(settings, report_date, active_topic, provenance, source_id)
     out_path = _audit_path(settings, report_date, active_topic, provenance)
     estimate = round(len(articles) * _COST_PER_ARTICLE, 4)
     plan: dict[str, Any] = {
@@ -365,6 +379,7 @@ def audit_missed_quotes(
         "report_date": report_date.isoformat(),
         "topic_id": active_topic,
         "provenance": provenance,
+        "source_id": source_id or "",
         "source_mode": "fixtures" if provenance == "fixture" else "blobs",
         "mode": "shadow",
         "executed": False,

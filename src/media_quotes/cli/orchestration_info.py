@@ -12,8 +12,7 @@ from .common import EXIT_FAILURE, EXIT_OK
 def _do_dagster(settings: Settings) -> int:  # pragma: no cover - operator guidance
     if importlib.util.find_spec("dagster") is None:
         print(
-            "Dagster is not installed. Install the extra with: "
-            "uv sync --frozen --all-extras --group dev",
+            "Dagster is not installed. Install the extra with: uv sync --frozen --all-extras",
             file=sys.stderr,
         )
         return EXIT_FAILURE

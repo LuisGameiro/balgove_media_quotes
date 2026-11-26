@@ -19,14 +19,19 @@ uv python install 3.12
 git clone https://github.com/LuisGameiro/balgove_media_quotes.git balgoveinnovations
 cd balgoveinnovations
 cp .env.example .env          # Windows: Copy-Item .env.example .env
-uv sync --frozen --extra dashboard --extra extraction --group dev
+uv sync --frozen --all-extras
 uv run python -m media_quotes doctor
+uv run python -m media_quotes preflight
 uv run python -m media_quotes run --date 2026-11-23
 ```
 
 `mq` and `python -m media_quotes` are the same entry point; both forms work everywhere in these docs.
 Copy only the command, not a pasted `PS C:\...>` prompt: PowerShell reads `PS` as `Get-Process` and
 the rest as arguments. Run the commands from the repository root.
+
+`mq preflight` reports whether Postgres, Neo4j, OpenRouter, the dashboard password, OTLP and
+Dagster are ready. It probes enabled services by default; add `--no-probe` for a config-only report.
+It makes no paid calls. See [05 — Command reference](docs/05-command-reference.md).
 
 Set `DASHBOARD_PASSWORD` in `.env` before starting the dashboard. Exit code `2` from `mq run`
 means disclosed coverage gaps, not a crash. Everything is written under `var/output/`.
@@ -82,7 +87,7 @@ uv run python -m media_quotes sources --action list
 uv run python -m media_quotes topics --action list
 
 # Dagster
-uv sync --frozen --extra dashboard --extra extraction --group dev
+uv sync --frozen --all-extras
 uv run dagster dev -m media_quotes.orchestration
 ```
 

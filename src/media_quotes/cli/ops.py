@@ -219,6 +219,7 @@ def _do_audit_quotes(
     max_cost: float | None,
     execute: bool,
     provenance: AcquisitionProvenance = "live_feed",
+    source_id: str | None = None,
 ) -> int:  # pragma: no cover
     import json
 
@@ -232,6 +233,7 @@ def _do_audit_quotes(
         max_cost=max_cost,
         execute=execute,
         provenance=provenance,
+        source_id=source_id,
     )
     if execute:
         write_report(report, path)

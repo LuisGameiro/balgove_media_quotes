@@ -65,6 +65,38 @@ def test_plan_is_free_and_writes_nothing(tmp_path: Path) -> None:
     assert not path.exists()
 
 
+def test_source_id_limits_the_audit_to_one_source(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    articles, _skipped = quote_audit._load_articles(
+        settings, DAY, "ukraine-war", 20, "fixture", source_id="bbc"
+    )
+    assert articles
+    assert {article.row.source_id for article in articles} == {"bbc"}
+
+    report, _path = quote_audit.audit_missed_quotes(
+        settings,
+        report_date=DAY,
+        limit=1,
+        execute=False,
+        provenance="fixture",
+        source_id="bbc",
+    )
+    assert report["source_id"] == "bbc"
+    assert report["articles_scanned"] == 1
+
+
+def test_unknown_source_id_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="unknown --source-id"):
+        quote_audit.audit_missed_quotes(
+            _settings(tmp_path),
+            report_date=DAY,
+            limit=1,
+            execute=False,
+            provenance="fixture",
+            source_id="not-a-source",
+        )
+
+
 def test_fixture_audit_path_is_isolated_by_topic_and_provenance(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     fixture_path = quote_audit._audit_path(settings, DAY, "custom-topic", "fixture")
@@ -106,7 +138,7 @@ def test_shadow_audit_verifies_candidates_without_publishing(tmp_path: Path) -> 
     monkeypatch.setattr(
         quote_audit,
         "_load_articles",
-        lambda settings, report_date, topic_id, limit, provenance="fixture": (
+        lambda settings, report_date, topic_id, limit, provenance="fixture", **_kwargs: (
             [
                 quote_audit._Article(
                     row=type(
@@ -257,7 +289,7 @@ def test_audit_verifies_earlier_articles_using_the_report_window(tmp_path: Path)
     monkeypatch.setattr(
         quote_audit,
         "_load_articles",
-        lambda settings, report_date, topic_id, limit, provenance="fixture": (
+        lambda settings, report_date, topic_id, limit, provenance="fixture", **_kwargs: (
             [
                 quote_audit._Article(
                     row=row,

@@ -93,9 +93,12 @@ records and never shows article bodies; callers can pass `limit=None` for all re
 `mypy --strict src/`, pytest with an 85% branch-coverage floor, a package build and CLI smoke tests.
 The pytest run uses the default selection: the `integration` marker is deselected via `addopts` in
 `pyproject.toml`, so no live Postgres/feed is contacted. CI adds gitleaks and `uv lock --check`.
-Tests inject HTTP transports and fake LLM clients; unit tests need no network.
+Tests inject HTTP transports and fake LLM clients; unit tests need no network. Use
+`mq preflight` to report optional-service readiness; it probes enabled services by default and
+`--no-probe` makes it config-only.
 
-`mq audit-quotes` is a paid shadow audit over `live_feed` blobs by default. `mq audit`, `mq digest`,
+`mq audit-quotes` is a paid shadow audit over `live_feed` blobs by default; `--source-id` limits it
+to one registered source. `mq audit`, `mq digest`,
 `mq export` and `mq restore-drill` accept `--provenance`; a reconstructed audit is labelled
 `reconstructed=true`. Gold sets carry provenance and support `blob://` references, and `mq eval
 --full` fails closed on fixture-only or unlabelled evidence.

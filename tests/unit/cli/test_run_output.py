@@ -55,6 +55,12 @@ def test_normal_run_keeps_all_facts() -> None:
     assert "Where to find it:" in lines
 
 
+def test_partial_run_status_is_plain_language() -> None:
+    text = "\n".join(_format_run_summary(_result(status="partial"), verbose=False))
+    assert "disclosed gaps" in text
+    assert "exit code" not in text.lower()
+
+
 def test_gap_line_stays_searchable_with_details() -> None:
     lines = _format_run_summary(_result(), verbose=False)
     gap_lines = [line for line in lines if line.startswith("COVERAGE GAP:")]

@@ -1111,7 +1111,7 @@ def _format_run_summary(result: Any, *, verbose: bool) -> list[str]:
     lines.append(f"  Rejected: {result.rejected} candidate(s)")
     lines.append(f"  Coverage gaps: {len(result.gaps)}")
     if result.status == "partial":
-        lines.append("  Status: finished with disclosed gaps (exit code 2).")
+        lines.append("  Status: finished with disclosed gaps — see details below.")
 
     lines.append("Where to find it:")
     if result.digest_path is not None:

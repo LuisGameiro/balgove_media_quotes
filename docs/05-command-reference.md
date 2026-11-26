@@ -7,11 +7,12 @@ The entry point is `mq` (or `python -m media_quotes`). Run `mq <command> --help`
 | Command | Purpose |
 | --- | --- |
 | `doctor`, `validate` | Check config, registry, schema and derived data |
+| `preflight` | Report readiness of Postgres, Neo4j, LLM, dashboard, OTLP and Dagster |
 | `bootstrap` | Apply `migrations/schema.sql` and sync the source registry |
 | `run` | Daily pipeline, audit and logs (`--live`, `--from-blobs`, `--tier 1`) |
 | `fetch` | Rights-gated feed discovery into blobs; dry-run by default (`--live` downloads) |
 | `audit` | Generate or read the T0/coverage report; supports `--provenance` |
-| `audit-quotes` | Paid shadow audit of missed quotes; `--execute` makes charged calls |
+| `audit-quotes` | Paid shadow audit of missed quotes; `--source-id` limits it to one source, `--execute` makes charged calls |
 | `logs` | Inspect structured logs by run id and trace id |
 | `eval` | Gold-set metrics; `--full` fails closed without human evidence |
 | `sources` | List registry rows; `add`, `sync-csv`, `probe`, `backfill` actions |
@@ -49,6 +50,7 @@ estimated-cost ceiling, not a provider spend cap. There is no `--force`.
 ```bash
 # Offline sanity
 uv run python -m media_quotes doctor
+uv run python -m media_quotes preflight --no-probe
 uv run python -m media_quotes run --date 2026-11-19
 uv run python -m media_quotes audit --date 2026-11-19
 uv run python -m media_quotes eval --gold-set synthetic-v1
@@ -76,7 +78,7 @@ uv run python -m media_quotes bootstrap
 uv run python -m media_quotes run --date 2026-11-19
 
 # Derived Neo4j projection (Compose graph profile, or an external NEO4J_URI)
-uv sync --frozen --extra graph --group dev
+uv sync --frozen --all-extras
 uv run python -m media_quotes graph init
 uv run python -m media_quotes graph sync --from-db
 uv run python -m media_quotes graph context --max-tokens 4000

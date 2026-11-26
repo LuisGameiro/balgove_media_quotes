@@ -39,7 +39,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync locked environment
-        run: uv sync --frozen --all-extras --dev --python ${{ matrix.python-version }}
+        run: uv sync --frozen --all-extras --python ${{ matrix.python-version }}
 
       - name: Verify lockfile freshness
         run: uv lock --check
